@@ -5,7 +5,7 @@ import { toast } from "sonner"
 import { api } from "@/lib/api"
 import { useStore } from "@/store"
 import { NoDataset } from "@/components/shared/NoDataset"
-import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/shared/IconButton"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 
@@ -67,13 +67,13 @@ export default function Report() {
             </label>
           ))}
           <div className="flex gap-2 pt-2">
-            <Button onClick={generate} disabled={loading || !sections.length}>
-              {loading ? <Loader2 className="animate-spin" /> : <FileText />} Generate
-            </Button>
+            <IconButton label="Generate report" onClick={generate} disabled={loading || !sections.length}>
+              {loading ? <Loader2 className="animate-spin" /> : <FileText />}
+            </IconButton>
             {html && (
-              <Button variant="outline" onClick={download}>
-                <Download /> Download HTML
-              </Button>
+              <IconButton label="Download HTML" variant="outline" onClick={download}>
+                <Download />
+              </IconButton>
             )}
           </div>
         </CardContent>

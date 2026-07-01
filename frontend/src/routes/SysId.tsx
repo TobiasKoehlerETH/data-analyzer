@@ -8,7 +8,7 @@ import type { ModelSummary, SysIdPlan, SysIdResult } from "@/lib/types"
 import { useStore } from "@/store"
 import { LineChart } from "@/components/plots/LineChart"
 import { NoDataset } from "@/components/shared/NoDataset"
-import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/shared/IconButton"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
@@ -158,9 +158,9 @@ export default function SysId() {
                 <p className="text-xs text-muted-foreground">{progress.msg}</p>
               </div>
             ) : (
-              <Button className="w-full" onClick={run}>
-                <Cpu /> Identify model
-              </Button>
+              <IconButton label="Identify model" onClick={run}>
+                <Cpu />
+              </IconButton>
             )}
           </CardContent>
         </Card>

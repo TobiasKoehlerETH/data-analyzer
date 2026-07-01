@@ -9,7 +9,7 @@ import type { ModelSummary, SimResult } from "@/lib/types"
 import { useStore } from "@/store"
 import { LineChart } from "@/components/plots/LineChart"
 import { NoDataset } from "@/components/shared/NoDataset"
-import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/shared/IconButton"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -68,9 +68,9 @@ export default function Simulation() {
               </label>
             ))
           )}
-          <Button className="w-full" onClick={run} disabled={!selected.length}>
-            <Play /> Simulate
-          </Button>
+          <IconButton label="Run simulation" onClick={run} disabled={!selected.length}>
+            <Play />
+          </IconButton>
         </CardContent>
       </Card>
 

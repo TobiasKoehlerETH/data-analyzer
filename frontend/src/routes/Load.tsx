@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { AlertTriangle, Loader2, Upload } from "lucide-react"
+import { AlertTriangle, Check, Loader2, Upload, X } from "lucide-react"
 import { toast } from "sonner"
 
 import { api } from "@/lib/api"
@@ -8,7 +8,7 @@ import type { HeaderMode, ImportPreview, TableInspection } from "@/lib/types"
 import { optionsForMode } from "@/routes/import-options"
 import { useStore } from "@/store"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/shared/IconButton"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
@@ -114,9 +114,7 @@ export default function Load() {
           ) : (
             <Upload className="size-8 text-muted-foreground" />
           )}
-          <p className="text-sm text-muted-foreground">
-            Drop a CSV or XLSX file here, or browse. Sheets and headers can be adjusted before import.
-          </p>
+          <p className="text-sm text-muted-foreground">Drop CSV or XLSX</p>
           <input
             ref={input}
             type="file"
@@ -124,9 +122,9 @@ export default function Load() {
             className="hidden"
             onChange={(event) => void handleFile(event.target.files?.[0])}
           />
-          <Button disabled={loading} onClick={() => input.current?.click()}>
-            Browse files
-          </Button>
+          <IconButton label="Browse files" disabled={loading} onClick={() => input.current?.click()}>
+            <Upload />
+          </IconButton>
         </CardContent>
       </Card>
 
@@ -264,20 +262,18 @@ export default function Load() {
           )}
 
           <DialogFooter>
-            <Button
+            <IconButton
+              label="Cancel import"
               variant="outline"
               disabled={loading}
               onClick={() => {
                 setInspection(null)
                 setImportPreview(null)
               }}
-            >
-              Cancel
-            </Button>
-            <Button disabled={loading} onClick={() => void confirmImport()}>
-              {loading && <Loader2 className="animate-spin" />}
-              Import table
-            </Button>
+            ><X /></IconButton>
+            <IconButton label="Import table" disabled={loading} onClick={() => void confirmImport()}>
+              {loading ? <Loader2 className="animate-spin" /> : <Check />}
+            </IconButton>
           </DialogFooter>
         </DialogContent>
       </Dialog>

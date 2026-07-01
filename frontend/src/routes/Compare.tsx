@@ -8,9 +8,9 @@ import type { CompareOverlay } from "@/lib/types"
 import { optionsForInspection } from "@/routes/import-options"
 import { useStore } from "@/store"
 import { LineChart } from "@/components/plots/LineChart"
+import { IconButton } from "@/components/shared/IconButton"
 import { NoDataset } from "@/components/shared/NoDataset"
 import { SignalSelect } from "@/components/shared/SignalSelect"
-import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import {
@@ -89,23 +89,21 @@ export default function Compare() {
                 }
               />
               {i > 0 && (
-                <Button
-                  size="icon"
+                <IconButton
+                  label={`Remove ${f.name}`}
                   variant="ghost"
                   className="size-7"
                   onClick={() => setFiles((fs) => fs.filter((_, k) => k !== i))}
                 >
                   <X />
-                </Button>
+                </IconButton>
               )}
             </div>
           ))}
           <label>
-            <Button variant="outline" className="w-full" asChild>
-              <span>
-                <Plus /> Add file
-              </span>
-            </Button>
+            <IconButton label="Add file" variant="outline" asChild>
+              <span><Plus /></span>
+            </IconButton>
             <input
               type="file"
               accept=".csv,.tsv,.txt,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

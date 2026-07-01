@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react"
-import { Link } from "react-router-dom"
 import { toast } from "sonner"
 
 import { api } from "@/lib/api"
@@ -7,7 +6,7 @@ import { useStore } from "@/store"
 import type { SignalData } from "@/lib/types"
 import { StackedSignalPlot } from "@/components/plots/StackedSignalPlot"
 import { SignalPicker } from "@/components/shared/SignalPicker"
-import { Button } from "@/components/ui/button"
+import { NoDataset } from "@/components/shared/NoDataset"
 import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 
@@ -33,17 +32,7 @@ export default function Plot() {
     }
   }, [dataset, selected])
 
-  if (!dataset)
-    return (
-      <Card className="mx-auto mt-16 max-w-md text-center">
-        <CardContent className="py-10">
-          <p className="mb-4 text-sm text-muted-foreground">Load a dataset first.</p>
-          <Button asChild>
-            <Link to="/load">Load a CSV</Link>
-          </Button>
-        </CardContent>
-      </Card>
-    )
+  if (!dataset) return <NoDataset />
 
   return (
     <div className="grid gap-4 lg:grid-cols-[260px_1fr]">
