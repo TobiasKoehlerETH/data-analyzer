@@ -155,18 +155,31 @@ def _rectangular(rows: list[list[Any]]) -> tuple[list[list[Any]], list[str]]:
 
 def _coerce_columns(dataframe: pd.DataFrame) -> pd.DataFrame:
     result = dataframe.copy()
+    numeric_columns: list[str] = []
     for column in result.columns:
         series = result[column]
+        if pd.api.types.is_numeric_dtype(series):
+            numeric_columns.append(column)
+            continue
         non_empty = series.dropna()
         non_empty = non_empty[non_empty.astype(str).str.strip() != ""]
         if non_empty.empty:
             continue
         numeric = pd.to_numeric(non_empty, errors="coerce")
-        if numeric.notna().all():
-            result[column] = pd.to_numeric(series, errors="coerce")
+        numeric = numeric.where(np.isfinite(numeric))
+        if numeric.notna().mean() >= 0.9:
+            result[column] = pd.to_numeric(series, errors="coerce").replace(
+                [np.inf, -np.inf], np.nan
+            )
+            numeric_columns.append(column)
             continue
         if all(isinstance(value, (date, datetime, pd.Timestamp)) for value in non_empty):
             result[column] = pd.to_datetime(series, errors="coerce")
+    if numeric_columns:
+        has_numeric_data = result[numeric_columns].notna().any(axis=1)
+        if has_numeric_data.any():
+            first_data_index = has_numeric_data[has_numeric_data].index[0]
+            result = result.loc[first_data_index:].reset_index(drop=True)
     return result
 
 
@@ -206,6 +219,25 @@ def _metadata(rows: list[list[Any]], header_index: int | None) -> dict[str, Any]
     return metadata
 
 
+def _units_from_first_data_row(
+    data_rows: list[list[Any]], width: int
+) -> list[str] | None:
+    if not data_rows:
+        return None
+    row = data_rows[0]
+    values = [str(value).strip() for value in row if value not in (None, "")]
+    if len(values) < 2 or any(_is_number(value) for value in values):
+        return None
+    if any(len(value) > 20 for value in values):
+        return None
+    return [
+        str(row[index]).strip()
+        if index < len(row) and row[index] not in (None, "")
+        else ""
+        for index in range(width)
+    ]
+
+
 def _build_result(
     rows: list[list[Any]],
     options: ImportOptions,
@@ -237,6 +269,12 @@ def _build_result(
 
     header = [] if header_index is None else rows[header_index]
     columns = _unique_columns(header, width)
+    units = _units_from_first_data_row(data_rows, width)
+    if units is not None:
+        columns = [
+            f"{column} [{unit}]" if unit else column
+            for column, unit in zip(columns, units)
+        ]
     dataframe = _coerce_columns(pd.DataFrame(data_rows, columns=columns))
     return ParseResult(
         dataframe=dataframe,

@@ -99,3 +99,35 @@ def test_parse_csv_compatibility_api_uses_generic_result(tmp_path: Path) -> None
     result = parse_csv(path)
 
     assert result.column_types == {"name": "text", "value": "numeric"}
+
+
+def test_numeric_columns_recover_after_leading_units_and_label_rows(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "instrument.csv"
+    path.write_text(
+        "Force,Distance,Time,Event,\n"
+        "N,mm,min,,\n"
+        "Sample 1,,,,\n"
+        + "".join(f"{i},{i / 10},{i / 60},0,\n" for i in range(20)),
+        encoding="utf-8",
+    )
+
+    result = parse_table(path)
+
+    assert len(result.dataframe) == 20
+    assert list(result.dataframe.columns) == [
+        "Force [N]",
+        "Distance [mm]",
+        "Time [min]",
+        "Event",
+        "Column 5",
+    ]
+    assert result.dataframe[
+        ["Force [N]", "Distance [mm]", "Time [min]", "Event"]
+    ].iloc[0].tolist() == [
+        0,
+        0,
+        0,
+        0,
+    ]

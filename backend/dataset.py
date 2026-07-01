@@ -16,6 +16,20 @@ import pandas as pd
 from core.table_parser import ImportOptions, parse_table
 
 _NAME_RE = re.compile(r"^(.*?)\s*\[([^\]]*)\]\s*$")
+_TIME_RE = re.compile(r"^(.*?)\s*(?:\[([^\]]*)\]|\(([^)]*)\))?\s*$")
+_TIME_FACTORS = {
+    "": 1.0,
+    "s": 1.0,
+    "sec": 1.0,
+    "second": 1.0,
+    "seconds": 1.0,
+    "min": 60.0,
+    "minute": 60.0,
+    "minutes": 60.0,
+    "ms": 0.001,
+    "millisecond": 0.001,
+    "milliseconds": 0.001,
+}
 
 
 def _parse_name(col: str) -> tuple[str, str]:
@@ -26,6 +40,22 @@ def _parse_name(col: str) -> tuple[str, str]:
 
 def _unique(name: str, taken: set[str], fallback: str) -> str:
     return name if name and name not in taken else fallback
+
+
+def _numeric_time_column(df: pd.DataFrame) -> tuple[str, float] | None:
+    for column in df.columns:
+        if not pd.api.types.is_numeric_dtype(df[column]):
+            continue
+        match = _TIME_RE.match(str(column))
+        if not match:
+            continue
+        name = re.sub(r"[_-]+", " ", match.group(1)).strip().lower()
+        if name not in {"time", "timestamp", "elapsed time"}:
+            continue
+        unit = (match.group(2) or match.group(3) or "").strip().lower()
+        if unit in _TIME_FACTORS:
+            return column, _TIME_FACTORS[unit]
+    return None
 
 
 @dataclass
@@ -66,8 +96,17 @@ def _time_and_signals(df: pd.DataFrame) -> tuple[np.ndarray, list[str]]:
         t = (df[ts_col] - df[ts_col].iloc[0]).dt.total_seconds().to_numpy()
         cols = [c for c in df.columns if c != ts_col]
     else:
-        t = np.arange(len(df), dtype=float)
-        cols = list(df.columns)
+        numeric_time = _numeric_time_column(df)
+        if numeric_time is None:
+            t = np.arange(len(df), dtype=float)
+            cols = list(df.columns)
+        else:
+            time_col, factor = numeric_time
+            t = df[time_col].to_numpy(dtype=float) * factor
+            finite = np.flatnonzero(np.isfinite(t))
+            if finite.size:
+                t = t - t[finite[0]]
+            cols = [c for c in df.columns if c != time_col]
     numeric = [c for c in cols if pd.api.types.is_numeric_dtype(df[c])]
     return t.astype(np.float32), numeric
 
