@@ -14,7 +14,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from jinja2 import Template
+from jinja2 import Template, TemplateError
 
 
 DEFAULT_TEMPLATE = """<!DOCTYPE html>
@@ -132,6 +132,21 @@ img { max-width: 100%; margin: 10px 0; }
 </body></html>"""
 
 
+def load_report_template(path: str | Path | None = None) -> str:
+    """Load the local report template, falling back to the built-in template."""
+    template_path = (
+        Path(path)
+        if path is not None
+        else Path(__file__).resolve().parents[2] / "template.html"
+    )
+    try:
+        text = template_path.read_text(encoding="utf-8")
+        Template(text)
+        return text
+    except (OSError, UnicodeError, TemplateError):
+        return DEFAULT_TEMPLATE
+
+
 def _fig_to_base64(fig) -> str:
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
@@ -175,7 +190,7 @@ def generate_report(
     if progress_callback:
         progress_callback(10, "Preparing report content...")
 
-    template = Template(DEFAULT_TEMPLATE)
+    template = Template(load_report_template())
 
     context = {
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
