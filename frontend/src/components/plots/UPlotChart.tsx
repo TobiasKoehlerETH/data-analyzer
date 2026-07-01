@@ -16,6 +16,7 @@ export function UPlotChart({ options, data, height = 200 }: Props) {
   const el = useRef<HTMLDivElement>(null)
   const plot = useRef<uPlot | null>(null)
   const history = useRef<ZoomHistory | null>(null)
+  const initialData = useRef(data)
   const [canGoBack, setCanGoBack] = useState(false)
 
   const getViewport = (instance: uPlot): Viewport | null => {
@@ -82,7 +83,7 @@ export function UPlotChart({ options, data, height = 200 }: Props) {
         ...options.hooks,
         setSelect: [...(options.hooks?.setSelect ?? []), onSelect],
       },
-    }, data, node)
+    }, initialData.current, node)
     plot.current = instance
     const original = getViewport(instance)
     history.current = original ? new ZoomHistory(original) : null
