@@ -6,7 +6,6 @@ name/unit parsing), but plain data classes and an in-process registry.
 
 from __future__ import annotations
 
-import math
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -14,7 +13,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from core.csv_parser import parse_csv
+from core.table_parser import ImportOptions, parse_table
 
 _NAME_RE = re.compile(r"^(.*?)\s*\[([^\]]*)\]\s*$")
 
@@ -40,6 +39,10 @@ class Dataset:
     raser: bool
     info: dict[str, str]  # scalar header metadata
     preview: dict = field(default_factory=dict)  # {columns, rows}
+    table: pd.DataFrame = field(default_factory=pd.DataFrame, repr=False)
+    columns: list[dict[str, str]] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    sheet: str | None = None
 
     @property
     def sample_rate(self) -> float:
@@ -76,20 +79,24 @@ def _preview(df: pd.DataFrame, n: int = 100) -> dict:
             head[c] = head[c].dt.strftime("%Y-%m-%d %H:%M:%S")
 
     def cell(v: object) -> object:
-        if isinstance(v, float) and math.isnan(v):
+        if pd.isna(v):
             return None
         if isinstance(v, np.floating):
             return round(float(v), 4)
         if isinstance(v, np.integer):
             return int(v)
+        if isinstance(v, pd.Timestamp):
+            return v.isoformat()
         return v
 
     rows = [[cell(v) for v in row] for row in head.itertuples(index=False)]
     return {"columns": list(head.columns), "rows": rows}
 
 
-def build_dataset(path: str, filename: str) -> Dataset:
-    result = parse_csv(path)
+def build_dataset(
+    path: str, filename: str, options: ImportOptions | None = None
+) -> Dataset:
+    result = parse_table(path, options)
     df = result.dataframe
     time, cols = _time_and_signals(df)
 
@@ -114,6 +121,13 @@ def build_dataset(path: str, filename: str) -> Dataset:
         raser=result.is_raser_format,
         info=info,
         preview=_preview(df),
+        table=df,
+        columns=[
+            {"name": str(column), "type": result.column_types[str(column)]}
+            for column in df.columns
+        ],
+        warnings=result.warnings,
+        sheet=result.sheet,
     )
 
 

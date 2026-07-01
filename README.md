@@ -22,9 +22,16 @@ for the build log / handover notes.
 
 ## Features (all 11 areas of the original)
 
-File load & preview · time-series plotting · multi-file compare · filtering (chain + auto-suggest) ·
+CSV/XLSX load & preview · time-series plotting · multi-file compare · filtering (chain + auto-suggest) ·
 spectrum (FFT/PSD/peaks) · correlation (heatmap + cross-correlation) · state-space system
 identification · model library · simulation · residual validation · HTML report export.
+
+The table importer inspects files before loading them. It supports comma,
+semicolon, tab, and pipe-delimited text plus XLSX workbooks. Multi-sheet
+workbooks provide a sheet picker, and headers can be auto-detected, taken from
+the first or another row, or disabled entirely. Text, mixed, and empty columns
+remain visible in the preview; numeric analysis tools expose only compatible
+numeric columns.
 
 ## Run (development)
 

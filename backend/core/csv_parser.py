@@ -9,7 +9,6 @@ from __future__ import annotations
 import csv
 import io
 import re
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -17,15 +16,7 @@ import chardet
 import numpy as np
 import pandas as pd
 
-
-@dataclass
-class ParseResult:
-    dataframe: pd.DataFrame
-    metadata: dict[str, Any] = field(default_factory=dict)
-    header_row: int = 0
-    delimiter: str = ","
-    encoding: str = "utf-8"
-    is_raser_format: bool = False
+from core.table_parser import ParseResult, parse_table
 
 
 def detect_encoding(file_path: str | Path, sample_size: int = 65536) -> str:
@@ -186,82 +177,5 @@ def _parse_timestamp(ts_series: pd.Series) -> pd.Series | None:
 
 
 def parse_csv(file_path: str | Path) -> ParseResult:
-    file_path = Path(file_path)
-    if not file_path.exists():
-        raise FileNotFoundError(f"File not found: {file_path}")
-
-    encoding = detect_encoding(file_path)
-    head_lines = _read_head_lines(file_path, encoding, n=40)
-
-    is_raser, metadata = _detect_raser_format(head_lines)
-    delimiter = _detect_delimiter(head_lines, is_raser, head_lines)
-    header_row = _find_header_row(head_lines, delimiter)
-
-    df = pd.read_csv(
-        file_path,
-        sep=delimiter,
-        header=0,
-        skiprows=range(header_row) if header_row > 0 else None,
-        encoding=encoding,
-        engine="c",
-        on_bad_lines="warn",
-        low_memory=False,
-    )
-
-    # Drop fully-empty columns (trailing delimiters)
-    df = df.dropna(axis=1, how="all")
-
-    # Strip whitespace from column names
-    df.columns = [c.strip() for c in df.columns]
-
-    # Parse timestamp column first (before dropping non-numeric columns)
-    ts_col = None
-    for col in df.columns:
-        if col.lower() in ("timestamp", "time", "date", "datetime", "zeit"):
-            ts_col = col
-            break
-    if ts_col is None and len(df.columns) > 0:
-        first_col = df.columns[0]
-        if df[first_col].dtype == object:
-            ts_col = first_col
-
-    if ts_col:
-        parsed = _parse_timestamp(df[ts_col])
-        if parsed is not None and parsed.notna().sum() > len(parsed) * 0.5:
-            df[ts_col] = parsed
-        else:
-            ts_col = None  # Parsing failed, treat as regular column
-
-    # Drop columns with entirely non-numeric, non-timestamp content (e.g. stop reason strings)
-    # but keep them in metadata
-    cols_to_drop: list[str] = []
-    for col in df.columns:
-        if col == ts_col:
-            continue  # Don't drop the successfully parsed timestamp column
-        if df[col].dtype == object:
-            numeric = pd.to_numeric(df[col], errors="coerce")
-            non_null_ratio = numeric.notna().sum() / max(len(numeric), 1)
-            if non_null_ratio < 0.5:
-                unique_vals = df[col].dropna().unique()
-                if len(unique_vals) > 0:
-                    metadata[f"column_{col}"] = unique_vals.tolist()
-                cols_to_drop.append(col)
-
-    for col in cols_to_drop:
-        if col in df.columns:
-            df = df.drop(columns=[col])
-
-    # Optimize numeric dtypes
-    for col in df.select_dtypes(include=["float64"]).columns:
-        col_data = df[col]
-        if col_data.abs().max() < 1e6 and col_data.notna().all():
-            df[col] = col_data.astype(np.float32)
-
-    return ParseResult(
-        dataframe=df,
-        metadata=metadata,
-        header_row=header_row,
-        delimiter=delimiter,
-        encoding=encoding,
-        is_raser_format=is_raser,
-    )
+    """Compatibility wrapper for callers that still use the CSV-specific API."""
+    return parse_table(file_path)

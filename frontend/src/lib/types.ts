@@ -16,9 +16,49 @@ export type DatasetMeta = {
   sampleRate: number // Hz
   raser: boolean
   info: Record<string, string> // parsed header metadata (key: value)
+  columns: ColumnDescriptor[]
+  warnings: string[]
+  sheet: string | null
 }
 
-export type Preview = { columns: string[]; rows: (string | number)[][] }
+export type TableCell = string | number | boolean | null
+export type Preview = { columns: string[]; rows: TableCell[][] }
+
+export type HeaderMode = "auto" | "first_row" | "none" | "row"
+
+export type ImportOptions = {
+  sheet?: string
+  headerMode: HeaderMode
+  headerRow?: number
+}
+
+export type ColumnDescriptor = {
+  name: string
+  type: "numeric" | "text" | "datetime" | "mixed" | "empty"
+}
+
+export type SheetInfo = { name: string; empty: boolean }
+
+export type TableInspection = {
+  token: string
+  filename: string
+  format: "delimited" | "xlsx"
+  sheets: SheetInfo[]
+  suggestedSheet: string | null
+  suggestedHeaderRow: number | null
+  delimiter: string | null
+  encoding: string | null
+  columns: ColumnDescriptor[]
+  preview: Preview
+  warnings: string[]
+  raser: boolean
+}
+
+export type ImportPreview = {
+  columns: ColumnDescriptor[]
+  preview: Preview
+  warnings: string[]
+}
 
 export type LoadResponse = {
   dataset: DatasetMeta

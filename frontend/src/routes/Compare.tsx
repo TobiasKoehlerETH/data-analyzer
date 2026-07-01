@@ -5,6 +5,7 @@ import { toast } from "sonner"
 import { api } from "@/lib/api"
 import { colorFor } from "@/lib/palette"
 import type { CompareOverlay } from "@/lib/types"
+import { optionsForInspection } from "@/routes/import-options"
 import { useStore } from "@/store"
 import { LineChart } from "@/components/plots/LineChart"
 import { NoDataset } from "@/components/shared/NoDataset"
@@ -49,7 +50,11 @@ export default function Compare() {
   async function addFile(file?: File) {
     if (!file) return
     try {
-      const { dataset: d } = await api.load(file)
+      const inspection = await api.inspect(file)
+      const { dataset: d } = await api.load(
+        inspection.token,
+        optionsForInspection(inspection),
+      )
       setFiles((f) => [...f, { id: d.id, name: d.filename, offset: 0 }])
       toast.success(`Added ${d.filename}`)
     } catch (e) {
@@ -103,7 +108,7 @@ export default function Compare() {
             </Button>
             <input
               type="file"
-              accept=".csv,text/csv"
+              accept=".csv,.tsv,.txt,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
               className="hidden"
               onChange={(e) => void addFile(e.target.files?.[0])}
             />

@@ -1,7 +1,7 @@
 import type {
   CompareOverlay, CorrelationMatrix, FilterChain, FilterSuggestion, Job, LoadResponse,
-  ModelSummary, SignalData, SignalInfo, SimResult, Spectrum, SysIdPlan,
-  ValResult,
+  ImportOptions, ImportPreview, ModelSummary, SignalData, SignalInfo, SimResult, Spectrum, SysIdPlan,
+  TableInspection, ValResult,
 } from "@/lib/types"
 
 export type SysIdRequest = {
@@ -32,10 +32,28 @@ const post = <T>(path: string, body: unknown) =>
   })
 
 export const api = {
-  load(file: File) {
+  inspect(file: File) {
     const body = new FormData()
     body.append("file", file)
+    return json<TableInspection>("/dataset/inspect", { method: "POST", body })
+  },
+
+  load(token: string, options: ImportOptions) {
+    const body = new FormData()
+    body.append("token", token)
+    body.append("headerMode", options.headerMode)
+    if (options.sheet) body.append("sheet", options.sheet)
+    if (options.headerRow !== undefined) body.append("headerRow", String(options.headerRow))
     return json<LoadResponse>("/dataset/load", { method: "POST", body })
+  },
+
+  preview(token: string, options: ImportOptions) {
+    const body = new FormData()
+    body.append("token", token)
+    body.append("headerMode", options.headerMode)
+    if (options.sheet) body.append("sheet", options.sheet)
+    if (options.headerRow !== undefined) body.append("headerRow", String(options.headerRow))
+    return json<ImportPreview>("/dataset/preview", { method: "POST", body })
   },
 
   signals: (id: string) => json<SignalInfo[]>(`/dataset/${id}/signals`),
