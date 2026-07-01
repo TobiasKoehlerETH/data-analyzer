@@ -21,10 +21,10 @@ Sample data: use a Raser CSV; the original app's engine tests live in `template/
 
 | Step | Area | State |
 |---|---|---|
-| 0 | Env check, codegraph init, docs, git/GitHub setup | 🟡 in progress |
-| 1 | Scaffold (Vite+React+TS, Tailwind, shadcn, sidebar-08, store) | ⬜ todo |
-| 2 | Backend skeleton (FastAPI + engines, load, signal-data, jobs) | ⬜ todo |
-| 3 | Vertical slice: File Load → Time-Series Plot | ⬜ todo |
+| 0 | Env check, codegraph init, docs, git/GitHub setup | ✅ done |
+| 1 | Scaffold (Vite+React+TS, Tailwind, shadcn, sidebar-08, store) | ✅ done |
+| 2 | Backend skeleton (FastAPI + engines, load, signal-data) | 🟡 in progress |
+| 3 | Vertical slice: File Load → Time-Series Plot | 🟡 in progress |
 | 4 | Signal Processing: Filter, Spectrum, Correlation | ⬜ todo |
 | 5 | Modelling: System ID, Model Library, Simulation, Validation | ⬜ todo |
 | 6 | Output + polish: Report, Overview, Compare, states, dark mode | ⬜ todo |
@@ -34,8 +34,21 @@ Legend: ⬜ todo · 🟡 in progress · ✅ done · ⚠️ blocked
 
 ## Next up
 
-- Finish step 0: initial commit + push to public GitHub.
-- Start step 1: scaffold frontend.
+- Verify vertical slice: start backend (`uvicorn app:app`) + frontend (`npm run dev`),
+  load `sample_data.csv`, confirm signals plot with linked crosshair.
+- Then step 4: Filter (engine `apply_chain`/`suggest_filters`), Spectrum
+  (`compute_fft`/`compute_psd`/`detect_peaks`), Correlation.
+
+## What's built
+
+- **Frontend** (`frontend/`): Vite+React+TS+Tailwind v4, shadcn (Nova preset), `sidebar-08`
+  re-grouped by workflow (`lib/nav.ts`). Router + 12 route stubs (`routes.tsx`); Overview, Load,
+  and Plot are real. Zustand store (`store/index.ts`). uPlot wrapper + StackedSignalPlot with
+  linked crosshair. API client with binary Float32 decode (`lib/api.ts`). Builds & typechecks clean.
+- **Backend** (`backend/`): copied engines (`core/`,`models/`,`resources/`). Qt-free `dataset.py`
+  (reuses `core.csv_parser`) + in-process registry. `app.py` FastAPI: `/dataset/load`,
+  `/dataset/{id}/signals`, `/dataset/{id}/signal-data` (binary). `smoke_test.py` checks the layer.
+- **Sample**: `sample_data.csv` (5000-row synthetic Raser log; gitignored).
 
 ## Key decisions
 

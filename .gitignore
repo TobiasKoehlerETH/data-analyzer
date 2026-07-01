@@ -32,3 +32,6 @@ Thumbs.db
 # Build artifacts
 build/
 *.spec
+
+# Local sample data
+sample_data.csv
