@@ -10,7 +10,7 @@ const axis = (label?: string): uPlot.Axis => ({
   ticks: { stroke: "rgba(128,128,128,0.2)" },
 })
 
-type Line = { label: string; y: number[] | Float32Array; color: string }
+type Line = { label: string; y: number[] | Float32Array; color: string; dash?: number[] }
 
 /** Single uPlot chart with one shared x axis and one or more line (or scatter) series. */
 export function LineChart({
@@ -35,6 +35,7 @@ export function LineChart({
           label: s.label,
           stroke: s.color,
           width: scatter ? 0 : 1,
+          dash: s.dash,
           points: scatter ? { show: true, size: 3, fill: s.color } : { show: false },
         })),
       ],

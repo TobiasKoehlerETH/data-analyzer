@@ -55,3 +55,60 @@ export type CorrelationMatrix = {
   pearson: number[][]
   topPairs: { a: string; b: string; pearson: number; spearman: number }[]
 }
+
+// --- Modelling ---------------------------------------------------------------
+export type OutputMetrics = {
+  name: string
+  rmse: number
+  nrmse: number
+  mae: number
+  r_squared: number
+  vaf: number
+}
+
+export type ModelSummary = {
+  name: string
+  order: number
+  method: string
+  nInputs: number
+  nOutputs: number
+  inputNames: string[]
+  outputNames: string[]
+  decimation: number
+  meanVaf: number
+  bestVaf: number
+  metrics: OutputMetrics[]
+}
+
+export type SysIdPlan = { decimation: number; samples: number; estimatedSeconds: number }
+
+export type Job<T> = {
+  status: "running" | "done" | "error"
+  progress: number
+  message: string
+  result: T | null
+  error: string | null
+}
+
+export type SysIdResult = { sweep: ModelSummary[]; bestName: string | null }
+
+export type SimResult = {
+  time: number[]
+  outputs: { name: string; measured: number[] }[]
+  sims: { model: string; byOutput: Record<string, number[]> }[]
+}
+
+export type ValOutput = {
+  name: string
+  residuals: number[]
+  acf: { lags: number[]; acf: number[]; confidence: number }
+  shapiro: { stat: number; p: number }
+  hist: { counts: number[]; edges: number[] }
+  metrics: OutputMetrics
+}
+
+export type ValResult = {
+  time: number[]
+  outputs: ValOutput[]
+  inputXcorr: Record<string, Record<string, number[]>>
+}

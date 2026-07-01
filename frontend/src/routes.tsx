@@ -6,6 +6,10 @@ import Plot from "@/routes/Plot"
 import Filter from "@/routes/Filter"
 import Spectrum from "@/routes/Spectrum"
 import Correlation from "@/routes/Correlation"
+import SysId from "@/routes/SysId"
+import Models from "@/routes/Models"
+import Simulation from "@/routes/Simulation"
+import Validation from "@/routes/Validation"
 import { Placeholder } from "@/routes/placeholder"
 
 /** Path -> screen. Placeholders get replaced as each area is built (see document/PLAN.md). */
@@ -17,9 +21,9 @@ export const routes: { path: string; element: ReactElement }[] = [
   { path: "/filter", element: <Filter /> },
   { path: "/spectrum", element: <Spectrum /> },
   { path: "/correlation", element: <Correlation /> },
-  { path: "/sysid", element: <Placeholder title="System Identification" /> },
-  { path: "/models", element: <Placeholder title="Model Library" /> },
-  { path: "/simulate", element: <Placeholder title="Simulation" /> },
-  { path: "/validate", element: <Placeholder title="Validation" /> },
+  { path: "/sysid", element: <SysId /> },
+  { path: "/models", element: <Models /> },
+  { path: "/simulate", element: <Simulation /> },
+  { path: "/validate", element: <Validation /> },
   { path: "/report", element: <Placeholder title="Report Export" /> },
 ]

@@ -26,20 +26,29 @@ Sample data: use a Raser CSV; the original app's engine tests live in `template/
 | 2 | Backend skeleton (FastAPI + engines, load, signal-data) | 🟡 in progress |
 | 3 | Vertical slice: File Load → Time-Series Plot | ✅ done |
 | 4 | Signal Processing: Filter, Spectrum, Correlation | ✅ done |
-| 5 | Modelling: System ID, Model Library, Simulation, Validation | 🟡 in progress |
-| 6 | Output + polish: Report, Overview, Compare, states, dark mode | ⬜ todo |
+| 5 | Modelling: System ID, Model Library, Simulation, Validation | ✅ done |
+| 6 | Output + polish: Report, Overview, Compare, states, dark mode | 🟡 in progress |
 | 7 | Tauri packaging | ⬜ todo |
 
 Legend: ⬜ todo · 🟡 in progress · ✅ done · ⚠️ blocked
 
 ## Next up
 
-- Step 5 Modelling: System ID (`core/sysid_engine.py` — async job + progress), Model Library
-  (`core/model_manager.py`, CRUD + JSON), Simulation (`core/simulation_engine.py`), Validation
-  (`core/validation_engine.py`). Add a `routers/modelling.py`; long jobs need a `jobs.py` registry
-  + `GET /jobs/{id}` polling (see PLAN). Frontend: replace the 4 modelling placeholders.
-- Backend routers now split under `backend/routers/` (dataset, signal_ops). Numpy scalars must be
-  coerced to native before returning JSON (see `_py` in signal_ops) — Pydantic rejects np.float32.
+- Step 6: Report Export (`core/report_generator.py` + `resources/report_template.html`, async job),
+  richer Overview dashboard, Multi-File Compare (`core/compare_manager.py`), empty/error states.
+- Step 7: Tauri shell wrapping the built frontend + FastAPI as a PyInstaller sidecar.
+
+## Ops notes
+
+- Backend routers under `backend/routers/` (dataset, signal_ops, modelling). Run WITHOUT `--reload`
+  — the reloader spawned zombie workers that held port 8000. Restart manually after backend edits:
+  kill python procs on :8000 (see below), then `uvicorn app:app --port 8000`.
+- Numpy scalars must be coerced to native before returning JSON (`_py`/`_floats`) — Pydantic rejects
+  `np.float32`.
+- System-ID runs as a background job (`jobs.py`); frontend polls via `api.pollJob`. Best-VAF model is
+  auto-saved to the in-process library. Order-sweep table is informational (only best is persisted).
+- Kill stray backend: `Get-CimInstance Win32_Process -Filter "Name='python.exe'" | ? {$_.CommandLine
+  -match 'uvicorn'} | % { Stop-Process $_.ProcessId -Force }` (netstat PIDs on :8000 can be stale).
 
 ## What's built
 

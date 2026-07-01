@@ -1,7 +1,18 @@
 import type {
-  CorrelationMatrix, FilterChain, FilterSuggestion, LoadResponse,
-  SignalData, SignalInfo, Spectrum,
+  CorrelationMatrix, FilterChain, FilterSuggestion, Job, LoadResponse,
+  ModelSummary, SignalData, SignalInfo, SimResult, Spectrum, SysIdPlan,
+  ValResult,
 } from "@/lib/types"
+
+export type SysIdRequest = {
+  datasetId: string
+  inputs: string[]
+  outputs: string[]
+  method?: string
+  orderMin?: number
+  orderMax?: number
+  autoDecimate?: boolean
+}
 
 const BASE = "/api"
 
@@ -62,5 +73,40 @@ export const api = {
     })
     if (!res.ok) throw new Error((await res.text()) || res.statusText)
     return new Float32Array(await res.arrayBuffer())
+  },
+
+  // --- Modelling -------------------------------------------------------------
+  sysidSuggestIo: (datasetId: string) =>
+    json<{ inputs: string[]; outputs: string[] }>(`/sysid/suggest-io/${datasetId}`),
+  sysidPlan: (req: SysIdRequest) => post<SysIdPlan>("/sysid/plan", req),
+  sysidEstimate: (req: SysIdRequest) => post<{ jobId: string }>("/sysid/estimate", req),
+  job: <T>(jid: string) => json<Job<T>>(`/jobs/${jid}`),
+
+  models: () => json<ModelSummary[]>("/models"),
+  model: (name: string) => json<Record<string, unknown>>(`/models/${name}`),
+  renameModel: (name: string, newName: string) =>
+    json(`/models/${name}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: newName }),
+    }),
+  duplicateModel: (name: string) => post(`/models/${name}/duplicate`, {}),
+  deleteModel: (name: string) => json(`/models/${name}`, { method: "DELETE" }),
+  exportModels: () => json<{ models: unknown[] }>("/models-export"),
+  importModels: (models: unknown[]) => post("/models-import", { models }),
+
+  simulate: (datasetId: string, models: string[]) =>
+    post<SimResult>("/simulate", { datasetId, models }),
+  validate: (datasetId: string, model: string) => post<ValResult>("/validate", { datasetId, model }),
+
+  /** Poll a job to completion, reporting progress; resolves with its result. */
+  async pollJob<T>(jobId: string, onProgress?: (pct: number, msg: string) => void): Promise<T> {
+    for (;;) {
+      const j = await api.job<T>(jobId)
+      onProgress?.(j.progress, j.message)
+      if (j.status === "done") return j.result as T
+      if (j.status === "error") throw new Error(j.error || "Job failed")
+      await new Promise((r) => setTimeout(r, 500))
+    }
   },
 }
