@@ -24,9 +24,9 @@ Sample data: use a Raser CSV; the original app's engine tests live in `template/
 | 0 | Env check, codegraph init, docs, git/GitHub setup | ✅ done |
 | 1 | Scaffold (Vite+React+TS, Tailwind, shadcn, sidebar-08, store) | ✅ done |
 | 2 | Backend skeleton (FastAPI + engines, load, signal-data) | 🟡 in progress |
-| 3 | Vertical slice: File Load → Time-Series Plot | 🟡 in progress |
-| 4 | Signal Processing: Filter, Spectrum, Correlation | ⬜ todo |
-| 5 | Modelling: System ID, Model Library, Simulation, Validation | ⬜ todo |
+| 3 | Vertical slice: File Load → Time-Series Plot | ✅ done |
+| 4 | Signal Processing: Filter, Spectrum, Correlation | ✅ done |
+| 5 | Modelling: System ID, Model Library, Simulation, Validation | 🟡 in progress |
 | 6 | Output + polish: Report, Overview, Compare, states, dark mode | ⬜ todo |
 | 7 | Tauri packaging | ⬜ todo |
 
@@ -34,10 +34,12 @@ Legend: ⬜ todo · 🟡 in progress · ✅ done · ⚠️ blocked
 
 ## Next up
 
-- Verify vertical slice: start backend (`uvicorn app:app`) + frontend (`npm run dev`),
-  load `sample_data.csv`, confirm signals plot with linked crosshair.
-- Then step 4: Filter (engine `apply_chain`/`suggest_filters`), Spectrum
-  (`compute_fft`/`compute_psd`/`detect_peaks`), Correlation.
+- Step 5 Modelling: System ID (`core/sysid_engine.py` — async job + progress), Model Library
+  (`core/model_manager.py`, CRUD + JSON), Simulation (`core/simulation_engine.py`), Validation
+  (`core/validation_engine.py`). Add a `routers/modelling.py`; long jobs need a `jobs.py` registry
+  + `GET /jobs/{id}` polling (see PLAN). Frontend: replace the 4 modelling placeholders.
+- Backend routers now split under `backend/routers/` (dataset, signal_ops). Numpy scalars must be
+  coerced to native before returning JSON (see `_py` in signal_ops) — Pydantic rejects np.float32.
 
 ## What's built
 

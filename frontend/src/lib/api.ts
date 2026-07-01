@@ -1,4 +1,7 @@
-import type { LoadResponse, SignalData, SignalInfo } from "@/lib/types"
+import type {
+  CorrelationMatrix, FilterChain, FilterSuggestion, LoadResponse,
+  SignalData, SignalInfo, Spectrum,
+} from "@/lib/types"
 
 const BASE = "/api"
 
@@ -7,6 +10,13 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) throw new Error((await res.text()) || res.statusText)
   return res.json() as Promise<T>
 }
+
+const post = <T>(path: string, body: unknown) =>
+  json<T>(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
 
 export const api = {
   load(file: File) {
@@ -30,5 +40,27 @@ export const api = {
       names.map((name, i) => [name, buf.subarray((i + 1) * n, (i + 2) * n)]),
     )
     return { time, series }
+  },
+
+  spectrum: (datasetId: string, signal: string, chain?: FilterChain) =>
+    post<Spectrum>("/spectrum", { datasetId, signal, chain }),
+
+  correlation: (datasetId: string) => json<CorrelationMatrix>(`/correlation/${datasetId}`),
+
+  correlationPair: (datasetId: string, a: string, b: string) =>
+    post<{ lags: number[]; corr: number[] }>("/correlation/pair", { datasetId, a, b }),
+
+  filterSuggest: (datasetId: string, signal: string) =>
+    post<FilterSuggestion[]>("/filter/suggest", { datasetId, signal }),
+
+  /** Apply a filter chain to one signal; returns the filtered Float32 samples. */
+  async filterApply(datasetId: string, signal: string, chain: FilterChain): Promise<Float32Array> {
+    const res = await fetch(BASE + "/filter/apply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ datasetId, signal, chain }),
+    })
+    if (!res.ok) throw new Error((await res.text()) || res.statusText)
+    return new Float32Array(await res.arrayBuffer())
   },
 }
