@@ -28,14 +28,31 @@ Sample data: use a Raser CSV; the original app's engine tests live in `template/
 | 4 | Signal Processing: Filter, Spectrum, Correlation | ✅ done |
 | 5 | Modelling: System ID, Model Library, Simulation, Validation | ✅ done |
 | 6 | Output + polish: Report, Overview, Compare, states, dark mode | ✅ done |
-| 7 | Tauri packaging | 🟡 in progress |
+| 7 | Tauri packaging | ✅ done (compiles; GUI launch = manual) |
 
 Legend: ⬜ todo · 🟡 in progress · ✅ done · ⚠️ blocked
 
+**All build steps complete.** The web app is fully implemented and verified in-browser; the Tauri
+shell compiles (`cargo check` clean) with dev/release backend spawning wired. Remaining manual steps
+are the GUI smoke test (`tauri dev`) and producing the installer (`build_sidecar.ps1` + `tauri build`).
+
 ## Next up
 
-- Step 7: Tauri shell wrapping the built frontend + FastAPI as a PyInstaller sidecar.
-  All 12 screens are implemented and verified in-browser; the web app is feature-complete.
+- Finish step 7: verify `npm --prefix frontend run tauri dev` opens the native window and the
+  spawned backend serves (first Rust build is slow, ~10 min). Then `./scripts/build_sidecar.ps1`
+  + `tauri build` for the installer.
+
+## Tauri setup (step 7)
+
+- Scaffolded under `frontend/src-tauri/` (Tauri v2). `src/lib.rs` spawns the backend: **dev** runs
+  `backend/.venv` uvicorn (path via `CARGO_MANIFEST_DIR`); **release** runs the PyInstaller sidecar
+  `data-analyzer-backend` (see `bundle.externalBin` in `tauri.conf.json`).
+- Frontend API base is env-aware (`lib/api.ts`): `/api` in dev (Vite proxy), `http://127.0.0.1:8000`
+  in the packaged app. Backend has permissive CORS for the desktop origin.
+- Release sidecar: `backend/run_server.py` is the PyInstaller entry; `scripts/build_sidecar.ps1`
+  builds it and drops `data-analyzer-backend-<triple>.exe` into `frontend/src-tauri/binaries/`.
+- Reused-engine tests: 33/33 pass under the backend venv
+  (`pytest template/trial2/data_analyzer/tests`).
 
 ## Ops notes
 

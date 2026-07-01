@@ -14,7 +14,9 @@ export type SysIdRequest = {
   autoDecimate?: boolean
 }
 
-const BASE = "/api"
+// Dev: hit "/api" (Vite proxies to the backend). Packaged (Tauri): no proxy, so
+// talk to the sidecar directly on localhost.
+const BASE = import.meta.env.DEV ? "/api" : "http://127.0.0.1:8000"
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(BASE + path, init)

@@ -15,6 +15,11 @@ dist-ssr/
 
 # Tauri / Rust
 src-tauri/target/
+**/src-tauri/target/
+**/src-tauri/gen/
+**/src-tauri/binaries/
+backend/dist/
+backend/build/
 
 # CodeGraph index
 .codegraph/
