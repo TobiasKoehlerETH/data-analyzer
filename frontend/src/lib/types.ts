@@ -112,3 +112,11 @@ export type ValResult = {
   outputs: ValOutput[]
   inputXcorr: Record<string, Record<string, number[]>>
 }
+
+// --- Compare -----------------------------------------------------------------
+export type CompareOverlay = {
+  time: number[]
+  files: { id: string; name: string; values: number[] }[]
+  stats: { file: string; rmse: number; maxDev: number; r2: number; meanError: number }[]
+  matchedColumn: string
+}

@@ -27,16 +27,15 @@ Sample data: use a Raser CSV; the original app's engine tests live in `template/
 | 3 | Vertical slice: File Load → Time-Series Plot | ✅ done |
 | 4 | Signal Processing: Filter, Spectrum, Correlation | ✅ done |
 | 5 | Modelling: System ID, Model Library, Simulation, Validation | ✅ done |
-| 6 | Output + polish: Report, Overview, Compare, states, dark mode | 🟡 in progress |
-| 7 | Tauri packaging | ⬜ todo |
+| 6 | Output + polish: Report, Overview, Compare, states, dark mode | ✅ done |
+| 7 | Tauri packaging | 🟡 in progress |
 
 Legend: ⬜ todo · 🟡 in progress · ✅ done · ⚠️ blocked
 
 ## Next up
 
-- Step 6: Report Export (`core/report_generator.py` + `resources/report_template.html`, async job),
-  richer Overview dashboard, Multi-File Compare (`core/compare_manager.py`), empty/error states.
 - Step 7: Tauri shell wrapping the built frontend + FastAPI as a PyInstaller sidecar.
+  All 12 screens are implemented and verified in-browser; the web app is feature-complete.
 
 ## Ops notes
 

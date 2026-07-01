@@ -1,5 +1,5 @@
 import type {
-  CorrelationMatrix, FilterChain, FilterSuggestion, Job, LoadResponse,
+  CompareOverlay, CorrelationMatrix, FilterChain, FilterSuggestion, Job, LoadResponse,
   ModelSummary, SignalData, SignalInfo, SimResult, Spectrum, SysIdPlan,
   ValResult,
 } from "@/lib/types"
@@ -98,6 +98,12 @@ export const api = {
   simulate: (datasetId: string, models: string[]) =>
     post<SimResult>("/simulate", { datasetId, models }),
   validate: (datasetId: string, model: string) => post<ValResult>("/validate", { datasetId, model }),
+
+  report: (datasetId: string, sections: string[], signals: string[], models: string[]) =>
+    post<{ jobId: string }>("/report", { datasetId, sections, signals, models }),
+
+  compareOverlay: (datasetIds: string[], signal: string, offsets: Record<string, number>) =>
+    post<CompareOverlay>("/compare/overlay", { datasetIds, signal, offsets }),
 
   /** Poll a job to completion, reporting progress; resolves with its result. */
   async pollJob<T>(jobId: string, onProgress?: (pct: number, msg: string) => void): Promise<T> {

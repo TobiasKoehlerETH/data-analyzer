@@ -1,7 +1,11 @@
+import { useEffect, useMemo, useState } from "react"
 import { Link } from "react-router-dom"
 import { Upload } from "lucide-react"
 
+import { api } from "@/lib/api"
+import type { SignalData } from "@/lib/types"
 import { useStore } from "@/store"
+import { StackedSignalPlot } from "@/components/plots/StackedSignalPlot"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
@@ -17,7 +21,15 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 export default function Overview() {
-  const { dataset, signals } = useStore()
+  const { dataset, signals, selected } = useStore()
+  const preview = useMemo(() => selected.slice(0, 3), [selected])
+  const [data, setData] = useState<SignalData | null>(null)
+  const units = useMemo(() => Object.fromEntries(signals.map((s) => [s.name, s.unit])), [signals])
+
+  useEffect(() => {
+    if (!dataset || preview.length === 0) return
+    api.signalData(dataset.id, preview).then(setData).catch(() => {})
+  }, [dataset, preview])
 
   if (!dataset)
     return (
@@ -49,6 +61,11 @@ export default function Overview() {
             {dataset.raser ? "Raser DataLog" : "Generic CSV"} · {signals.length} numeric signals
           </CardDescription>
         </CardHeader>
+        {data && preview.length > 0 && (
+          <CardContent>
+            <StackedSignalPlot data={data} names={preview} units={units} />
+          </CardContent>
+        )}
       </Card>
     </div>
   )

@@ -10,14 +10,15 @@ import SysId from "@/routes/SysId"
 import Models from "@/routes/Models"
 import Simulation from "@/routes/Simulation"
 import Validation from "@/routes/Validation"
-import { Placeholder } from "@/routes/placeholder"
+import Report from "@/routes/Report"
+import Compare from "@/routes/Compare"
 
-/** Path -> screen. Placeholders get replaced as each area is built (see document/PLAN.md). */
+/** Path -> screen (see document/PLAN.md). */
 export const routes: { path: string; element: ReactElement }[] = [
   { path: "/", element: <Overview /> },
   { path: "/load", element: <Load /> },
   { path: "/plot", element: <Plot /> },
-  { path: "/compare", element: <Placeholder title="Multi-File Compare" /> },
+  { path: "/compare", element: <Compare /> },
   { path: "/filter", element: <Filter /> },
   { path: "/spectrum", element: <Spectrum /> },
   { path: "/correlation", element: <Correlation /> },
@@ -25,5 +26,5 @@ export const routes: { path: string; element: ReactElement }[] = [
   { path: "/models", element: <Models /> },
   { path: "/simulate", element: <Simulation /> },
   { path: "/validate", element: <Validation /> },
-  { path: "/report", element: <Placeholder title="Report Export" /> },
+  { path: "/report", element: <Report /> },
 ]
