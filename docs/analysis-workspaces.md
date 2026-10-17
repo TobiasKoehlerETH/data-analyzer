@@ -1,6 +1,6 @@
 # Data plots and analysis
 
-Data Plots opens with the first three numeric columns plotted against row positions **1…N**. Select more columns on the left. Choose **Time** or another column in **X axis** for time plots or XY scatter plots. Missing values keep their original row positions.
+Data Plots opens with the first numeric column plotted against row positions **1…N**. Choose **X** and **Y** above the plot before opening **Fit curve**. For example, choose Temperature for X and Pressure for Y to fit pressure as a function of temperature. Choosing two columns produces a scatter plot; row position and time remain available as X options. The swap button exchanges X and Y. Select additional Y columns on the left for multiple plots. Missing values keep their original row positions.
 
 ## Curve fitting
 
