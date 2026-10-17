@@ -6,8 +6,10 @@ import {
   forwardRef,
   useMemo,
   useState,
+  useContext,
 } from "react";
 import { cn } from "@/lib/utils";
+import { WorkspaceActive } from "@/lib/workspace";
 import { CurveFitter } from "./CurveFitter";
 import {
   chartFitSources,
@@ -49,16 +51,20 @@ export const EChart = forwardRef<EChartHandle, Props>(function EChart(
   },
   ref,
 ) {
+  const active = useContext(WorkspaceActive);
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const el = useRef<HTMLDivElement>(null);
   const [fitSession, setFitSession] = useState<FitSource[] | null>(null);
+  useEffect(() => { if (!active) setFitSession(null); }, [active]);
   const [overlay, setOverlay] = useState<{
     source: FitSource;
     result: FitResult;
     option: unknown;
   } | null>(null);
   const sources = useMemo(
-    () => (fitting ? (fitSources ?? chartFitSources(option)) : []),
-    [option, fitting, fitSources],
+    () => (active && fitting ? (fitSources ?? chartFitSources(option)) : []),
+    [option, fitting, fitSources, active],
   );
   const displayOption = useMemo(() => {
     if (!overlay || overlay.option !== option) return option;
@@ -85,6 +91,7 @@ export const EChart = forwardRef<EChartHandle, Props>(function EChart(
   }, [option, overlay]);
   const inst = useRef<EChartsInstance | null>(null);
   const ready = useRef(false);
+  const rendered = useRef<unknown>(null);
   const handlers = useRef(onEvents);
   handlers.current = onEvents;
 
@@ -94,20 +101,28 @@ export const EChart = forwardRef<EChartHandle, Props>(function EChart(
     if (!el.current) return;
     const chart = echarts.init(el.current, undefined, { renderer: "canvas" });
     inst.current = chart;
+    let resizeFrame = 0;
     const ro = new ResizeObserver(() => {
       if (
+        activeRef.current &&
         el.current &&
         el.current.clientWidth > 0 &&
         el.current.clientHeight > 0
-      )
-        chart.resize();
+      ) {
+        cancelAnimationFrame(resizeFrame);
+        resizeFrame = requestAnimationFrame(() => {
+          if (activeRef.current) chart.resize();
+        });
+      }
     });
     ro.observe(el.current);
     return () => {
       ro.disconnect();
+      cancelAnimationFrame(resizeFrame);
       chart.dispose();
       inst.current = null;
       ready.current = false;
+      rendered.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -127,18 +142,22 @@ export const EChart = forwardRef<EChartHandle, Props>(function EChart(
   }, [Object.keys(onEvents ?? {}).join("|")]);
 
   useEffect(() => {
-    inst.current?.setOption(displayOption, { notMerge, lazyUpdate: false });
-    if (brushType)
-      inst.current?.dispatchAction({
-        type: "takeGlobalCursor",
-        key: "brush",
-        brushOption: { brushType, brushMode: "single" },
-      });
-    if (inst.current && !ready.current) {
-      ready.current = true;
-      onReady?.(inst.current);
-    }
-  }, [displayOption, notMerge, brushType]);
+    if (!active) return;
+    const frame = requestAnimationFrame(() => {
+      const chart = inst.current;
+      if (!chart) return;
+      chart.resize();
+      if (rendered.current !== displayOption) {
+        chart.setOption(displayOption, { notMerge, lazyUpdate: false });
+        rendered.current = displayOption;
+        if (brushType) chart.dispatchAction({
+          type: "takeGlobalCursor", key: "brush", brushOption: { brushType, brushMode: "single" },
+        });
+      }
+      if (!ready.current) { ready.current = true; onReady?.(chart); }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [displayOption, notMerge, brushType, active]);
 
   return (
     <div

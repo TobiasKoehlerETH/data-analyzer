@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Download, RotateCcw } from "lucide-react";
 import { EChart } from "@/components/EChart";
 import { EmptyState, Panel } from "@/components/common";
@@ -47,6 +47,7 @@ const labels = [
 
 export function StatisticsTab() {
   const { dataset, dataVersion, activeTab } = useApp();
+  const loadedRequest = useRef("");
   const [xColumn, setXColumn] = useState("__row");
   const [yColumn, setYColumn] = useState("");
   const [data, setData] = useState<Vectors | null>(null);
@@ -61,6 +62,8 @@ export function StatisticsTab() {
   }, [dataset?.path, dataset?.sheet]);
   useEffect(() => {
     if (!dataset || !yColumn || activeTab !== "statistics") return;
+    const requestKey = JSON.stringify([dataset.path, dataset.sheet, dataVersion, yColumn, xColumn]);
+    if (loadedRequest.current === requestKey && data) return;
     let cancelled = false;
     setError("");
     setData(null);
@@ -69,7 +72,7 @@ export function StatisticsTab() {
       ...new Set([yColumn, ...(xColumn === "__row" ? [] : [xColumn])]),
     ])
       .then((v) => {
-        if (!cancelled) setData(v);
+        if (!cancelled) { loadedRequest.current = requestKey; setData(v); }
       })
       .catch((e) => {
         if (!cancelled) setError(String(e));

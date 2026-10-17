@@ -22,6 +22,10 @@ Choose X and Y, then drag a rectangle in Scatter or an X interval in By row or D
 
 Summary statistics include count, missing values, mean, sample standard deviation, minimum, quartiles, maximum and IQR. Quartiles use linear interpolation. Boxplot whiskers show the actual minimum and maximum. Use the download button to export the summary as CSV.
 
+## Navigation
+
+Use **Ctrl+PageUp** and **Ctrl+PageDown** to switch workspaces. Workspaces load on first use and retain their controls and results. Hidden charts pause rendering; returning to Data Plots or Statistics reuses loaded vectors until the data or selected columns change. Transitions respect the system's reduced-motion preference.
+
 ## Verification
 
 ```text

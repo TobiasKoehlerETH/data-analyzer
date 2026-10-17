@@ -25,6 +25,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { api, DATA_FILE_EXTENSIONS, DATA_FILE_FILTERS, errorText, JSON_FILTERS, type ProgressEvent } from "@/lib/api";
 import { useApp, type TabId } from "@/lib/store";
 import { cn } from "@/lib/utils";
+import { WorkspaceActive } from "@/lib/workspace";
 import { FileTab } from "@/tabs/FileTab";
 import { TimeSeriesTab } from "@/tabs/TimeSeriesTab";
 import { StatisticsTab } from "@/tabs/StatisticsTab";
@@ -63,6 +64,11 @@ export default function App() {
   const { activeTab, setActiveTab, tabOrder, setTabOrder, status, flash, progress, setProgress, dataset, requestOpen, refreshModels, showStatus } = useApp();
   const [dragTab, setDragTab] = useState<TabId | null>(null);
   const [now, setNow] = useState(Date.now());
+  const [visitedTabs, setVisitedTabs] = useState(() => new Set<TabId>([activeTab]));
+
+  useEffect(() => {
+    setVisitedTabs(tabs => tabs.has(activeTab) ? tabs : new Set([...tabs, activeTab]));
+  }, [activeTab]);
 
   useEffect(() => {
     const un = listen<ProgressEvent>("progress", (e) => setProgress(e.payload.task, e.payload.value, e.payload.message));
@@ -108,7 +114,11 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       if (!e.ctrlKey || e.altKey) return;
       const k = e.key.toLowerCase();
-      if (k === "o") {
+      if ((k === "pageup" || k === "pagedown") && !document.querySelector('[role="dialog"]')) {
+        e.preventDefault();
+        const step = k === "pagedown" ? 1 : -1;
+        setActiveTab(tabOrder[(tabOrder.indexOf(activeTab) + step + tabOrder.length) % tabOrder.length]);
+      } else if (k === "o") {
         e.preventDefault();
         openFile();
       } else if (k === "s") {
@@ -146,7 +156,6 @@ export default function App() {
     };
   }, [requestOpen, showStatus]);
 
-  const activeIdx = tabOrder.indexOf(activeTab) + 1;
   const eta =
     progress && progress.value > 2 ? formatEta(((now - progress.startedAt) * (100 - progress.value)) / progress.value) : "";
 
@@ -160,7 +169,7 @@ export default function App() {
             <span className="mt-7 mb-3 block h-[3px] w-[50px] bg-ap-red" />
             <p className="ap-eyebrow">Data Analyzer</p>
             <nav className="mt-3 -mx-2 flex flex-col gap-px overflow-y-auto">
-              {tabOrder.map((id, i) => {
+              {tabOrder.map((id) => {
                 const t = TABS[id];
                 const Icon = t.icon;
                 const active = id === activeTab;
@@ -178,13 +187,12 @@ export default function App() {
                       setDragTab(null);
                     }}
                     onClick={() => setActiveTab(id)}
-                    title={`${t.description} (drag to reorder)`}
+                    title={`${t.description} · Ctrl+PageUp/PageDown to switch · Drag to reorder`}
                     className={cn(
-                      "group flex items-center gap-2.5 border-l-[3px] px-2 py-[7px] text-left text-[14px] transition-colors",
+                      "group flex items-center gap-3 rounded-sm border-l-[3px] px-3 py-2 text-left text-[13px] transition-colors duration-150",
                       active ? "border-ap-red bg-ap-bluegray-15 text-black" : "border-transparent text-[#333] hover:text-ap-red",
                     )}
                   >
-                    <span className={cn("w-5 text-[10px] tabular-nums", active ? "text-ap-red" : "text-ap-bluegray-60")}>{String(i + 1).padStart(2, "0")}</span>
                     <Icon className={cn("size-4 shrink-0", active ? "text-ap-red" : "text-ap-bluegray")} strokeWidth={1.6} />
                     <span className="flex-1 truncate">{t.label}</span>
                     <GripVertical className="size-3.5 text-ap-bluegray-60 opacity-0 group-hover:opacity-100" />
@@ -195,13 +203,12 @@ export default function App() {
             <div className="mt-auto pt-4 text-[11px] leading-relaxed text-[#707070]">
               {dataset ? (
                 <>
-                  <p className="truncate text-black" title={dataset.path}>
+                  <p className="truncate text-black" title={`${dataset.path} · ${dataset.sample_rate.toFixed(3)} Hz · ${dataset.file_type}`}>
                     {dataset.path.split(/[\\/]/).pop()}
                   </p>
                   <p>
-                    {dataset.n_samples.toLocaleString("en-US")} samples · {dataset.n_signals} signals
+                    {dataset.n_samples.toLocaleString("en-US")} rows · {dataset.n_signals} columns
                   </p>
-                  <p>{dataset.sample_rate.toFixed(3)} Hz · {dataset.file_type}</p>
                 </>
               ) : (
                 <p>No file loaded</p>
@@ -234,17 +241,18 @@ export default function App() {
                 </MenubarMenu>
               </Menubar>
               <div className="flex min-w-0 items-baseline gap-3">
-                <span className="text-[11px] font-bold tracking-[0.12em] text-ap-red">{String(activeIdx).padStart(2, "0")} /</span>
-                <h1 className="truncate text-[19px] leading-none text-ap-red">{TABS[activeTab].label}</h1>
-                <span className="hidden truncate text-xs text-muted-foreground xl:inline">{TABS[activeTab].description}</span>
+                <h1 className="truncate text-[18px] leading-none text-ap-red" title={TABS[activeTab].description}>{TABS[activeTab].label}</h1>
               </div>
             </div>
             <div className="relative min-h-0 flex-1">
               {tabOrder.map((id) => {
+                if (id !== activeTab && !visitedTabs.has(id)) return null;
                 const C = TABS[id].component;
                 return (
-                  <div key={id} className={cn("absolute inset-0 overflow-hidden p-3", id === activeTab ? "visible" : "invisible")}>
-                    <C />
+                  <div key={id} className={cn("absolute inset-0 overflow-hidden p-3", id === activeTab ? "visible ap-workspace" : "invisible")}>
+                    <WorkspaceActive.Provider value={id === activeTab}>
+                      <C />
+                    </WorkspaceActive.Provider>
                   </div>
                 );
               })}

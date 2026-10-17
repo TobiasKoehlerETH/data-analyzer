@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { WorkspaceActive } from "@/lib/workspace";
 import type * as echarts from "echarts";
 import { EChart, type EChartsInstance } from "./EChart";
 import type { FitSource } from "@/lib/analysis";
@@ -69,6 +70,7 @@ export function StackedChart({
   className,
   onReady,
 }: StackedChartProps) {
+  const active = useContext(WorkspaceActive);
   const host = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 800, h: 400 });
   const zoom = useRef<{ start: number; end: number }>({ start: 0, end: 100 });
@@ -83,13 +85,13 @@ export function StackedChart({
   }, [resetKey]);
 
   useEffect(() => {
-    if (!host.current) return;
+    if (!host.current || !active) return;
     const ro = new ResizeObserver(() => {
       if (host.current) setSize({ w: host.current.clientWidth, h: host.current.clientHeight });
     });
     ro.observe(host.current);
     return () => ro.disconnect();
-  }, []);
+  }, [active]);
 
   const n = panels.length;
   const rows = Math.max(1, Math.ceil(n / columns));

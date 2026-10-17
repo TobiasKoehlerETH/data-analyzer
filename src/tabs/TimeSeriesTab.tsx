@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeftRight, Search } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,8 @@ import { useApp } from "@/lib/store";
 const MAX_PLOTS = 8;
 
 export function TimeSeriesTab() {
-  const { dataset, dataVersion } = useApp();
+  const { dataset, dataVersion, activeTab } = useApp();
+  const loadedRequest = useRef("");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [groups, setGroups] = useState<Record<string, number>>({});
@@ -46,10 +47,13 @@ export function TimeSeriesTab() {
   };
 
   useEffect(() => {
+    if (activeTab !== "timeseries") return;
     if (!dataset || selected.length === 0) {
       setData(null);
       return;
     }
+    const requestKey = JSON.stringify([dataset.path, dataset.sheet, dataVersion, selected, xSignal]);
+    if (loadedRequest.current === requestKey && data) return;
     let cancelled = false;
     setData(null);
     const columns = [
@@ -57,7 +61,7 @@ export function TimeSeriesTab() {
     ];
     analysisVectors(columns)
       .then((v) => {
-        if (!cancelled) setData(v);
+        if (!cancelled) { loadedRequest.current = requestKey; setData(v); }
       })
       .catch((e) => {
         if (!cancelled) toast.error(String(e));
@@ -65,7 +69,7 @@ export function TimeSeriesTab() {
     return () => {
       cancelled = true;
     };
-  }, [selected, xSignal, dataVersion, dataset]);
+  }, [selected, xSignal, dataVersion, dataset, activeTab]);
 
   const x = useMemo(
     () =>

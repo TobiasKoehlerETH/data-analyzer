@@ -20,7 +20,7 @@ export function Panel({
   bodyClassName?: string;
 }) {
   return (
-    <section className={cn("flex min-h-0 flex-col border border-ap-line bg-white", className)}>
+    <section className={cn("flex min-h-0 flex-col rounded-sm border border-ap-line bg-white", className)}>
       {(title || actions) && (
         <header className="flex min-h-9 items-center justify-between gap-2 border-b border-ap-line px-3 py-1.5">
           {title && <h3 className="ap-eyebrow truncate">{title}</h3>}

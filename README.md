@@ -2,6 +2,10 @@
 
 A local desktop workspace for exploring numeric datasets, comparing measurements and fitting models. Built with Tauri, Rust, React and ECharts.
 
+![Data Analyzer statistics workspace showing column-to-column scatter, row plots, distributions and summary statistics](docs/images/data-analyzer.png)
+
+*Statistics workspace with synthetic example data.*
+
 - Import CSV, delimited text and Excel files, with preview and format overrides.
 - Plot columns against row positions, time or another numeric column.
 - Fit curves from numeric charts using built-in or custom equations, coefficient bounds, exclusions, residuals and uncertainty estimates.

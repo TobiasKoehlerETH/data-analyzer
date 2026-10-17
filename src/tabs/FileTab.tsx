@@ -109,7 +109,7 @@ export function FileTab() {
       <div className="flex items-center gap-2">
         <Input
           className="h-9 flex-1 font-medium"
-          placeholder="No file selected — browse, drop a file onto the window, or paste a path and press Enter"
+          placeholder="Drop a file or paste its path"
           value={path}
           onChange={(e) => setPath(e.target.value)}
           onKeyDown={(e) => {
@@ -146,14 +146,14 @@ export function FileTab() {
           <FolderOpen /> Browse…
         </Button>
         <Button className="h-9" disabled={!path || loading} onClick={() => doLoad()} title="Parse and load the selected file into memory for analysis">
-          <Upload /> Load File
+          <Upload /> Load
         </Button>
       </div>
 
       <ResizablePanelGroup orientation="vertical" className="min-h-0 flex-1">
         <ResizablePanel defaultSize="62%" minSize="20%">
           <Panel
-            title={view === "preview" ? `Preview (first 100 data rows)${preview ? ` · ${preview.headers.length - preview.skipped_columns.length} columns` : ""}` : "Import settings — header, data start, ignored rows and columns"}
+            title={view === "preview" ? <span title="First 100 rows">Preview{preview ? ` · ${preview.headers.length - preview.skipped_columns.length} columns` : ""}</span> : "Import settings"}
             className="h-full"
             bodyClassName={view === "preview" ? "p-0 overflow-auto selectable" : "p-0"}
             actions={
@@ -161,10 +161,10 @@ export function FileTab() {
                 <Tabs value={view} onValueChange={(v) => setView(v as "preview" | "settings")}>
                   <TabsList className="h-7 rounded-none">
                     <TabsTrigger value="preview" className="h-6 rounded-none px-2 text-xs">
-                      <Table2 /> Data preview
+                      <Table2 /> Preview
                     </TabsTrigger>
                     <TabsTrigger value="settings" className="h-6 rounded-none px-2 text-xs" title="Choose the header row, where data starts and which rows/columns to ignore">
-                      <Settings2 /> Import settings
+                      <Settings2 /> Settings
                       {Object.keys(options).length > 0 && <span className="ml-1 h-1.5 w-1.5 rounded-full bg-ap-red" />}
                     </TabsTrigger>
                   </TabsList>
@@ -214,10 +214,8 @@ export function FileTab() {
                 </TableBody>
               </Table>
             ) : (
-              <EmptyState title="No file selected" icon={<FolderOpen className="size-10" strokeWidth={1.2} />}>
-                Supported: CSV and other delimited text (comma, semicolon, tab, pipe or whitespace — e.g. .csv, .txt, .tsv, .dat) and Excel / OpenDocument
-                workbooks (.xlsx, .xlsm, .xls, .xlsb, .ods). Raser DataLog headers, encodings, header rows and timestamps are detected automatically; use
-                Import settings to override them.
+              <EmptyState title="Open a dataset" icon={<FolderOpen className="size-10" strokeWidth={1.2} />}>
+                CSV, text or Excel. Format detected automatically.
               </EmptyState>
             )}
           </Panel>
@@ -225,7 +223,7 @@ export function FileTab() {
         <ResizableHandle className="my-1 bg-transparent" />
         <ResizablePanel defaultSize="38%" minSize="15%">
           <div className="flex h-full gap-3">
-            <Panel title="Detected metadata" className="w-[380px] shrink-0" bodyClassName="overflow-auto selectable">
+            <Panel title="File details" className="w-[380px] shrink-0" bodyClassName="overflow-auto selectable">
               {metaLines.length ? (
                 <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[12px]">
                   {metaLines.map(([k, v], i) => (
@@ -236,10 +234,10 @@ export function FileTab() {
                   ))}
                 </dl>
               ) : (
-                <p className="text-xs text-muted-foreground">Select a file to see its detected format.</p>
+                <p className="text-xs text-muted-foreground">No file selected</p>
               )}
             </Panel>
-            <Panel title="Descriptive statistics (loaded data)" className="min-w-0 flex-1" bodyClassName="p-0 overflow-auto selectable">
+            <Panel title="Summary" className="min-w-0 flex-1" bodyClassName="p-0 overflow-auto selectable">
               {stats.length ? (
                 <Table className="text-[12px]">
                   <TableHeader className="sticky top-0 bg-white">
@@ -266,7 +264,7 @@ export function FileTab() {
                   </TableBody>
                 </Table>
               ) : (
-                <p className="p-3 text-xs text-muted-foreground">Statistics are computed in the background after loading.</p>
+                <p className="p-3 text-xs text-muted-foreground">Load data to see statistics</p>
               )}
             </Panel>
           </div>
