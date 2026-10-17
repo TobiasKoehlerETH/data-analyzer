@@ -1,0 +1,180 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+.analysis-field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; }
+.analysis-field select, .analysis-field input, .analysis-input { width: 100%; min-width: 0; border: 1px solid #c4cacd; background: white; padding: 5px 7px; font-size: 12px; border-radius: 0; }
+.analysis-field select:focus, .analysis-field input:focus, .analysis-input:focus { outline: 1px solid #ff2400; }
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Angst+Pfister design tokens (see C:\Code\A+P-style\style-guide.html).
+ * Red sets the tone and is used sparingly; black carries the text; white space is part of the brand.
+ */
+:root {
+  --ap-red: #ff2400;
+  --ap-red-dark: #d61e00;
+  --ap-black: #000000;
+  --ap-white: #ffffff;
+  --ap-bluegray: #6b7b84;
+  --ap-bluegray-60: #a6b0b5;
+  --ap-bluegray-15: #ebedee;
+  --ap-darkblue: #274259;
+  --ap-gray-dark: #5c5c5c;
+  --ap-gray: #a5a5a5;
+  --ap-gray-light: #d1d1d1;
+  --ap-panel: #c4cacd;
+  --ap-surface: #e9ebed;
+  --ap-line: #d9dcde;
+  --ap-font: "Futura LT Book", "Futura LT", "Futura PT", Futura, "Century Gothic", "Avenir Next", Arial, sans-serif;
+  --ap-font-medium: "Futura LT Medium", "Futura LT", "Futura PT", Futura, "Century Gothic", "Avenir Next", Arial, sans-serif;
+  --ap-box-shadow: 2px 2px 6px rgb(0 0 0 / 35%);
+
+  --radius: 0.125rem;
+  --background: #f5f6f7;
+  --foreground: #000000;
+  --card: #ffffff;
+  --card-foreground: #000000;
+  --popover: #ffffff;
+  --popover-foreground: #000000;
+  --primary: #ff2400;
+  --primary-foreground: #ffffff;
+  --secondary: #ebedee;
+  --secondary-foreground: #000000;
+  --muted: #ebedee;
+  --muted-foreground: #5c5c5c;
+  --accent: #ebedee;
+  --accent-foreground: #000000;
+  --destructive: #d61e00;
+  --border: #d9dcde;
+  --input: #c4cacd;
+  --ring: #ff2400;
+  --chart-1: #ff2400;
+  --chart-2: #6b7b83;
+  --chart-3: #a5a5a5;
+  --chart-4: #274259;
+  --chart-5: #5c5c5c;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #000000;
+  --sidebar-primary: #ff2400;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #ebedee;
+  --sidebar-accent-foreground: #000000;
+  --sidebar-border: #d9dcde;
+  --sidebar-ring: #ff2400;
+}
+
+@theme inline {
+  --font-sans: var(--ap-font);
+  --font-medium-ap: var(--ap-font-medium);
+  --font-mono: "Cascadia Mono", Consolas, "Courier New", monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-ap-red: var(--ap-red);
+  --color-ap-bluegray: var(--ap-bluegray);
+  --color-ap-bluegray-60: var(--ap-bluegray-60);
+  --color-ap-bluegray-15: var(--ap-bluegray-15);
+  --color-ap-darkblue: var(--ap-darkblue);
+  --color-ap-panel: var(--ap-panel);
+  --color-ap-line: var(--ap-line);
+  --radius-sm: calc(var(--radius) - 1px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 1px);
+  --radius-xl: calc(var(--radius) + 2px);
+  --shadow-ap: var(--ap-box-shadow);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--ap-font);
+    font-size: 13px;
+    text-align: left;
+    overflow: hidden;
+    user-select: none;
+  }
+  input,
+  textarea,
+  [contenteditable="true"],
+  .selectable {
+    user-select: text;
+  }
+  b,
+  strong {
+    font-family: var(--ap-font-medium);
+    font-weight: 500;
+  }
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-weight: 400;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--ap-bluegray-60);
+    border: 2px solid transparent;
+    background-clip: content-box;
+    border-radius: 5px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+/* A+P white box: highlights key information. Boxes stay white. */
+@utility ap-box {
+  background: #fff;
+  box-shadow: var(--ap-box-shadow);
+}
+
+/* Small uppercase caption, as in the style guide eyebrow. */
+@utility ap-eyebrow {
+  color: var(--ap-gray-dark);
+  text-transform: uppercase;
+  font-family: var(--ap-font);
+  font-weight: 700;
+  font-size: 10.5px;
+  line-height: 1.4;
+  letter-spacing: 0.14em;
+}

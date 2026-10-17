@@ -12,6 +12,7 @@ dist/
 dist-ssr/
 *.local
 .vite/
+*.tsbuildinfo
 
 # Tauri / Rust
 src-tauri/target/

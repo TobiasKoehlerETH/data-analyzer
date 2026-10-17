@@ -1,0 +1,68 @@
+pub mod commands;
+pub mod core;
+pub mod state;
+
+use std::sync::Arc;
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .manage(Arc::new(state::AppState::default()))
+        .invoke_handler(tauri::generate_handler![
+            commands::preview_file,
+            commands::load_file,
+            commands::dataset_info,
+            commands::descriptive_stats,
+            commands::get_series,
+            commands::analysis_vectors,
+            commands::curve_fit,
+            commands::values_at,
+            commands::filter_suggest,
+            commands::filter_preview,
+            commands::filter_apply,
+            commands::filter_clear,
+            commands::filter_get_chain,
+            commands::filter_save_chain,
+            commands::filter_load_chain,
+            commands::filter_describe,
+            commands::spectrum,
+            commands::correlation_compute,
+            commands::correlation_pair,
+            commands::correlation_lags,
+            commands::sysid_auto_decimation,
+            commands::sysid_estimate_time,
+            commands::sysid_identify,
+            commands::sysid_cancel,
+            commands::sysid_save_result,
+            commands::models_list,
+            commands::model_detail,
+            commands::model_rename,
+            commands::model_duplicate,
+            commands::model_delete,
+            commands::models_compare,
+            commands::model_update_matrices,
+            commands::models_save,
+            commands::models_load,
+            commands::simulation_run,
+            commands::simulation_clear,
+            commands::simulation_view_cmd,
+            commands::validation_run,
+            commands::compare_add_files,
+            commands::compare_state,
+            commands::compare_remove_file,
+            commands::compare_clear,
+            commands::compare_set_offset,
+            commands::compare_align_trigger,
+            commands::compare_align_clicks,
+            commands::compare_nearest_file,
+            commands::compare_set_mapping,
+            commands::compare_series,
+            commands::compare_differences,
+            commands::compare_stats,
+            commands::report_generate,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running Data Analyzer");
+}

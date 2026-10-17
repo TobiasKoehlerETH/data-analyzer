@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>[Document title] - A+P report template</title>
+  <!--
+    FOUR-PAGE A4 TEMPLATE
+    Replace the [placeholders]. Duplicate a .page section for more pages.
+    Keep the header and footer in each section: the logo appears on every page.
+    Replace a .image-placeholder with <img src="your-image.png" alt="Description">.
+    Keep the assets folder beside this file. No scripts or external services required.
+    PDF: print at A4 / 100% scale, enable backgrounds, disable browser headers/footers.
+  -->
+  <style>
+    @font-face {
+      font-family: Inter;
+      font-weight: 400;
+      src: url("assets/Inter-400.ttf") format("truetype");
+    }
+    @font-face {
+      font-family: Inter;
+      font-weight: 700 800;
+      src: url("assets/Inter-700.ttf") format("truetype");
+    }
+
+    :root {
+      --red: #c41230;
+      --dark-red: #8b0d24;
+      --text: #111419;
+      --muted: #5f6670;
+      --line: #e2e4e8;
+      --pale: #fbf3f5;
+      --desk: #f4f5f7;
+      --page-width: 210mm;
+      --page-height: 297mm;
+      --margin: 18mm;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 24px;
+      background: var(--desk);
+      color: var(--text);
+      font: 11pt/1.45 Inter, Arial, sans-serif;
+      counter-reset: page;
+    }
+    .page {
+      width: var(--page-width);
+      height: var(--page-height);
+      margin: 0 auto 24px;
+      padding: 18mm var(--margin) 25mm;
+      position: relative;
+      background: #fff;
+      box-shadow: 0 10px 35px #0001;
+      break-after: page;
+      counter-increment: page;
+    }
+    .page:last-child { break-after: auto; }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10mm;
+      padding-bottom: 5mm;
+      margin-bottom: 9mm;
+      border-bottom: 2px solid var(--red);
+    }
+    .logo { display: block; width: 46mm; height: auto; }
+    .section-label { color: var(--red); font-size: 10pt; font-weight: 700; text-align: right; }
+    .footer {
+      position: absolute;
+      bottom: 9mm;
+      left: var(--margin);
+      right: var(--margin);
+      display: flex;
+      justify-content: space-between;
+      color: var(--muted);
+      font-size: 8pt;
+    }
+    .page-number { position: absolute; left: 50%; transform: translateX(-50%); }
+    .page-number::after { content: counter(page); }
+
+    h1, h2, h3, p, figure { margin: 0; }
+    h1 { font-size: 34pt; font-weight: 800; line-height: 1.08; }
+    h2 { color: var(--red); font-size: 22pt; line-height: 1.2; margin-bottom: 4mm; }
+    h3 { font-size: 12pt; margin-bottom: 3mm; }
+    .intro { color: var(--muted); margin-bottom: 9mm; }
+    .eyebrow { font-size: 9pt; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+    .small { color: var(--muted); font-size: 9pt; }
+    .spaced { margin-top: 9mm; }
+    .columns { display: grid; grid-template-columns: 1fr 1fr; gap: 7mm; }
+    .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5mm; }
+    .card { border: 1px solid var(--line); padding: 5mm; }
+    .metric { color: var(--red); font-size: 23pt; font-weight: 700; margin-bottom: 2mm; }
+    .callout { padding: 5mm 6mm; border-left: 3px solid var(--red); background: var(--pale); }
+    .takeaway { position: absolute; left: var(--margin); right: var(--margin); bottom: 23mm; }
+    ul { padding-left: 5mm; margin: 0; }
+    li + li { margin-top: 3mm; }
+
+    .cover .header { border: 0; margin-bottom: 8mm; }
+    .cover-band {
+      margin: 0 calc(-1 * var(--margin));
+      padding: 20mm var(--margin);
+      background: linear-gradient(135deg, var(--red), var(--dark-red));
+      color: #fff;
+    }
+    .cover-band h1 { margin-top: 5mm; max-width: 165mm; }
+    .cover-subtitle { margin-top: 5mm; font-size: 15pt; }
+    .cover-meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6mm; margin-top: 10mm; }
+    .cover-meta dt { color: var(--muted); font-size: 8pt; text-transform: uppercase; margin-bottom: 2mm; }
+    .cover-meta dd { margin: 0; font-size: 10pt; font-weight: 700; }
+
+    .report-image { border: 1px solid var(--line); padding: 4mm; }
+    .report-image img { display: block; width: 100%; max-height: 115mm; object-fit: contain; }
+    .image-placeholder {
+      min-height: 72mm;
+      display: grid;
+      place-items: center;
+      border: 1px dashed #c4c8ce;
+      background: linear-gradient(145deg, #fff, var(--desk));
+      color: var(--muted);
+      font-size: 12pt;
+    }
+    .image-placeholder.large { min-height: 110mm; }
+    .cover .image-placeholder { min-height: 57mm; }
+    figcaption { margin-top: 3mm; font-size: 9pt; color: var(--muted); }
+
+    table { width: 100%; border-collapse: collapse; font-size: 10pt; }
+    th, td { border: 1px solid var(--line); padding: 4mm; text-align: left; vertical-align: top; }
+    th { border-bottom: 2px solid var(--red); font-size: 8pt; letter-spacing: .04em; text-transform: uppercase; }
+    .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5mm; }
+    .step { padding: 5mm; background: var(--desk); }
+    .step .eyebrow { color: var(--red); display: block; margin-bottom: 3mm; }
+
+    @media print {
+      @page { size: A4; margin: 0; }
+      body { padding: 0; background: #fff; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+      .page { margin: 0; box-shadow: none; }
+      .header, .footer, figure, .card, .callout, tr { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <!-- 1. COVER: title, optional hero image, document metadata. -->
+  <section class="page cover" aria-label="Cover">
+    <header class="header">
+      <img class="logo" src="assets/ap-logo.png" alt="Angst+Pfister">
+      <span class="section-label">[Document ID]</span>
+    </header>
+    <div class="cover-band">
+      <p class="eyebrow">[Report type]</p>
+      <h1>[Document title]</h1>
+      <p class="cover-subtitle">[Short subtitle]</p>
+    </div>
+    <figure class="spaced">
+      <div class="image-placeholder">[Cover image or illustration]</div>
+    </figure>
+    <dl class="cover-meta">
+      <div><dt>Author</dt><dd>[Name / team]</dd></div>
+      <div><dt>Date</dt><dd>[DD Month YYYY]</dd></div>
+      <div><dt>Version</dt><dd>[Version / status]</dd></div>
+    </dl>
+    <footer class="footer"><span>[Document ID]</span><span class="page-number"></span><span>[Version]</span></footer>
+  </section>
+
+  <!-- 2. SUMMARY: one message, three metrics, short findings. -->
+  <section class="page" aria-label="Summary">
+    <header class="header">
+      <img class="logo" src="assets/ap-logo.png" alt="Angst+Pfister">
+      <span class="section-label">01 / Summary</span>
+    </header>
+    <h2>[Main conclusion]</h2>
+    <p class="intro">[One sentence explaining the purpose or outcome.]</p>
+    <div class="cards">
+      <div class="card"><p class="metric">[Value]</p><p class="small">[Metric label]</p></div>
+      <div class="card"><p class="metric">[Value]</p><p class="small">[Metric label]</p></div>
+      <div class="card"><p class="metric">[Value]</p><p class="small">[Metric label]</p></div>
+    </div>
+    <figure class="report-image spaced">
+      <div class="image-placeholder">[Overview diagram]</div>
+      <figcaption>[One-sentence caption.]</figcaption>
+    </figure>
+    <div class="columns spaced">
+      <div><h3>Key findings</h3><ul><li>[Finding one]</li><li>[Finding two]</li></ul></div>
+      <div><h3>Implication</h3><p>[One short statement about what follows.]</p></div>
+    </div>
+    <aside class="callout takeaway"><strong>[The single takeaway for this page.]</strong></aside>
+    <footer class="footer"><span>[Document ID]</span><span class="page-number"></span><span>[Version]</span></footer>
+  </section>
+
+  <!-- 3. FIGURE PAGE: one dominant image and two brief explanations. -->
+  <section class="page" aria-label="Figure page">
+    <header class="header">
+      <img class="logo" src="assets/ap-logo.png" alt="Angst+Pfister">
+      <span class="section-label">02 / [Section]</span>
+    </header>
+    <h2>[Figure-led heading]</h2>
+    <p class="intro">[One sentence giving context.]</p>
+    <figure class="report-image">
+      <div class="image-placeholder large">[Main image, chart or illustration]</div>
+      <figcaption>[What the reader should notice.]</figcaption>
+    </figure>
+    <div class="columns spaced">
+      <div><h3>[Observation]</h3><p>[One or two short sentences.]</p></div>
+      <div><h3>[Meaning]</h3><p>[One or two short sentences.]</p></div>
+    </div>
+    <aside class="callout takeaway"><strong>[One clear conclusion.]</strong></aside>
+    <footer class="footer"><span>[Document ID]</span><span class="page-number"></span><span>[Version]</span></footer>
+  </section>
+
+  <!-- 4. RESULTS / ACTIONS: compact table and a three-step sequence. -->
+  <section class="page" aria-label="Results and next steps">
+    <header class="header">
+      <img class="logo" src="assets/ap-logo.png" alt="Angst+Pfister">
+      <span class="section-label">03 / Results</span>
+    </header>
+    <h2>[Results or decision heading]</h2>
+    <p class="intro">[One sentence introducing the comparison.]</p>
+    <table>
+      <thead><tr><th scope="col">Item</th><th scope="col">Result / status</th><th scope="col">Implication</th></tr></thead>
+      <tbody>
+        <tr><td>[Item one]</td><td>[Short result]</td><td>[Short implication]</td></tr>
+        <tr><td>[Item two]</td><td>[Short result]</td><td>[Short implication]</td></tr>
+        <tr><td>[Item three]</td><td>[Short result]</td><td>[Short implication]</td></tr>
+      </tbody>
+    </table>
+    <h3 class="spaced">Next steps</h3>
+    <div class="steps">
+      <div class="step"><span class="eyebrow">01</span><h3>[Action]</h3><p class="small">[Owner / milestone]</p></div>
+      <div class="step"><span class="eyebrow">02</span><h3>[Action]</h3><p class="small">[Owner / milestone]</p></div>
+      <div class="step"><span class="eyebrow">03</span><h3>[Action]</h3><p class="small">[Owner / milestone]</p></div>
+    </div>
+    <aside class="callout spaced"><strong>[Decision required]</strong><p>[One short sentence.]</p></aside>
+    <footer class="footer"><span>[Document ID]</span><span class="page-number"></span><span>[Version]</span></footer>
+  </section>
+</body>
+</html>
