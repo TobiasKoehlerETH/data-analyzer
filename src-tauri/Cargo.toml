@@ -32,6 +32,7 @@ base64 = "0.22"
 anyhow = "1"
 libm = "0.2"
 calamine = { version = "0.36", features = ["chrono"] }
+tiny_http = "0.12"
 
 [dev-dependencies]
 rust_xlsxwriter = { version = "0.100", features = ["chrono"] }

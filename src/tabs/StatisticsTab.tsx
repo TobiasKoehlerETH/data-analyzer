@@ -6,14 +6,12 @@ import { Button } from "@/components/ui/button";
 import { useApp } from "@/lib/store";
 import {
   analysisVectors,
-  finitePairs,
   summarize,
   histogram,
   downloadText,
   matchingRows,
   type PlotSelection,
   type Vectors,
-  type Point,
 } from "@/lib/analysis";
 import { tooltipStyle, valueAxis, fmtG } from "@/lib/chart";
 
@@ -130,74 +128,6 @@ export function StatisticsTab() {
     yLabel,
     selectedRows,
   ]);
-  const pairs = useMemo(() => finitePairs(x, y), [x, y]);
-  const rowPairs = useMemo(
-    () =>
-      finitePairs(
-        y.map((_, i) => i + 1),
-        y,
-      ),
-    [y],
-  );
-  const selectedPairs = useMemo(
-    () => finitePairs(selectedX, selectedY),
-    [selectedX, selectedY],
-  );
-  const selectionRows = useMemo(
-    () =>
-      selectedRows
-        ? [...selectedRows].flatMap((i) =>
-            finite(y[i]) ? [[i + 1, y[i]] as Point] : [],
-          )
-        : [],
-    [selectedRows, y],
-  );
-  const sources = useMemo(
-    () => [
-      {
-        name: yLabel,
-        points: pairs,
-        xLabel,
-        seriesIndex: 0,
-        scope: "Full vector (finite XY pairs)",
-      },
-      ...(selectedRows && selectedPairs.length >= 3
-        ? [
-            {
-              name: `${yLabel} · selected`,
-              points: selectedPairs,
-              xLabel,
-              seriesIndex: 0,
-              scope: "Full selected rows",
-            },
-          ]
-        : []),
-    ],
-    [pairs, selectedPairs, selectedRows, xLabel, yLabel],
-  );
-  const rowSources = useMemo(
-    () => [
-      {
-        name: yLabel,
-        points: rowPairs,
-        xLabel: "Row position",
-        seriesIndex: 0,
-        scope: "Full vector (finite XY pairs)",
-      },
-      ...(selectedRows && selectionRows.length >= 3
-        ? [
-            {
-              name: `${yLabel} · selected`,
-              points: selectionRows,
-              xLabel: "Row position",
-              seriesIndex: 0,
-              scope: "Full selected rows",
-            },
-          ]
-        : []),
-    ],
-    [rowPairs, selectedRows, selectionRows, yLabel],
-  );
   const charts = useMemo(() => {
     const common = {
       animation: false,
@@ -402,7 +332,6 @@ export function StatisticsTab() {
             <Panel title="Scatter" bodyClassName="p-1">
               <EChart
                 option={charts.scatter}
-                fitSources={sources}
                 onEvents={{ brushEnd: brush("scatter") }}
                 brushType="rect"
               />
@@ -410,7 +339,6 @@ export function StatisticsTab() {
             <Panel title="By row" bodyClassName="p-1">
               <EChart
                 option={charts.row}
-                fitSources={rowSources}
                 onEvents={{ brushEnd: brush("row") }}
                 brushType="lineX"
               />
@@ -452,7 +380,7 @@ export function StatisticsTab() {
               }
               bodyClassName="p-1"
             >
-              <EChart option={charts.box} fitting={false} />
+              <EChart option={charts.box} />
             </Panel>
           </div>
           <Panel

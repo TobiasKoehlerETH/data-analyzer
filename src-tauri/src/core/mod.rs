@@ -17,3 +17,4 @@ pub mod stats;
 pub mod svgplot;
 pub mod sysid;
 pub mod validation;
+pub mod workspace;

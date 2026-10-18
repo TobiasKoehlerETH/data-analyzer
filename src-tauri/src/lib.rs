@@ -1,5 +1,7 @@
 pub mod commands;
 pub mod core;
+#[cfg(debug_assertions)]
+pub mod devbridge;
 pub mod state;
 
 use std::sync::Arc;
@@ -10,9 +12,21 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(Arc::new(state::AppState::default()))
+        .setup(|_app| {
+            #[cfg(debug_assertions)]
+            devbridge::start(_app.handle().clone());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::preview_file,
-            commands::load_file,
+            commands::workspace_import,
+            commands::workspace_view,
+            commands::workspace_remove,
+            commands::workspace_rename,
+            commands::workspace_set_time,
+            commands::workspace_clear,
+            commands::workspace_edit,
+            commands::export_dataset,
             commands::dataset_info,
             commands::descriptive_stats,
             commands::get_series,

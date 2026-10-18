@@ -13,6 +13,8 @@ use crate::core::validation::ValidationResult;
 
 #[derive(Default)]
 pub struct AppState {
+    /// Variables imported from files (the analysis dataset is built from these).
+    pub workspace: Mutex<crate::core::workspace::Workspace>,
     pub data: RwLock<Option<Dataset>>,
     pub cache: CacheManager,
     pub models: Mutex<ModelLibrary>,

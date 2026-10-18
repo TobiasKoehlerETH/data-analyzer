@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { message } from "@tauri-apps/plugin-dialog";
+import { message } from "@/lib/platform";
 import { BadgeCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";

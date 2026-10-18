@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@/lib/platform";
 
 export type Json = string | number | boolean | null | Json[] | { [k: string]: Json };
 
@@ -59,6 +59,29 @@ export interface ImportOptions {
   skip_columns?: number[];
   /** null/undefined = auto, -1 = none (sample index), k = column k */
   time_column?: number | null;
+}
+
+export interface VariableInfo {
+  name: string;
+  len: number;
+  source: string;
+  min: number | null;
+  max: number | null;
+  is_time: boolean;
+  edits: string[];
+}
+
+export type VariableEdit =
+  | { op: "offset"; value: number }
+  | { op: "scale"; value: number }
+  | { op: "downsample"; value: number }
+  | { op: "normalize" | "zscore" | "demean" | "zero_start" | "invert" };
+
+export interface WorkspaceView {
+  variables: VariableInfo[];
+  time_var: string | null;
+  dataset: DatasetInfo | null;
+  added: string[];
 }
 
 export interface StatRow {
@@ -294,8 +317,16 @@ export interface ProgressEvent {
 export const api = {
   previewFile: (path: string, sheet?: string | null, options?: ImportOptions | null) =>
     invoke<PreviewResult>("preview_file", { path, sheet: sheet ?? null, options: options ?? null }),
-  loadFile: (path: string, sheet?: string | null, options?: ImportOptions | null) =>
-    invoke<DatasetInfo>("load_file", { path, sheet: sheet ?? null, options: options ?? null }),
+  workspaceImport: (path: string, sheet: string | null, options: ImportOptions, columns: string[]) =>
+    invoke<WorkspaceView>("workspace_import", { path, sheet, options, columns }),
+  workspaceView: () => invoke<WorkspaceView>("workspace_view"),
+  workspaceRemove: (names: string[]) => invoke<WorkspaceView>("workspace_remove", { names }),
+  workspaceRename: (old: string, newName: string) => invoke<WorkspaceView>("workspace_rename", { old, new: newName }),
+  workspaceSetTime: (name: string | null) => invoke<WorkspaceView>("workspace_set_time", { name }),
+  workspaceClear: () => invoke<WorkspaceView>("workspace_clear"),
+  workspaceEdit: (name: string, action: "edit" | "reset" | "duplicate", edit?: VariableEdit) =>
+    invoke<WorkspaceView>("workspace_edit", { name, action, edit: edit ?? null }),
+  exportDataset: (path: string) => invoke<number>("export_dataset", { path }),
   datasetInfo: () => invoke<DatasetInfo | null>("dataset_info"),
   descriptiveStats: () => invoke<StatRow[]>("descriptive_stats"),
   getSeries: (columns: string[], range: [number, number] | null, maxPoints: number) =>

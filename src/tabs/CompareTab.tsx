@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { open, message } from "@tauri-apps/plugin-dialog";
+import { open, message } from "@/lib/platform";
 import { FilePlus2, Link2, Star, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";

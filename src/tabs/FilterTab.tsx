@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { open, save, message } from "@tauri-apps/plugin-dialog";
+import { open, save, message } from "@/lib/platform";
 import { ArrowDown, ArrowUp, Eraser, FolderOpen, GripVertical, Plus, Save, Sparkles, Trash2, Wand2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";

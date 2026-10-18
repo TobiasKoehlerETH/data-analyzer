@@ -1,21 +1,7 @@
 import * as echarts from "echarts";
-import {
-  useEffect,
-  useImperativeHandle,
-  useRef,
-  forwardRef,
-  useMemo,
-  useState,
-  useContext,
-} from "react";
+import { useEffect, useImperativeHandle, useRef, forwardRef, useContext } from "react";
 import { cn } from "@/lib/utils";
 import { WorkspaceActive } from "@/lib/workspace";
-import { CurveFitter } from "./CurveFitter";
-import {
-  chartFitSources,
-  type FitSource,
-  type FitResult,
-} from "@/lib/analysis";
 
 export type EChartsInstance = echarts.ECharts;
 
@@ -25,8 +11,6 @@ export interface EChartHandle {
 
 interface Props {
   brushType?: "rect" | "lineX";
-  fitting?: boolean;
-  fitSources?: FitSource[];
   option: echarts.EChartsCoreOption;
   /** Replace instead of merging the option (default true). */
   notMerge?: boolean;
@@ -45,8 +29,6 @@ export const EChart = forwardRef<EChartHandle, Props>(function EChart(
     style,
     onReady,
     onEvents,
-    fitting = true,
-    fitSources,
     brushType,
   },
   ref,
@@ -55,40 +37,7 @@ export const EChart = forwardRef<EChartHandle, Props>(function EChart(
   const activeRef = useRef(active);
   activeRef.current = active;
   const el = useRef<HTMLDivElement>(null);
-  const [fitSession, setFitSession] = useState<FitSource[] | null>(null);
-  useEffect(() => { if (!active) setFitSession(null); }, [active]);
-  const [overlay, setOverlay] = useState<{
-    source: FitSource;
-    result: FitResult;
-    option: unknown;
-  } | null>(null);
-  const sources = useMemo(
-    () => (active && fitting ? (fitSources ?? chartFitSources(option)) : []),
-    [option, fitting, fitSources, active],
-  );
-  const displayOption = useMemo(() => {
-    if (!overlay || overlay.option !== option) return option;
-    const series = Array.isArray(option.series)
-      ? option.series
-      : [option.series];
-    const original = series[overlay.source.seriesIndex ?? 0] as any;
-    return {
-      ...option,
-      series: [
-        ...series,
-        {
-          id: "curve-fit-overlay",
-          name: "Fit",
-          type: "line",
-          showSymbol: false,
-          data: overlay.result.curve,
-          xAxisIndex: original?.xAxisIndex ?? 0,
-          yAxisIndex: original?.yAxisIndex ?? 0,
-          lineStyle: { color: "#ff2400", width: 2, type: "dashed" },
-        },
-      ],
-    };
-  }, [option, overlay]);
+  const displayOption = option;
   const inst = useRef<EChartsInstance | null>(null);
   const ready = useRef(false);
   const rendered = useRef<unknown>(null);
@@ -165,22 +114,6 @@ export const EChart = forwardRef<EChartHandle, Props>(function EChart(
       style={style}
     >
       <div ref={el} className="h-full w-full" />
-      {sources.length > 0 && (
-        <button
-          className="absolute right-1 top-0 z-10 border bg-white/90 px-2 py-0.5 text-[11px] text-ap-darkblue hover:text-ap-red"
-          title="Fit a curve to this chart"
-          onClick={() => setFitSession(sources)}
-        >
-          Fit curve
-        </button>
-      )}
-      {fitSession && (
-        <CurveFitter
-          sources={fitSession}
-          onClose={() => setFitSession(null)}
-          onApply={(source, result) => setOverlay({ source, result, option })}
-        />
-      )}
     </div>
   );
 });

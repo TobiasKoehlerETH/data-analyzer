@@ -1,24 +1,28 @@
 import { useEffect, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { open, save, message } from "@tauri-apps/plugin-dialog";
+import { listen, open, save, message, isTauri } from "@/lib/platform";
 import {
   AudioWaveform,
   BadgeCheck,
   ChartLine,
+  ChartScatter,
+  Database,
   Cpu,
+  FileSpreadsheet,
   FileText,
   FolderOpen,
   Grid3x3,
-  GripVertical,
   Library,
+  PanelLeftClose,
+  PanelLeftOpen,
   Play,
   Scale,
   SlidersHorizontal,
+  Spline,
 } from "lucide-react";
 import logo from "@/assets/ap-logo.png";
-import { Menubar, MenubarContent, MenubarItem, MenubarMenu, MenubarSeparator, MenubarShortcut, MenubarTrigger } from "@/components/ui/menubar";
+import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -38,21 +42,41 @@ import { ModelsTab } from "@/tabs/ModelsTab";
 import { SimulationTab } from "@/tabs/SimulationTab";
 import { ValidationTab } from "@/tabs/ValidationTab";
 import { ReportTab } from "@/tabs/ReportTab";
+import { CurveFitTab } from "@/tabs/CurveFitTab";
 
-const TABS: Record<TabId, { label: string; icon: typeof FolderOpen; component: () => React.ReactElement; description: string }> = {
-  file: { label: "File", icon: FolderOpen, component: FileTab, description: "Load CSV, TXT or Excel data and inspect the detected format" },
-  timeseries: { label: "Data Plots", icon: ChartLine, component: TimeSeriesTab, description: "Plot by row, time or any column" },
-  statistics: { label: "Statistics", icon: Grid3x3, component: StatisticsTab, description: "Explore distributions and linked selections" },
-  compare: { label: "Compare", icon: Scale, component: CompareTab, description: "Overlay and align several files" },
-  filter: { label: "Filtering", icon: SlidersHorizontal, component: FilterTab, description: "Filter chains with live preview" },
-  spectrum: { label: "Spectrum", icon: AudioWaveform, component: SpectrumTab, description: "FFT and Welch power spectral density" },
-  correlation: { label: "Correlations", icon: Grid3x3, component: CorrelationTab, description: "Correlation matrix, scatter and lag analysis" },
-  sysid: { label: "System ID", icon: Cpu, component: SysIdTab, description: "Identify MIMO state-space models" },
-  models: { label: "Models", icon: Library, component: ModelsTab, description: "Model library" },
-  simulation: { label: "Simulation", icon: Play, component: SimulationTab, description: "Measured vs. simulated outputs" },
-  validation: { label: "Validation", icon: BadgeCheck, component: ValidationTab, description: "Residual analysis and fit metrics" },
-  report: { label: "Reports", icon: FileText, component: ReportTab, description: "Export HTML or PDF reports" },
+interface PageDef {
+  label: string;
+  icon: typeof FolderOpen;
+  component: () => React.ReactElement;
+  /** One-line instruction shown under the page title. */
+  hint: string;
+  needsData?: boolean;
+}
+
+const PAGES: Record<TabId, PageDef> = {
+  file: { label: "Workspace", icon: Database, component: FileTab, hint: "Add columns from any number of files as variables." },
+  timeseries: { label: "Plots", icon: ChartLine, component: TimeSeriesTab, hint: "Tick signals on the left to plot them. Scroll to zoom, drag to pan.", needsData: true },
+  statistics: { label: "Statistics", icon: ChartScatter, component: StatisticsTab, hint: "Pick a signal; drag on any chart to select rows and compare.", needsData: true },
+  compare: { label: "Compare files", icon: Scale, component: CompareTab, hint: "Add two or more files to overlay and align the same signals." },
+  filter: { label: "Filter", icon: SlidersHorizontal, component: FilterTab, hint: "Pick a signal, let the app suggest filters, preview, then apply.", needsData: true },
+  spectrum: { label: "Spectrum", icon: AudioWaveform, component: SpectrumTab, hint: "See which frequencies a signal contains. Drag the red line to read a cutoff.", needsData: true },
+  correlation: { label: "Correlations", icon: Grid3x3, component: CorrelationTab, hint: "Find signals that move together. Click a cell or pair for details.", needsData: true },
+  curvefit: { label: "Curve fit", icon: Spline, component: CurveFitTab, hint: "Pick X and Y variables, choose a model and fit.", needsData: true },
+  sysid: { label: "Identify model", icon: Cpu, component: SysIdTab, hint: "Choose inputs and outputs, then identify a state-space model.", needsData: true },
+  models: { label: "Model library", icon: Library, component: ModelsTab, hint: "Saved models. Double-click a model to inspect or edit it." },
+  simulation: { label: "Simulate", icon: Play, component: SimulationTab, hint: "Run a saved model on the measured inputs and compare outputs.", needsData: true },
+  validation: { label: "Validate", icon: BadgeCheck, component: ValidationTab, hint: "Check a model's residuals and fit quality.", needsData: true },
+  report: { label: "Report", icon: FileText, component: ReportTab, hint: "Choose sections and export an A+P report as HTML or PDF." },
 };
+
+const STEPS: { label: string; pages: TabId[] }[] = [
+  { label: "Import", pages: ["file"] },
+  { label: "Explore", pages: ["timeseries", "statistics", "compare"] },
+  { label: "Analyse", pages: ["filter", "spectrum", "correlation", "curvefit"] },
+  { label: "Model", pages: ["sysid", "models", "simulation", "validation"] },
+  { label: "Share", pages: ["report"] },
+];
+const ORDER: TabId[] = STEPS.flatMap((s) => s.pages);
 
 function formatEta(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000));
@@ -60,15 +84,50 @@ function formatEta(ms: number): string {
   return `~${Math.floor(s / 60)}m ${s % 60}s left`;
 }
 
+function NeedsData({ onImport }: { onImport: () => void }) {
+  return (
+    <div className="flex h-full items-center justify-center">
+      <div className="ap-box flex w-[440px] flex-col items-start gap-4 p-8">
+        <span className="h-[3px] w-12 bg-ap-red" />
+        <h2 className="text-[26px] leading-tight text-ap-red">Workspace is empty</h2>
+        <Button size="lg" onClick={onImport}>
+          <Database /> Add data
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
-  const { activeTab, setActiveTab, tabOrder, setTabOrder, status, flash, progress, setProgress, dataset, requestOpen, refreshModels, showStatus } = useApp();
-  const [dragTab, setDragTab] = useState<TabId | null>(null);
+  const { activeTab, setActiveTab, flash, progress, setProgress, dataset, models, refreshModels, showStatus } = useApp();
   const [now, setNow] = useState(Date.now());
-  const [visitedTabs, setVisitedTabs] = useState(() => new Set<TabId>([activeTab]));
+  const [visited, setVisited] = useState(() => new Set<TabId>([activeTab]));
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem("sidebarCollapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleSidebar = () =>
+    setCollapsed((c) => {
+      try {
+        localStorage.setItem("sidebarCollapsed", c ? "0" : "1");
+      } catch {
+        /* ignore */
+      }
+      return !c;
+    });
 
   useEffect(() => {
-    setVisitedTabs(tabs => tabs.has(activeTab) ? tabs : new Set([...tabs, activeTab]));
+    setVisited((v) => (v.has(activeTab) ? v : new Set([...v, activeTab])));
   }, [activeTab]);
+
+  useEffect(() => {
+    refreshModels().catch(() => {});
+    // Restore the backend's current dataset after a reload.
+    api.datasetInfo().then((d) => d && !useApp.getState().dataset && useApp.getState().setDataset(d)).catch(() => {});
+  }, [refreshModels]);
 
   useEffect(() => {
     const un = listen<ProgressEvent>("progress", (e) => setProgress(e.payload.task, e.payload.value, e.payload.message));
@@ -83,9 +142,16 @@ export default function App() {
     return () => clearInterval(id);
   }, [progress]);
 
-  const openFile = async () => {
-    const path = await open({ multiple: false, filters: DATA_FILE_FILTERS, title: "Open data file" });
-    if (typeof path === "string") requestOpen(path);
+  /** Sends files to the Workspace import queue. */
+  const addFiles = (paths: string[]) => {
+    if (!paths.length) return;
+    setActiveTab("file");
+    setTimeout(() => window.dispatchEvent(new CustomEvent("workspace-add-files", { detail: paths })), 0);
+  };
+  const openFiles = async () => {
+    const picked = await open({ multiple: true, filters: DATA_FILE_FILTERS, title: "Open data file(s)" });
+    const paths = Array.isArray(picked) ? picked : typeof picked === "string" ? [picked] : [];
+    addFiles(paths);
   };
   const saveModels = async () => {
     const path = await save({ filters: JSON_FILTERS, title: "Save Model Library", defaultPath: "models.json" });
@@ -108,7 +174,10 @@ export default function App() {
       await message(errorText(e), { title: "Load failed", kind: "error" });
     }
   };
-  const exit = () => getCurrentWindow().close();
+  const exportData = () => window.dispatchEvent(new Event("export-data"));
+  const exit = () => {
+    if (isTauri) getCurrentWindow().close();
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -117,10 +186,16 @@ export default function App() {
       if ((k === "pageup" || k === "pagedown") && !document.querySelector('[role="dialog"]')) {
         e.preventDefault();
         const step = k === "pagedown" ? 1 : -1;
-        setActiveTab(tabOrder[(tabOrder.indexOf(activeTab) + step + tabOrder.length) % tabOrder.length]);
+        setActiveTab(ORDER[(ORDER.indexOf(activeTab) + step + ORDER.length) % ORDER.length]);
+      } else if (k === "b") {
+        e.preventDefault();
+        toggleSidebar();
       } else if (k === "o") {
         e.preventDefault();
-        openFile();
+        openFiles();
+      } else if (k === "e") {
+        e.preventDefault();
+        exportData();
       } else if (k === "s") {
         e.preventDefault();
         saveModels();
@@ -138,6 +213,7 @@ export default function App() {
 
   // Drag & drop of data files onto the window.
   useEffect(() => {
+    if (!isTauri) return;
     const un = getCurrentWebview().onDragDropEvent(async (e) => {
       if (e.payload.type !== "drop") return;
       const paths = e.payload.paths.filter((p) => DATA_FILE_EXTENSIONS.includes(p.split(".").pop()?.toLowerCase() ?? ""));
@@ -145,113 +221,134 @@ export default function App() {
         showStatus("Unsupported file type. Drop CSV, TXT, TSV or Excel files.");
         return;
       }
-      if (useApp.getState().activeTab === "compare") {
-        window.dispatchEvent(new CustomEvent("compare-add-files", { detail: paths }));
-      } else {
-        requestOpen(paths[0]);
-      }
+      if (useApp.getState().activeTab === "compare") window.dispatchEvent(new CustomEvent("compare-add-files", { detail: paths }));
+      else addFiles(paths);
     });
     return () => {
       un.then((f) => f());
     };
-  }, [requestOpen, showStatus]);
+  });
 
-  const eta =
-    progress && progress.value > 2 ? formatEta(((now - progress.startedAt) * (100 - progress.value)) / progress.value) : "";
+  const eta = progress && progress.value > 2 ? formatEta(((now - progress.startedAt) * (100 - progress.value)) / progress.value) : "";
+  const page = PAGES[activeTab];
+  const stepIndex = STEPS.findIndex((s) => s.pages.includes(activeTab));
+  const fileName = dataset?.path.split(/[\\/]/).pop() ?? "";
 
   return (
     <TooltipProvider delayDuration={400}>
       <div className="flex h-full flex-col">
         <div className="flex min-h-0 flex-1">
-          {/* Sidebar */}
-          <aside className="flex w-[218px] shrink-0 flex-col border-r border-ap-line bg-white px-5 pt-6 pb-4">
-            <img src={logo} alt="Angst+Pfister" className="w-[168px]" draggable={false} />
-            <span className="mt-7 mb-3 block h-[3px] w-[50px] bg-ap-red" />
-            <p className="ap-eyebrow">Data Analyzer</p>
-            <nav className="mt-3 -mx-2 flex flex-col gap-px overflow-y-auto">
-              {tabOrder.map((id) => {
-                const t = TABS[id];
-                const Icon = t.icon;
-                const active = id === activeTab;
-                return (
-                  <button
-                    key={id}
-                    draggable
-                    onDragStart={() => setDragTab(id)}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={() => {
-                      if (!dragTab || dragTab === id) return;
-                      const order = tabOrder.filter((x) => x !== dragTab);
-                      order.splice(order.indexOf(id), 0, dragTab);
-                      setTabOrder(order);
-                      setDragTab(null);
-                    }}
-                    onClick={() => setActiveTab(id)}
-                    title={`${t.description} · Ctrl+PageUp/PageDown to switch · Drag to reorder`}
-                    className={cn(
-                      "group flex items-center gap-3 rounded-sm border-l-[3px] px-3 py-2 text-left text-[13px] transition-colors duration-150",
-                      active ? "border-ap-red bg-ap-bluegray-15 text-black" : "border-transparent text-[#333] hover:text-ap-red",
-                    )}
-                  >
-                    <Icon className={cn("size-4 shrink-0", active ? "text-ap-red" : "text-ap-bluegray")} strokeWidth={1.6} />
-                    <span className="flex-1 truncate">{t.label}</span>
-                    <GripVertical className="size-3.5 text-ap-bluegray-60 opacity-0 group-hover:opacity-100" />
-                  </button>
-                );
-              })}
-            </nav>
-            <div className="mt-auto pt-4 text-[11px] leading-relaxed text-[#707070]">
-              {dataset ? (
-                <>
-                  <p className="truncate text-black" title={`${dataset.path} · ${dataset.sample_rate.toFixed(3)} Hz · ${dataset.file_type}`}>
-                    {dataset.path.split(/[\\/]/).pop()}
-                  </p>
-                  <p>
-                    {dataset.n_samples.toLocaleString("en-US")} rows · {dataset.n_signals} columns
-                  </p>
-                </>
-              ) : (
-                <p>No file loaded</p>
-              )}
+          {/* Sidebar: the workflow */}
+          <aside
+            className={cn(
+              "flex shrink-0 flex-col overflow-hidden border-r border-ap-line bg-white transition-[width] duration-200 ease-out motion-reduce:transition-none",
+              collapsed ? "w-[60px]" : "w-[232px]",
+            )}
+          >
+            <div className={cn("relative h-[86px] shrink-0 transition-[padding] duration-200", collapsed ? "px-[21px] pt-8" : "px-6 pt-6")}>
+              <img
+                src={logo}
+                alt="Angst+Pfister"
+                draggable={false}
+                className={cn("absolute top-6 left-6 w-[164px] max-w-none transition-opacity duration-150", collapsed ? "pointer-events-none opacity-0" : "opacity-100 delay-75")}
+              />
+              <span className={cn("absolute bottom-3 block h-[3px] bg-ap-red transition-all duration-200", collapsed ? "left-[18px] w-6" : "left-6 w-[50px]")} />
             </div>
+            <nav className="flex min-h-0 flex-1 flex-col gap-3 overflow-x-hidden overflow-y-auto px-2 pt-2 pb-4">
+              {STEPS.map((step, si) => (
+                <div key={step.label}>
+                  <p
+                    className="mb-1 flex h-5 items-center gap-3 border-l-[3px] border-transparent px-3 text-[10.5px] font-bold tracking-[0.14em] whitespace-nowrap text-ap-bluegray uppercase"
+                  >
+                    <span
+                      className={cn(
+                        "flex size-4 shrink-0 items-center justify-center rounded-full text-[9.5px] tracking-normal",
+                        si === stepIndex ? "bg-ap-red text-white" : "bg-ap-bluegray-15 text-ap-bluegray",
+                      )}
+                    >
+                      {si + 1}
+                    </span>
+                    <span className={cn("transition-opacity duration-150", collapsed ? "w-0 opacity-0" : "opacity-100")}>{step.label}</span>
+                  </p>
+                  {step.pages.map((id) => {
+                    const p = PAGES[id];
+                    const Icon = p.icon;
+                    const active = id === activeTab;
+                    const locked = p.needsData && !dataset;
+                    const badge = id === "models" && models.length > 0 ? models.length : null;
+                    return (
+                      <button
+                        key={id}
+                        onClick={() => setActiveTab(id)}
+                        title={collapsed ? p.label : p.hint}
+                        className={cn(
+                          "group relative flex h-9 w-full items-center gap-3 border-l-[3px] px-3 text-left text-[13.5px] whitespace-nowrap transition-colors",
+                          active ? "border-ap-red bg-ap-bluegray-15 text-black" : "border-transparent hover:bg-[#f7f8f8] hover:text-ap-red",
+                          locked && !active && "text-[#9aa1a6]",
+                        )}
+                      >
+                        <Icon className={cn("size-4 shrink-0", active ? "text-ap-red" : locked ? "text-ap-bluegray-60" : "text-ap-bluegray")} strokeWidth={1.7} />
+                        <span className={cn("flex-1 truncate transition-opacity duration-150", collapsed ? "opacity-0" : "opacity-100")}>{p.label}</span>
+                        {badge !== null && (
+                          <span
+                            className={cn(
+                              "rounded-full bg-ap-bluegray-15 px-1.5 text-[10.5px] text-ap-bluegray tabular-nums transition-all",
+                              collapsed && "absolute top-0.5 right-1 bg-ap-red px-1 text-[9px] text-white",
+                            )}
+                          >
+                            {badge}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
+            </nav>
           </aside>
 
           {/* Main */}
           <main className="flex min-w-0 flex-1 flex-col">
-            <div className="flex h-10 shrink-0 items-center gap-4 border-b border-ap-line bg-white pr-4 pl-2">
-              <Menubar className="h-8 border-none bg-transparent p-0 shadow-none">
-                <MenubarMenu>
-                  <MenubarTrigger className="px-2.5 text-[13px]">File</MenubarTrigger>
-                  <MenubarContent>
-                    <MenubarItem onSelect={openFile}>
-                      Open Data File… <MenubarShortcut>Ctrl+O</MenubarShortcut>
-                    </MenubarItem>
-                    <MenubarSeparator />
-                    <MenubarItem onSelect={saveModels}>
-                      Save Models… <MenubarShortcut>Ctrl+S</MenubarShortcut>
-                    </MenubarItem>
-                    <MenubarItem onSelect={loadModels}>
-                      Load Models… <MenubarShortcut>Ctrl+L</MenubarShortcut>
-                    </MenubarItem>
-                    <MenubarSeparator />
-                    <MenubarItem onSelect={exit}>
-                      Exit <MenubarShortcut>Ctrl+Q</MenubarShortcut>
-                    </MenubarItem>
-                  </MenubarContent>
-                </MenubarMenu>
-              </Menubar>
-              <div className="flex min-w-0 items-baseline gap-3">
-                <h1 className="truncate text-[18px] leading-none text-ap-red" title={TABS[activeTab].description}>{TABS[activeTab].label}</h1>
-              </div>
-            </div>
+            <header className="flex h-[58px] shrink-0 items-center gap-4 border-b border-ap-line bg-white pr-4 pl-3">
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                onClick={toggleSidebar}
+                title={collapsed ? "Expand sidebar (Ctrl+B)" : "Collapse sidebar (Ctrl+B)"}
+                aria-label="Toggle sidebar"
+              >
+                {collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
+              </Button>
+              <h1 className="min-w-0 flex-1 truncate text-[20px] text-black" title={page.hint}>
+                {page.label}
+              </h1>
+              {dataset && activeTab !== "file" && (
+                <button
+                  onClick={() => setActiveTab("file")}
+                  className="flex max-w-[360px] items-center gap-2.5 border border-ap-line bg-white px-3 py-1.5 text-left hover:border-ap-red"
+                  title={`${dataset.path}\nClick to change the data`}
+                >
+                  <FileSpreadsheet className="size-4 shrink-0 text-ap-red" />
+                  <span className="min-w-0">
+                    <span className="block truncate text-[12.5px] leading-tight">{fileName}</span>
+                    <span className="block text-[11px] leading-tight text-muted-foreground tabular-nums">
+                      {dataset.n_samples.toLocaleString("en-US")} rows · {dataset.n_signals} signals
+                    </span>
+                  </span>
+                  
+                </button>
+              )}
+            </header>
             <div className="relative min-h-0 flex-1">
-              {tabOrder.map((id) => {
-                if (id !== activeTab && !visitedTabs.has(id)) return null;
-                const C = TABS[id].component;
+              {ORDER.map((id) => {
+                if (id !== activeTab && !visited.has(id)) return null;
+                const P = PAGES[id];
+                const C = P.component;
+                const locked = P.needsData && !dataset;
                 return (
-                  <div key={id} className={cn("absolute inset-0 overflow-hidden p-3", id === activeTab ? "visible ap-workspace" : "invisible")}>
+                  <div key={id} className={cn("absolute inset-0 overflow-hidden p-4", id === activeTab ? "visible ap-workspace" : "invisible")}>
                     <WorkspaceActive.Provider value={id === activeTab}>
-                      <C />
+                      {locked ? <NeedsData onImport={() => setActiveTab("file")} /> : <C />}
                     </WorkspaceActive.Provider>
                   </div>
                 );
@@ -261,8 +358,9 @@ export default function App() {
         </div>
 
         {/* Status bar */}
-        <footer className="flex h-7 shrink-0 items-center gap-3 border-t border-ap-line bg-white px-3 text-[11.5px]">
-          <span className="min-w-0 flex-1 truncate text-[#333]">{flash ?? status}</span>
+        {(flash || progress) && (
+        <footer className="flex h-7 shrink-0 items-center gap-3 border-t border-ap-line bg-white px-4 text-[11.5px]">
+          <span className="min-w-0 flex-1 truncate text-[#333]">{flash}</span>
           {progress && (
             <>
               <span className="truncate text-muted-foreground">{progress.message}</span>
@@ -271,6 +369,7 @@ export default function App() {
             </>
           )}
         </footer>
+        )}
       </div>
       <Toaster position="bottom-right" />
     </TooltipProvider>

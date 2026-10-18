@@ -382,66 +382,48 @@ struct TableSpec<'a> {
     skip_rows: &'a [usize],
 }
 
+/// Splits one line into fields (quote-aware only when the line contains a quote).
+fn split_line(line: &str, delimiter: char, quoting: bool) -> Vec<String> {
+    if !quoting || !line.contains('"') {
+        return line.split(delimiter).map(|s| s.to_string()).collect();
+    }
+    let mut rdr = csv::ReaderBuilder::new().delimiter(delimiter as u8).has_headers(false).flexible(true).quoting(true).from_reader(line.as_bytes());
+    match rdr.records().next() {
+        Some(Ok(r)) => r.iter().map(|s| s.to_string()).collect(),
+        _ => line.split(delimiter).map(|s| s.to_string()).collect(),
+    }
+}
+
 fn read_table(text: &str, spec: &TableSpec, delimiter: char, max_rows: Option<usize>, quoting: bool) -> Result<RawTable, String> {
     let first_line = if spec.no_header { spec.data_start } else { spec.header_row };
-    // Skip pre-header lines by byte offset (equivalent of skiprows=range(header_row)).
-    let mut offset = 0;
-    for _ in 0..first_line {
-        match text[offset..].find('\n') {
-            Some(p) => offset += p + 1,
-            None => {
-                offset = text.len();
-                break;
-            }
-        }
-    }
-    let mut rdr = csv::ReaderBuilder::new()
-        .delimiter(delimiter as u8)
-        .has_headers(false)
-        .flexible(true)
-        .trim(csv::Trim::None)
-        .quoting(quoting)
-        .from_reader(text[offset..].as_bytes());
-    let abs_line = |r: &csv::StringRecord| first_line + r.position().map(|p| p.line() as usize).unwrap_or(1) - 1;
-    let mut records = rdr.records().peekable();
+    let mut lines = text.lines().enumerate().skip(first_line).map(|(i, l)| (i, l.trim_end_matches('\r')));
     let mut headers: Vec<String> = if spec.no_header {
         Vec::new()
     } else {
         loop {
-            match records.next() {
-                Some(Ok(r)) => {
-                    if r.iter().all(|f| f.trim().is_empty()) && r.len() <= 1 {
-                        continue;
-                    }
-                    break r.iter().map(|s| s.trim().to_string()).collect();
-                }
-                Some(Err(e)) => return Err(format!("CSV error: {e}")),
+            match lines.next() {
+                Some((_, l)) if l.trim().is_empty() => continue,
+                Some((_, l)) => break split_line(l, delimiter, quoting).into_iter().map(|s| s.trim().trim_matches('"').to_string()).collect(),
                 None => return Err("File contains no header row".into()),
             }
         }
     };
     let mut rows: Vec<Vec<String>> = Vec::new();
     let mut ncol = headers.len();
-    for rec in records {
-        let rec = match rec {
-            Ok(r) => r,
-            Err(_) => continue,
-        };
-        let line = abs_line(&rec);
-        if line < spec.data_start || spec.skip_rows.contains(&line) {
+    for (line_no, line) in lines {
+        if line_no < spec.data_start || spec.skip_rows.contains(&line_no) || line.trim().is_empty() {
             continue;
         }
-        if rec.len() == 1 && rec.get(0).map(|f| f.trim().is_empty()).unwrap_or(true) {
-            continue; // blank line
-        }
+        let fields = split_line(line, delimiter, quoting);
         if spec.no_header {
-            ncol = ncol.max(rec.len());
-        } else if rec.len() > ncol && rec.iter().skip(ncol).any(|f| !f.trim().is_empty()) {
+            ncol = ncol.max(fields.len());
+        } else if fields.len() > ncol && fields.iter().skip(ncol).any(|f| !f.trim().is_empty()) {
             // pandas: on_bad_lines="warn" skips rows with too many fields,
             // unless the extra fields are empty (trailing delimiter).
             continue;
         }
-        rows.push(rec.iter().take(if spec.no_header { rec.len() } else { ncol }).map(|s| s.to_string()).collect());
+        let take = if spec.no_header { fields.len() } else { ncol };
+        rows.push(fields.into_iter().take(take).collect());
         if let Some(m) = max_rows {
             if rows.len() >= m {
                 break;
@@ -1055,6 +1037,17 @@ mod import_option_tests {
         let prev = preview_file_with(&p, None, &opts).unwrap();
         assert_eq!(prev.skipped_columns, vec![2]);
         assert_eq!(prev.raw.len(), 7);
+        std::fs::remove_file(p).ok();
+    }
+
+    #[test]
+    fn crlf_keeps_first_data_row() {
+        let p = write_temp("crlf.csv", &["Time (s),Force (mN),x,extra,0.15", "0.0,99.0,1", "0.02,103.0,2", ""].join("\r\n"));
+        let r = parse_file(&p, None).unwrap();
+        assert_eq!(r.n_rows, 2);
+        assert_eq!(r.time.as_ref().unwrap()[0], 0.0);
+        let prev = preview_file(&p, None).unwrap();
+        assert_eq!(prev.rows[0][1], "99.0");
         std::fs::remove_file(p).ok();
     }
 

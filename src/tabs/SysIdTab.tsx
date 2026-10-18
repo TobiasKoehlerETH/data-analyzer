@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
-import { message } from "@tauri-apps/plugin-dialog";
+import { listen } from "@/lib/platform";
+import { message } from "@/lib/platform";
 import { Play, Save, Square, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

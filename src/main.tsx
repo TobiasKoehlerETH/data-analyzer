@@ -13,3 +13,8 @@ createRoot(document.getElementById("root")!).render(
     <App />
   </StrictMode>,
 );
+
+if (import.meta.env.DEV) {
+  // Dev-only handle for driving the UI from browser automation.
+  import("./lib/store").then(({ useApp }) => Object.assign(window, { __app: useApp }));
+}

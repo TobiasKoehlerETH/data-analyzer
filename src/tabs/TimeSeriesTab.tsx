@@ -4,9 +4,10 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { EmptyState, NumberInput, Panel } from "@/components/common";
 import { StackedChart, type ChartPanel } from "@/components/StackedChart";
-import { analysisVectors, finitePairs, type Vectors } from "@/lib/analysis";
+import { analysisVectors, type Vectors } from "@/lib/analysis";
 import { PALETTE, zip } from "@/lib/chart";
 import { useApp } from "@/lib/store";
 
@@ -84,7 +85,7 @@ export function TimeSeriesTab() {
   );
   const xLabel =
     xColumn === "__row"
-      ? "Row position"
+      ? "Row"
       : xColumn === "__time"
         ? "Time [s]"
         : (dataset?.signals.find((s) => s.column === xSignal)?.label ??
@@ -120,23 +121,6 @@ export function TimeSeriesTab() {
     }));
   }, [data, byGroup, dataset, x, xSignal]);
 
-  const fitSources = useMemo(
-    () =>
-      panels
-        .flatMap((p) => p.series)
-        .map((s, seriesIndex) => ({
-          name: s.name,
-          points: finitePairs(
-            s.data.map((p) => p[0]),
-            s.data.map((p) => p[1]),
-          ),
-          seriesIndex,
-          xLabel,
-          scope: "Full vector (finite XY pairs)",
-        })),
-    [panels, xLabel],
-  );
-
   const grouped = useMemo(() => {
     const m = new Map<
       string,
@@ -167,7 +151,7 @@ export function TimeSeriesTab() {
   return (
     <div className="flex h-full gap-3">
       <Panel
-        title="Y columns"
+        title="Signals"
         className="w-[270px] shrink-0"
         bodyClassName="flex flex-col gap-2 p-2"
       >
@@ -175,7 +159,7 @@ export function TimeSeriesTab() {
           <Search className="absolute top-2 left-2 size-4 text-ap-bluegray" />
           <Input
             className="h-8 pl-7"
-            placeholder="Search signals..."
+            placeholder="Search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -252,31 +236,30 @@ export function TimeSeriesTab() {
             );
           })}
         </div>
-        <p className="text-xs text-muted-foreground">
-          {selected.length} selected
-        </p>
       </Panel>
       <div className="flex min-w-0 flex-1 flex-col gap-2">
-        <div className="flex items-end gap-3">
-          <label className="analysis-field min-w-0 max-w-[360px] flex-1">
-            X
-            <select
-              aria-label="X axis"
-              value={xColumn}
-              onChange={(e) => {
-                setXColumn(e.target.value);
-                setCoord("");
-              }}
-            >
-              <option value="__row">Row position (1…N)</option>
-              <option value="__time">Time</option>
+        <div className="flex items-center gap-2">
+          <span className="text-[12.5px] text-muted-foreground">X axis</span>
+          <Select
+            value={xColumn}
+            onValueChange={(v) => {
+              setXColumn(v);
+              setCoord("");
+            }}
+          >
+            <SelectTrigger className="h-8 w-[300px]" aria-label="X axis">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="max-h-80">
+              <SelectItem value="__row">Row number</SelectItem>
+              <SelectItem value="__time">Time</SelectItem>
               {dataset.signals.map((s) => (
-                <option key={s.column} value={`column:${s.column}`}>
+                <SelectItem key={s.column} value={`column:${s.column}`}>
                   {s.label}
-                </option>
+                </SelectItem>
               ))}
-            </select>
-          </label>
+            </SelectContent>
+          </Select>
           <Button
             size="sm"
             variant="outline"
@@ -293,30 +276,6 @@ export function TimeSeriesTab() {
           >
             <ArrowLeftRight className="size-4" />
           </Button>
-          <label className="analysis-field min-w-0 max-w-[360px] flex-1">
-            Y
-            <select
-              aria-label="Y axis"
-              value={selected.length === 1 ? `column:${selected[0]}` : ""}
-              onChange={(e) => {
-                select([e.target.value.slice(7)]);
-                setCoord("");
-              }}
-            >
-              {selected.length !== 1 && (
-                <option value="" disabled>
-                  {selected.length
-                    ? `${selected.length} columns selected`
-                    : "Choose a column"}
-                </option>
-              )}
-              {dataset.signals.map((s) => (
-                <option key={s.column} value={`column:${s.column}`}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
-          </label>
         </div>
         {selected.length > 1 && (
           <div className="flex flex-wrap items-center gap-3 border border-ap-line bg-ap-bluegray-15 px-3 py-1.5 text-xs">
@@ -346,7 +305,6 @@ export function TimeSeriesTab() {
           ) : (
             <StackedChart
               panels={panels}
-              fitSources={fitSources}
               xLabel={xLabel}
               resetKey={JSON.stringify([
                 dataset.path,

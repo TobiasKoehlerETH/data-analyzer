@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { message } from "@tauri-apps/plugin-dialog";
+import { message } from "@/lib/platform";
 import { Eraser, Layers, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CheckField, EmptyState, Field, NumberInput, Panel, StatusText } from "@/components/common";

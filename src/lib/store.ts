@@ -10,6 +10,7 @@ export type TabId =
   | "filter"
   | "spectrum"
   | "correlation"
+  | "curvefit"
   | "sysid"
   | "models"
   | "simulation"
@@ -24,6 +25,7 @@ export const DEFAULT_TAB_ORDER: TabId[] = [
   "filter",
   "spectrum",
   "correlation",
+  "curvefit",
   "sysid",
   "models",
   "simulation",
@@ -48,7 +50,6 @@ interface AppStore {
   flash: string | null;
   progress: ProgressState | null;
   models: ModelSummary[];
-  pendingOpen: { path: string; sheet?: string | null } | null;
   setDataset: (d: DatasetInfo | null) => void;
   bumpData: (d?: DatasetInfo) => void;
   setActiveTab: (t: TabId) => void;
@@ -56,8 +57,6 @@ interface AppStore {
   showStatus: (text: string, timeoutMs?: number) => void;
   setProgress: (task: string, value: number, message: string) => void;
   refreshModels: () => Promise<void>;
-  requestOpen: (path: string, sheet?: string | null) => void;
-  clearPendingOpen: () => void;
 }
 
 let flashTimer: ReturnType<typeof setTimeout> | undefined;
@@ -84,7 +83,6 @@ export const useApp = create<AppStore>((set, get) => ({
   flash: null,
   progress: null,
   models: [],
-  pendingOpen: null,
   setDataset: (d) =>
     set({
       dataset: d,
@@ -121,8 +119,6 @@ export const useApp = create<AppStore>((set, get) => ({
     const models = await api.modelsList();
     set({ models });
   },
-  requestOpen: (path, sheet) => set({ pendingOpen: { path, sheet }, activeTab: "file" }),
-  clearPendingOpen: () => set({ pendingOpen: null }),
 }));
 
 export function signalLabel(ds: DatasetInfo | null, column: string): string {

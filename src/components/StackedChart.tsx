@@ -2,7 +2,6 @@ import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { WorkspaceActive } from "@/lib/workspace";
 import type * as echarts from "echarts";
 import { EChart, type EChartsInstance } from "./EChart";
-import type { FitSource } from "@/lib/analysis";
 import { AXIS_COLOR, FONT, MUTED, baseTextStyle, tooltipStyle, valueAxis } from "@/lib/chart";
 
 export interface ChartSeries {
@@ -29,7 +28,6 @@ export interface ChartPanel {
 }
 
 export interface StackedChartProps {
-  fitSources?: FitSource[];
   panels: ChartPanel[];
   /** Columns per row; panels fill row-major (side-by-side layouts). */
   columns?: number;
@@ -55,7 +53,6 @@ const TOP = 30;
 const GAP = 18;
 
 export function StackedChart({
-  fitSources,
   panels,
   columns = 1,
   xLabel,
@@ -310,7 +307,7 @@ export function StackedChart({
 
   return (
     <div ref={host} className={className ?? "h-full w-full min-h-0"}>
-      {n > 0 && <EChart option={option} fitSources={fitSources} onReady={handleReady} onEvents={events} />}
+      {n > 0 && <EChart option={option} onReady={handleReady} onEvents={events} />}
     </div>
   );
 }

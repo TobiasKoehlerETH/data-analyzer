@@ -10,7 +10,7 @@ use tauri::{AppHandle, Emitter, State};
 use crate::core::cache::CacheManager;
 use crate::core::compare::{CompareManager, CompareStatistics};
 use crate::core::correlation::{compute_correlation_matrix, compute_cross_correlation, compute_lagged_correlations, CorrelationPair};
-use crate::core::csv_parser::{parse_file_with, preview_file_with, ImportOptions, PreviewResult};
+use crate::core::csv_parser::{preview_file_with, ImportOptions, PreviewResult};
 use crate::core::dataset::{Dataset, DatasetInfo};
 use crate::core::downsample::{minmax, stride, window_indices};
 use crate::core::dsp::{decimate, mean, searchsorted, std};
@@ -86,31 +86,159 @@ pub async fn preview_file(path: String, sheet: Option<String>, options: Option<I
     blocking(move || preview_file_with(Path::new(&path), sheet.as_deref(), &options.unwrap_or_default())).await
 }
 
+/// Makes `ds` the active dataset, resets dependent results and pre-computes stats/correlations.
+fn install_dataset(app: &AppHandle, st: &AppState, ds: Dataset) -> CmdResult<DatasetInfo> {
+    if ds.signals.is_empty() {
+        return Err("No numeric signals found in file.".into());
+    }
+    st.cache.invalidate_all();
+    let signals = ds.all_signals();
+    let info = ds.info();
+    *st.data.write().unwrap() = Some(ds);
+    *st.correlation.lock().unwrap() = None;
+    st.simulations.lock().unwrap().clear();
+    *st.validation.lock().unwrap() = None;
+    st.sysid_results.lock().unwrap().clear();
+    emit_progress(app, "load", 80, "Pre-computing statistics...");
+    compute_descriptive_stats(&signals, Some(&st.cache));
+    emit_progress(app, "load", 90, "Pre-computing correlations...");
+    compute_correlation_matrix(&signals, Some(&st.cache));
+    emit_progress(app, "load", 100, "Done.");
+    Ok(info)
+}
+
+// ---------------------------------------------------------------------------
+// Workspace (variables imported from any number of files)
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct WorkspaceView {
+    variables: Vec<crate::core::workspace::VariableInfo>,
+    time_var: Option<String>,
+    dataset: Option<DatasetInfo>,
+    added: Vec<String>,
+}
+
+/// Rebuilds the analysis dataset from the workspace after every change.
+fn sync_workspace(app: &AppHandle, st: &AppState, added: Vec<String>) -> CmdResult<WorkspaceView> {
+    let (parse, variables, time_var) = {
+        let ws = st.workspace.lock().unwrap();
+        (ws.to_parse(), ws.info(), ws.time_var.clone())
+    };
+    let dataset = match parse {
+        Some(p) => Some(install_dataset(app, st, Dataset::from_parse("Workspace", p))?),
+        None => {
+            *st.data.write().unwrap() = None;
+            st.cache.invalidate_all();
+            None
+        }
+    };
+    Ok(WorkspaceView { variables, time_var, dataset, added })
+}
+
 #[tauri::command]
-pub async fn load_file(app: AppHandle, state: AppStateRef<'_>, path: String, sheet: Option<String>, options: Option<ImportOptions>) -> CmdResult<DatasetInfo> {
+pub async fn workspace_import(app: AppHandle, state: AppStateRef<'_>, path: String, sheet: Option<String>, options: Option<ImportOptions>, columns: Vec<String>) -> CmdResult<WorkspaceView> {
     let st = state.inner().clone();
     blocking(move || {
-        emit_progress(&app, "load", 20, "Parsing file...");
-        let parsed = parse_file_with(Path::new(&path), sheet.as_deref(), &options.unwrap_or_default())?;
-        emit_progress(&app, "load", 60, "Loading into memory...");
-        let ds = Dataset::from_parse(&path, parsed);
-        if ds.signals.is_empty() {
-            return Err("No numeric signals found in file.".into());
+        emit_progress(&app, "load", 20, "Reading file...");
+        let added = st.workspace.lock().unwrap().import(&path, sheet.as_deref(), &options.unwrap_or_default(), &columns)?;
+        sync_workspace(&app, &st, added)
+    })
+    .await
+}
+
+#[tauri::command]
+pub fn workspace_view(state: AppStateRef<'_>) -> WorkspaceView {
+    let ws = state.workspace.lock().unwrap();
+    WorkspaceView { variables: ws.info(), time_var: ws.time_var.clone(), dataset: state.data.read().ok().and_then(|d| d.as_ref().map(|d| d.info())), added: vec![] }
+}
+
+#[tauri::command]
+pub async fn workspace_remove(app: AppHandle, state: AppStateRef<'_>, names: Vec<String>) -> CmdResult<WorkspaceView> {
+    let st = state.inner().clone();
+    blocking(move || {
+        st.workspace.lock().unwrap().remove(&names);
+        sync_workspace(&app, &st, vec![])
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn workspace_rename(app: AppHandle, state: AppStateRef<'_>, old: String, new: String) -> CmdResult<WorkspaceView> {
+    let st = state.inner().clone();
+    blocking(move || {
+        st.workspace.lock().unwrap().rename(&old, &new)?;
+        sync_workspace(&app, &st, vec![])
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn workspace_set_time(app: AppHandle, state: AppStateRef<'_>, name: Option<String>) -> CmdResult<WorkspaceView> {
+    let st = state.inner().clone();
+    blocking(move || {
+        st.workspace.lock().unwrap().set_time(name)?;
+        sync_workspace(&app, &st, vec![])
+    })
+    .await
+}
+
+/// Edit, reset or duplicate one variable: `action` is "edit" (with `edit`), "reset" or "duplicate".
+#[tauri::command]
+pub async fn workspace_edit(app: AppHandle, state: AppStateRef<'_>, name: String, action: String, edit: Option<crate::core::workspace::Edit>) -> CmdResult<WorkspaceView> {
+    let st = state.inner().clone();
+    blocking(move || {
+        let mut added = vec![];
+        {
+            let mut ws = st.workspace.lock().unwrap();
+            match action.as_str() {
+                "edit" => ws.edit(&name, edit.ok_or("No edit given.")?)?,
+                "reset" => ws.reset(&name)?,
+                "duplicate" => added.push(ws.duplicate(&name)?),
+                other => return Err(format!("Unknown action '{other}'")),
+            }
         }
-        st.cache.invalidate_all();
-        let signals = ds.all_signals();
-        let info = ds.info();
-        *st.data.write().unwrap() = Some(ds);
-        *st.correlation.lock().unwrap() = None;
-        st.simulations.lock().unwrap().clear();
-        *st.validation.lock().unwrap() = None;
-        st.sysid_results.lock().unwrap().clear();
-        emit_progress(&app, "load", 80, "Pre-computing statistics...");
-        compute_descriptive_stats(&signals, Some(&st.cache));
-        emit_progress(&app, "load", 90, "Pre-computing correlations...");
-        compute_correlation_matrix(&signals, Some(&st.cache));
-        emit_progress(&app, "load", 100, "Done.");
-        Ok(info)
+        sync_workspace(&app, &st, added)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn workspace_clear(app: AppHandle, state: AppStateRef<'_>) -> CmdResult<WorkspaceView> {
+    let st = state.inner().clone();
+    blocking(move || {
+        *st.workspace.lock().unwrap() = Default::default();
+        sync_workspace(&app, &st, vec![])
+    })
+    .await
+}
+
+/// Writes the active dataset (time + every signal, filtered where applied) as CSV.
+#[tauri::command]
+pub async fn export_dataset(state: AppStateRef<'_>, path: String) -> CmdResult<usize> {
+    let st = state.inner().clone();
+    blocking(move || {
+        with_data(&st, |d| {
+            use std::io::Write;
+            let file = std::fs::File::create(&path).map_err(|e| format!("Cannot write {path}: {e}"))?;
+            let mut w = std::io::BufWriter::new(file);
+            let signals = d.all_signals();
+            let quote = |s: &str| if s.contains([',', '"', '\n']) { format!("\"{}\"", s.replace('"', "\"\"")) } else { s.to_string() };
+            let header: Vec<String> = std::iter::once("Time [s]".to_string()).chain(signals.iter().map(|(c, _)| quote(c))).collect();
+            writeln!(w, "{}", header.join(",")).map_err(|e| e.to_string())?;
+            for (i, t) in d.time.iter().enumerate() {
+                let mut line = format!("{t}");
+                for (_, v) in &signals {
+                    line.push(',');
+                    if let Some(x) = v.get(i).filter(|x| x.is_finite()) {
+                        line.push_str(&x.to_string());
+                    }
+                }
+                writeln!(w, "{line}").map_err(|e| e.to_string())?;
+            }
+            w.flush().map_err(|e| e.to_string())?;
+            Ok(d.time.len())
+        })
     })
     .await
 }

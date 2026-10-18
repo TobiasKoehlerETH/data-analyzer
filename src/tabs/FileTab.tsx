@@ -1,276 +1,465 @@
-import { useEffect, useState } from "react";
-import { open, message } from "@tauri-apps/plugin-dialog";
-import { FileSpreadsheet, FolderOpen, Settings2, Table2, Upload } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ChartLine, Clock, Copy, Download, FileSpreadsheet, FolderOpen, Info, Loader2, MoreHorizontal, Pencil, Plus, RotateCcw, SlidersHorizontal, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { NumberInput } from "@/components/common";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { EmptyState, Panel, StatusText } from "@/components/common";
 import { ImportSettings } from "@/components/ImportSettings";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { api, DATA_FILE_FILTERS, errorText, type ImportOptions, type Json, type PreviewResult, type StatRow } from "@/lib/api";
-import { fmt } from "@/lib/chart";
+import { api, DATA_FILE_FILTERS, errorText, type ImportOptions, type Json, type PreviewResult, type VariableEdit, type WorkspaceView } from "@/lib/api";
+import { ask, message, open, save } from "@/lib/platform";
 import { useApp } from "@/lib/store";
+import { cn } from "@/lib/utils";
+
+const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
+const fmtRange = (lo: number | null, hi: number | null) => (lo === null || hi === null ? "" : `${Number(lo.toPrecision(4))} … ${Number(hi.toPrecision(4))}`);
 
 function metaText(v: Json): string {
-  if (Array.isArray(v)) return `[${v.map((x) => (typeof x === "string" ? `'${x}'` : JSON.stringify(x))).join(", ")}]`;
+  if (Array.isArray(v)) return v.map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(", ");
   return typeof v === "string" ? v : JSON.stringify(v);
 }
 
+function Chip({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="flex items-baseline gap-1.5 border border-ap-line bg-white px-2.5 py-1 text-[12px]">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="text-black">{value}</span>
+    </span>
+  );
+}
+
+/** Columns that can become variables: the time column first, then numeric signals. */
+function importable(p: PreviewResult): number[] {
+  return [...(p.time_column_index !== null ? [p.time_column_index] : []), ...p.numeric_columns];
+}
+
 export function FileTab() {
-  const { setDataset, pendingOpen, clearPendingOpen, dataset, setProgress } = useApp();
+  const { setDataset, setActiveTab, setProgress, showStatus } = useApp();
+  const [ws, setWs] = useState<WorkspaceView>({ variables: [], time_var: null, dataset: null, added: [] });
+  const [queue, setQueue] = useState<string[]>([]);
   const [path, setPath] = useState("");
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [sheet, setSheet] = useState<string | null>(null);
-  const [status, setStatus] = useState<{ text: string; tone?: "error" | "ok" }>({ text: "" });
-  const [loading, setLoading] = useState(false);
-  const [stats, setStats] = useState<StatRow[]>([]);
   const [options, setOptions] = useState<ImportOptions>({});
-  const [view, setView] = useState<"preview" | "settings">("preview");
+  const [picked, setPicked] = useState<string[]>([]);
+  const [adjust, setAdjust] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [renaming, setRenaming] = useState<{ name: string; value: string } | null>(null);
+  const [fresh, setFresh] = useState<string[]>([]);
+  const [valueEdit, setValueEdit] = useState<{ name: string; op: "offset" | "scale" | "downsample"; value: number; all: boolean } | null>(null);
 
-  const doPreview = async (p: string, sh: string | null = null, opts: ImportOptions = options) => {
+  const applyWs = (v: WorkspaceView) => {
+    setWs(v);
+    setDataset(v.dataset);
+  };
+
+  useEffect(() => {
+    api.workspaceView().then(setWs).catch(() => {});
+  }, []);
+
+  const openFile = async (p: string, sh: string | null = null, opts: ImportOptions = {}, keepPicked = false) => {
+    setError("");
     try {
       const r = await api.previewFile(p, sh, opts);
+      setPath(p);
       setPreview(r);
       setSheet(r.sheet);
-      setStatus({ text: "Preview loaded. Click 'Load File' to load all data." });
+      setOptions(opts);
+      const cols = importable(r).map((i) => r.headers[i]);
+      setPicked((prev) => (keepPicked ? prev.filter((c) => cols.includes(c)) : cols));
       return r;
     } catch (e) {
-      setPreview(null);
-      setStatus({ text: `Preview error: ${errorText(e)}`, tone: "error" });
+      setError(errorText(e));
       return null;
     }
   };
 
-  const doLoad = async (p = path, sh = sheet, opts: ImportOptions = options) => {
-    if (!p) return;
-    setLoading(true);
-    setStatus({ text: "Loading..." });
-    setProgress("load", 10, "Loading file...");
-    try {
-      const info = await api.loadFile(p, sh, opts);
-      setDataset(info);
-      setStatus({ text: `Loaded ${info.n_samples.toLocaleString("en-US")} samples, ${info.n_signals} signals.`, tone: "ok" });
-      setStats(await api.descriptiveStats());
-    } catch (e) {
-      setStatus({ text: `Error: ${errorText(e)}`, tone: "error" });
-      setProgress("load", 100, "");
-      await message(errorText(e), { title: "Load Error", kind: "error" });
-    } finally {
-      setLoading(false);
-    }
+  const closeFile = () => {
+    setPath("");
+    setPreview(null);
+    setOptions({});
+    setAdjust(false);
+    setError("");
+    const [next, ...rest] = queue;
+    setQueue(rest);
+    if (next) openFile(next);
+  };
+
+  const enqueue = (paths: string[]) => {
+    if (paths.length === 0) return;
+    if (!preview) {
+      openFile(paths[0]);
+      setQueue((q) => [...q, ...paths.slice(1)]);
+    } else setQueue((q) => [...q, ...paths]);
   };
 
   const browse = async () => {
-    const p = await open({ multiple: false, filters: DATA_FILE_FILTERS, title: "Open data file" });
-    if (typeof p === "string") {
-      setPath(p);
-      setOptions({});
-      await doPreview(p, null, {});
+    const sel = await open({ multiple: true, filters: DATA_FILE_FILTERS, title: "Add data" });
+    enqueue(Array.isArray(sel) ? sel : typeof sel === "string" ? [sel] : []);
+  };
+
+  useEffect(() => {
+    const h = (e: Event) => enqueue((e as CustomEvent<string[]>).detail);
+    window.addEventListener("workspace-add-files", h);
+    return () => window.removeEventListener("workspace-add-files", h);
+  });
+
+  const addVariables = async () => {
+    if (!preview || picked.length === 0) return;
+    // Keep the file's column order.
+    const ordered = importable(preview).map((i) => preview.headers[i]).filter((c) => picked.includes(c));
+    setBusy(true);
+    setError("");
+    setProgress("load", 10, "Reading file...");
+    try {
+      const v = await api.workspaceImport(path, sheet, options, ordered);
+      applyWs(v);
+      setFresh(v.added);
+      showStatus(`Added ${v.added.length} variable${v.added.length === 1 ? "" : "s"} from ${fileName(path)}`);
+      closeFile();
+    } catch (e) {
+      setProgress("load", 100, "");
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
     }
   };
 
-  // Menu "Open…" and drag & drop: preview then load immediately (like load_file in the template).
-  useEffect(() => {
-    if (!pendingOpen) return;
-    const { path: p, sheet: sh } = pendingOpen;
-    clearPendingOpen();
-    setPath(p);
-    setOptions({});
-    doPreview(p, sh ?? null, {}).then((r) => {
-      if (r) doLoad(p, r.sheet, {});
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingOpen]);
+  const exportCsv = async () => {
+    const p = await save({ filters: [{ name: "CSV", extensions: ["csv"] }], title: "Export workspace as CSV", defaultPath: "workspace.csv" });
+    if (!p) return;
+    try {
+      const rows = await api.exportDataset(p);
+      showStatus(`Exported ${rows.toLocaleString("en-US")} rows to ${p}`);
+    } catch (e) {
+      await message(errorText(e), { title: "Export failed", kind: "error" });
+    }
+  };
 
   useEffect(() => {
-    if (!dataset) setStats([]);
-    else api.descriptiveStats().then(setStats).catch(() => {});
-  }, [dataset]);
+    const h = () => {
+      if (ws.variables.length) exportCsv();
+    };
+    window.addEventListener("export-data", h);
+    return () => window.removeEventListener("export-data", h);
+  });
 
-  const metaLines: [string, string][] = preview
-    ? [
-        ["File type", preview.file_type],
-        ...(preview.is_raser_format ? ([["Format", "Raser DataLog"]] as [string, string][]) : []),
-        ["Encoding", preview.encoding],
-        ["Delimiter", preview.file_type === "Excel workbook" ? "— (spreadsheet cells)" : `'${preview.delimiter}'`],
-        ...(preview.sheet ? ([["Worksheet", preview.sheet]] as [string, string][]) : []),
-        ["Header row", preview.no_header ? "none" : String(preview.header_row + 1)],
-        ["Data starts at row", String(preview.data_start + 1)],
-        ["Columns", `${preview.headers.length - preview.skipped_columns.length} used of ${preview.headers.length}`],
-        ["Time axis", preview.time_column ?? "sample index"],
-        ...Object.entries(preview.metadata).map(([k, v]) => [k, metaText(v)] as [string, string]),
-      ]
-    : [];
+  const run = async (f: () => Promise<WorkspaceView>) => {
+    try {
+      applyWs(await f());
+    } catch (e) {
+      await message(errorText(e), { kind: "error" });
+    }
+  };
+
+  const cols = useMemo(() => (preview ? importable(preview) : []), [preview]);
+  const meta = preview ? Object.entries(preview.metadata) : [];
 
   return (
-    <div className="flex h-full flex-col gap-3">
-      <div className="flex items-center gap-2">
-        <Input
-          className="h-9 flex-1 font-medium"
-          placeholder="Drop a file or paste its path"
-          value={path}
-          onChange={(e) => setPath(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && path.trim()) {
-              setOptions({});
-              doPreview(path.trim(), null, {});
-            }
-          }}
-          title="Path of a CSV, TSV, TXT or Excel (xlsx/xls/ods) data file"
-        />
-        {preview && preview.sheets.length > 1 && (
-          <Select
-            value={sheet ?? undefined}
-            onValueChange={(v) => {
-              setSheet(v);
-              setOptions({});
-              doPreview(path, v, {});
+    <div className="flex h-full gap-4">
+      {/* Workspace variables */}
+      <section className="flex w-[330px] shrink-0 flex-col border border-ap-line bg-white">
+        <header className="flex h-11 items-center gap-1 border-b border-ap-line pr-2 pl-4">
+          <h2 className="flex-1 text-[14px]">
+            Workspace <span className="text-muted-foreground tabular-nums">{ws.variables.length || ""}</span>
+          </h2>
+          <Button size="icon-sm" variant="ghost" disabled={!ws.variables.length} onClick={exportCsv} title="Export as CSV (Ctrl+E)">
+            <Download />
+          </Button>
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            disabled={!ws.variables.length}
+            title="Clear workspace"
+            onClick={async () => {
+              if (await ask("Remove all variables?", { title: "Clear workspace", kind: "warning" })) run(api.workspaceClear);
             }}
           >
-            <SelectTrigger className="h-9 w-44" title="Worksheet to import">
-              <FileSpreadsheet className="size-4 text-ap-bluegray" />
-              <SelectValue placeholder="Worksheet" />
-            </SelectTrigger>
-            <SelectContent>
-              {preview.sheets.map((s) => (
-                <SelectItem key={s} value={s}>
-                  {s}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            <Trash2 />
+          </Button>
+        </header>
+        <ul className="min-h-0 flex-1 overflow-y-auto py-1">
+          {ws.variables.map((v) => (
+            <li key={v.name} className={cn("group flex items-center gap-2 px-2 py-1.5 hover:bg-[#f7f8f8]", fresh.includes(v.name) && "bg-[#fff4f1]")}>
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                onClick={() => run(() => api.workspaceSetTime(v.is_time ? null : v.name))}
+                title={v.is_time ? "Time axis (click to unset)" : "Use as time axis"}
+                className={v.is_time ? "text-ap-red" : "text-ap-bluegray-60 opacity-0 group-hover:opacity-100"}
+              >
+                <Clock />
+              </Button>
+              <div className="min-w-0 flex-1">
+                {renaming?.name === v.name ? (
+                  <Input
+                    autoFocus
+                    className="h-7 text-[13px]"
+                    value={renaming.value}
+                    onChange={(e) => setRenaming({ name: v.name, value: e.target.value })}
+                    onBlur={() => setRenaming(null)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") setRenaming(null);
+                      if (e.key === "Enter") {
+                        const value = renaming.value;
+                        setRenaming(null);
+                        if (value.trim() && value !== v.name) run(() => api.workspaceRename(v.name, value));
+                      }
+                    }}
+                  />
+                ) : (
+                  <p className="truncate text-[13px]" onDoubleClick={() => setRenaming({ name: v.name, value: v.name })} title={`${v.source}\nDouble-click to rename`}>
+                    {v.name}
+                  </p>
+                )}
+                <p className="truncate text-[11px] text-muted-foreground tabular-nums" title={[v.source, ...v.edits].join("\n")}>
+                  {v.edits.length > 0 && <span className="mr-1 text-ap-red">edited ·</span>}
+                  {v.len.toLocaleString("en-US")} · {fmtRange(v.min, v.max)}
+                </p>
+              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="icon-xs" variant="ghost" className="opacity-0 group-hover:opacity-100 data-[state=open]:opacity-100" title="Edit">
+                    <MoreHorizontal />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-48 rounded-none">
+                  <DropdownMenuItem onSelect={() => setValueEdit({ name: v.name, op: "offset", value: 0, all: false })}>Add offset…</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => setValueEdit({ name: v.name, op: "scale", value: 1, all: false })}>Multiply by…</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => setValueEdit({ name: v.name, op: "downsample", value: 10, all: true })}>Downsample…</DropdownMenuItem>
+                  {(
+                    [
+                      ["normalize", "Normalize 0–1"],
+                      ["zscore", "Standardize (z-score)"],
+                      ["demean", "Remove mean"],
+                      ["zero_start", "Start at zero"],
+                      ["invert", "Invert sign"],
+                    ] as const
+                  ).map(([op, label]) => (
+                    <DropdownMenuItem key={op} onSelect={() => run(() => api.workspaceEdit(v.name, "edit", { op } as VariableEdit))}>
+                      {label}
+                    </DropdownMenuItem>
+                  ))}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => setRenaming({ name: v.name, value: v.name })}>
+                    <Pencil /> Rename
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => run(() => api.workspaceEdit(v.name, "duplicate"))}>
+                    <Copy /> Duplicate
+                  </DropdownMenuItem>
+                  {v.edits.length > 0 && (
+                    <DropdownMenuItem onSelect={() => run(() => api.workspaceEdit(v.name, "reset"))}>
+                      <RotateCcw /> Reset to original
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem variant="destructive" onSelect={() => run(() => api.workspaceRemove([v.name]))}>
+                    <Trash2 /> Remove
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </li>
+          ))}
+        </ul>
+        <footer className="flex gap-2 border-t border-ap-line p-3">
+          <Button variant="outline" className="flex-1" onClick={browse}>
+            <Plus /> Add data
+          </Button>
+          <Button className="flex-1" disabled={!ws.dataset} onClick={() => setActiveTab("timeseries")}>
+            <ChartLine /> Plot
+          </Button>
+        </footer>
+      </section>
+
+      {/* Import from a file */}
+      <div className="flex min-w-0 flex-1 flex-col gap-3">
+        {!preview ? (
+          <div className="flex h-full flex-col items-center justify-center gap-3">
+            <button
+              onClick={browse}
+              className="flex w-[440px] flex-col items-center gap-4 border border-dashed border-ap-bluegray-60 bg-white px-10 py-14 text-center transition-colors hover:border-ap-red"
+            >
+              <FolderOpen className="size-12 text-ap-red" strokeWidth={1.2} />
+              <span className="text-[22px] text-black">Add data</span>
+              <span className="text-[12.5px] text-muted-foreground">CSV · TXT · Excel</span>
+            </button>
+            {error && <p className="text-xs text-destructive">{error}</p>}
+          </div>
+        ) : (
+          <>
+            <div className="flex flex-wrap items-center gap-2 border border-ap-line bg-white px-3 py-2">
+              <FileSpreadsheet className="size-5 shrink-0 text-ap-red" />
+              <span className="min-w-0 truncate text-[14px]" title={path}>
+                {fileName(path)}
+              </span>
+              {preview.sheets.length > 1 && (
+                <Select value={sheet ?? undefined} onValueChange={(v) => openFile(path, v, {})}>
+                  <SelectTrigger className="h-8 w-44" title="Worksheet">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {preview.sheets.map((s) => (
+                      <SelectItem key={s} value={s}>
+                        {s}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+              {queue.length > 0 && (
+                <span className="text-[12px] text-muted-foreground" title={queue.map(fileName).join("\n")}>
+                  +{queue.length} queued
+                </span>
+              )}
+              <div className="flex-1" />
+              <Button variant="ghost" size="sm" onClick={closeFile} title={queue.length ? "Skip this file" : "Close"}>
+                <X />
+              </Button>
+              <Button onClick={addVariables} disabled={busy || picked.length === 0} className="min-w-40">
+                {busy ? <Loader2 className="animate-spin" /> : <Plus />} Add {picked.length} variable{picked.length === 1 ? "" : "s"}
+              </Button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {!adjust && (
+                <>
+                  <Chip label="Header" value={preview.no_header ? "none" : `row ${preview.header_row + 1}`} />
+                  <Chip label="Data from" value={`row ${preview.data_start + 1}`} />
+                  {preview.file_type !== "Excel workbook" && <Chip label="Separator" value={preview.delimiter === "\\t" ? "tab" : preview.delimiter} />}
+                </>
+              )}
+              {meta.length > 0 && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="sm" className="text-muted-foreground" title="File header information">
+                      <Info /> {meta.length}
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent className="selectable max-h-80 w-96 overflow-auto rounded-none p-3 text-[12px]">
+                    <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+                      {meta.map(([k, v]) => (
+                        <div key={k} className="contents">
+                          <dt className="text-ap-red">{k}</dt>
+                          <dd className="break-words">{metaText(v)}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+              <div className="flex-1" />
+              <Button variant={adjust ? "default" : "outline"} size="sm" onClick={() => setAdjust(!adjust)} title="Header row, data start, ignored rows and columns">
+                <SlidersHorizontal /> Rows &amp; columns
+                {Object.keys(options).length > 0 && !adjust && <span className="ml-0.5 size-1.5 rounded-full bg-ap-red" />}
+              </Button>
+            </div>
+
+            {error && <p className="text-xs text-destructive">{error}</p>}
+
+            <section className="min-h-0 flex-1 border border-ap-line bg-white">
+              {adjust ? (
+                <ImportSettings preview={preview} options={options} onChange={(o) => openFile(path, sheet, o, true)} />
+              ) : (
+                <div className="selectable h-full overflow-auto">
+                  <Table className="text-[12px]">
+                    <TableHeader className="sticky top-0 z-10 bg-white shadow-[0_1px_0_var(--ap-line)]">
+                      <TableRow>
+                        <TableHead className="w-12 text-right text-muted-foreground">#</TableHead>
+                        {preview.headers.map((h, i) => {
+                          if (preview.skipped_columns.includes(i)) return null;
+                          const can = cols.includes(i);
+                          const on = picked.includes(h);
+                          return (
+                            <TableHead key={i} className="whitespace-nowrap">
+                              {can ? (
+                                <label className={cn("flex cursor-pointer items-center gap-1.5", on ? "text-black" : "text-muted-foreground")}>
+                                  <Checkbox checked={on} onCheckedChange={(v) => setPicked(v ? [...picked, h] : picked.filter((x) => x !== h))} />
+                                  {h}
+                                  {preview.time_column_index === i && <Clock className="size-3 text-ap-red" />}
+                                </label>
+                              ) : (
+                                <span className="text-muted-foreground/70" title="Not numeric">
+                                  {h}
+                                </span>
+                              )}
+                            </TableHead>
+                          );
+                        })}
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {preview.rows.map((r, i) => (
+                        <TableRow key={i} className="even:bg-[#f7f8f8]">
+                          <TableCell className="py-1 text-right text-muted-foreground tabular-nums">{preview.data_start + i + 1}</TableCell>
+                          {r.map((c, j) =>
+                            preview.skipped_columns.includes(j) ? null : (
+                              <TableCell key={j} className={cn("py-1 whitespace-nowrap tabular-nums", !picked.includes(preview.headers[j]) && "text-muted-foreground/60")}>
+                                {c}
+                              </TableCell>
+                            ),
+                          )}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </section>
+          </>
         )}
-        <Button variant="outline" className="h-9" onClick={browse} title="Browse for a CSV, TSV, TXT or Excel data file to load">
-          <FolderOpen /> Browse…
-        </Button>
-        <Button className="h-9" disabled={!path || loading} onClick={() => doLoad()} title="Parse and load the selected file into memory for analysis">
-          <Upload /> Load
-        </Button>
       </div>
 
-      <ResizablePanelGroup orientation="vertical" className="min-h-0 flex-1">
-        <ResizablePanel defaultSize="62%" minSize="20%">
-          <Panel
-            title={view === "preview" ? <span title="First 100 rows">Preview{preview ? ` · ${preview.headers.length - preview.skipped_columns.length} columns` : ""}</span> : "Import settings"}
-            className="h-full"
-            bodyClassName={view === "preview" ? "p-0 overflow-auto selectable" : "p-0"}
-            actions={
-              preview && (
-                <Tabs value={view} onValueChange={(v) => setView(v as "preview" | "settings")}>
-                  <TabsList className="h-7 rounded-none">
-                    <TabsTrigger value="preview" className="h-6 rounded-none px-2 text-xs">
-                      <Table2 /> Preview
-                    </TabsTrigger>
-                    <TabsTrigger value="settings" className="h-6 rounded-none px-2 text-xs" title="Choose the header row, where data starts and which rows/columns to ignore">
-                      <Settings2 /> Settings
-                      {Object.keys(options).length > 0 && <span className="ml-1 h-1.5 w-1.5 rounded-full bg-ap-red" />}
-                    </TabsTrigger>
-                  </TabsList>
-                </Tabs>
-              )
-            }
-          >
-            {preview && view === "settings" ? (
-              <ImportSettings
-                preview={preview}
-                options={options}
-                loading={loading}
-                onChange={(o) => {
-                  setOptions(o);
-                  doPreview(path, sheet, o);
-                }}
-                onLoad={() => doLoad()}
+      <Dialog open={!!valueEdit} onOpenChange={(o) => !o && setValueEdit(null)}>
+        <DialogContent className="rounded-none sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="font-normal">
+              {valueEdit?.op === "offset" ? "Add offset" : valueEdit?.op === "scale" ? "Multiply by" : "Keep every n-th point"}
+              {!valueEdit?.all && (
+                <>
+                  {" "}
+                  · <span className="text-ap-red">{valueEdit?.name}</span>
+                </>
+              )}
+            </DialogTitle>
+          </DialogHeader>
+          {valueEdit && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const { name, op, value, all } = valueEdit;
+                setValueEdit(null);
+                const names = all ? ws.variables.map((x) => x.name) : [name];
+                run(async () => {
+                  let last = ws;
+                  for (const n of names) last = await api.workspaceEdit(n, "edit", { op, value });
+                  return last;
+                });
+              }}
+            >
+              <NumberInput
+                value={valueEdit.value}
+                step={valueEdit.op === "downsample" ? 1 : 0.1}
+                integer={valueEdit.op === "downsample"}
+                min={valueEdit.op === "downsample" ? 2 : undefined}
+                onChange={(value) => setValueEdit({ ...valueEdit, value })}
               />
-            ) : preview ? (
-              <Table className="text-[12px]">
-                <TableHeader className="sticky top-0 z-10 bg-white">
-                  <TableRow>
-                    <TableHead className="w-12 text-right text-muted-foreground">#</TableHead>
-                    {preview.headers.map((h, i) =>
-                      preview.skipped_columns.includes(i) ? null : (
-                        <TableHead key={i} className="whitespace-nowrap text-black">
-                          {h}
-                          {preview.time_column_index === i && <span className="ml-1 text-[10px] text-ap-red">time</span>}
-                        </TableHead>
-                      ),
-                    )}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {preview.rows.map((r, i) => (
-                    <TableRow key={i} className="even:bg-[#f7f8f8]">
-                      <TableCell className="py-1 text-right text-muted-foreground tabular-nums">{i + 1}</TableCell>
-                      {r.map((c, j) =>
-                        preview.skipped_columns.includes(j) ? null : (
-                          <TableCell key={j} className="py-1 whitespace-nowrap tabular-nums">
-                            {c}
-                          </TableCell>
-                        ),
-                      )}
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            ) : (
-              <EmptyState title="Open a dataset" icon={<FolderOpen className="size-10" strokeWidth={1.2} />}>
-                CSV, text or Excel. Format detected automatically.
-              </EmptyState>
-            )}
-          </Panel>
-        </ResizablePanel>
-        <ResizableHandle className="my-1 bg-transparent" />
-        <ResizablePanel defaultSize="38%" minSize="15%">
-          <div className="flex h-full gap-3">
-            <Panel title="File details" className="w-[380px] shrink-0" bodyClassName="overflow-auto selectable">
-              {metaLines.length ? (
-                <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[12px]">
-                  {metaLines.map(([k, v], i) => (
-                    <div key={i} className="contents">
-                      <dt className="text-ap-red">{k}</dt>
-                      <dd className="break-words">{v}</dd>
-                    </div>
-                  ))}
-                </dl>
-              ) : (
-                <p className="text-xs text-muted-foreground">No file selected</p>
-              )}
-            </Panel>
-            <Panel title="Summary" className="min-w-0 flex-1" bodyClassName="p-0 overflow-auto selectable">
-              {stats.length ? (
-                <Table className="text-[12px]">
-                  <TableHeader className="sticky top-0 bg-white">
-                    <TableRow>
-                      {["Signal", "Count", "Mean", "Std", "Min", "Q1", "Median", "Q3", "Max", "Skew", "Kurtosis"].map((h) => (
-                        <TableHead key={h} className="whitespace-nowrap text-black">
-                          {h}
-                        </TableHead>
-                      ))}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {stats.map((s) => (
-                      <TableRow key={s.signal}>
-                        <TableCell className="py-1 whitespace-nowrap">{s.signal}</TableCell>
-                        <TableCell className="py-1 tabular-nums">{s.count}</TableCell>
-                        {[s.mean, s.std, s.min, s.q1, s.median, s.q3, s.max, s.skew, s.kurtosis].map((v, i) => (
-                          <TableCell key={i} className="py-1 tabular-nums">
-                            {fmt(v)}
-                          </TableCell>
-                        ))}
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              ) : (
-                <p className="p-3 text-xs text-muted-foreground">Load data to see statistics</p>
-              )}
-            </Panel>
-          </div>
-        </ResizablePanel>
-      </ResizablePanelGroup>
-      <StatusText tone={status.tone === "error" ? "error" : status.tone === "ok" ? "ok" : "muted"}>{status.text}</StatusText>
+              <label className="mt-3 flex cursor-pointer items-center gap-2 text-[12.5px]">
+                <Checkbox checked={valueEdit.all} onCheckedChange={(c) => setValueEdit({ ...valueEdit, all: !!c })} />
+                All variables
+              </label>
+              <DialogFooter className="mt-4">
+                <Button type="button" variant="outline" onClick={() => setValueEdit(null)}>
+                  Cancel
+                </Button>
+                <Button type="submit">Apply</Button>
+              </DialogFooter>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

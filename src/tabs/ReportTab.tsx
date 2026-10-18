@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { save, message } from "@tauri-apps/plugin-dialog";
-import { openPath } from "@tauri-apps/plugin-opener";
+import { save, message } from "@/lib/platform";
+import { openPath } from "@/lib/platform";
 import { ExternalLink, FileDown, FolderOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

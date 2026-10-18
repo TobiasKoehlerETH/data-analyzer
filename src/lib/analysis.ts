@@ -1,13 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@/lib/platform";
 
 export type Point = [number, number];
-export interface FitSource {
-  name: string;
-  points: Point[];
-  xLabel?: string;
-  scope?: string;
-  seriesIndex?: number;
-}
 export interface Parameter {
   name: string;
   start: number;
@@ -65,52 +58,6 @@ export const FIT_MODELS = [
 ];
 
 /** Only numeric Cartesian observations are eligible; matrices and categories are not curves. */
-export function chartFitSources(option: Record<string, any>): FitSource[] {
-  const series = Array.isArray(option.series)
-    ? option.series
-    : option.series
-      ? [option.series]
-      : [];
-  const axes = Array.isArray(option.xAxis) ? option.xAxis : [option.xAxis];
-  const yAxes = Array.isArray(option.yAxis) ? option.yAxis : [option.yAxis];
-  return series.flatMap((s: any, seriesIndex: number) => {
-    if (
-      !["line", "scatter", "bar"].includes(s.type) ||
-      (s.coordinateSystem && s.coordinateSystem !== "cartesian2d") ||
-      s.id?.startsWith("curve-fit-")
-    )
-      return [];
-    const axis = axes[s.xAxisIndex ?? 0];
-    if (
-      axis?.type === "category" ||
-      yAxes[s.yAxisIndex ?? 0]?.type === "category"
-    )
-      return [];
-    const points: Point[] = (s.data ?? []).flatMap((entry: any) => {
-      const v = entry?.value ?? entry;
-      return Array.isArray(v) &&
-        typeof v[0] === "number" &&
-        typeof v[1] === "number" &&
-        Number.isFinite(v[0]) &&
-        Number.isFinite(v[1])
-        ? [[v[0], v[1]]]
-        : [];
-    });
-    return points.length >= 3
-      ? [
-          {
-            name: s.name || `Series ${seriesIndex + 1}`,
-            points,
-            seriesIndex,
-            xLabel: axis?.name || "X",
-            scope:
-              "Chart observations (may be downsampled). Use Data Plots for full-vector fits.",
-          },
-        ]
-      : [];
-  });
-}
-
 export function finitePairs(
   x: (number | null)[],
   y: (number | null)[],
