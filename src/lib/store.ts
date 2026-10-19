@@ -11,10 +11,7 @@ export type TabId =
   | "spectrum"
   | "correlation"
   | "curvefit"
-  | "sysid"
-  | "models"
-  | "simulation"
-  | "validation"
+  | "model"
   | "report";
 
 export const DEFAULT_TAB_ORDER: TabId[] = [
@@ -26,10 +23,7 @@ export const DEFAULT_TAB_ORDER: TabId[] = [
   "spectrum",
   "correlation",
   "curvefit",
-  "sysid",
-  "models",
-  "simulation",
-  "validation",
+  "model",
   "report",
 ];
 

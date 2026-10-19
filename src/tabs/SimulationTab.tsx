@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { message } from "@/lib/platform";
 import { Eraser, Layers, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { CheckField, EmptyState, Field, NumberInput, Panel, StatusText } from "@/components/common";
+import { CheckField, EmptyState, Field, NumberInput, Panel, StaleNote, StatusText } from "@/components/common";
 import { ModelSelect } from "@/components/ModelSelect";
 import { StackedChart, type ChartPanel } from "@/components/StackedChart";
 import { api, errorText, type SimulationView } from "@/lib/api";
@@ -17,12 +17,12 @@ export function SimulationTab() {
   const [autoX0, setAutoX0] = useState(true);
   const [view, setView] = useState<SimulationView | null>(null);
   const [status, setStatus] = useState<{ text: string; error?: boolean }>({ text: "" });
+  const [ranAt, setRanAt] = useState<number | null>(null);
   const n = dataset?.n_samples ?? 0;
 
   useEffect(() => {
     setStart(0);
     setEnd(n);
-    setView(null);
   }, [dataset?.path, n]);
 
   const run = async (append: boolean) => {
@@ -32,6 +32,7 @@ export function SimulationTab() {
     }
     try {
       setView(await api.simulationRun(model, start, end, autoX0, append));
+      setRanAt(useApp.getState().dataVersion);
       setStatus({ text: `Simulation complete for '${model}'.` });
     } catch (e) {
       setStatus({ text: `Error: ${errorText(e)}`, error: true });
@@ -85,6 +86,7 @@ export function SimulationTab() {
         )}
       </Panel>
       <StatusText tone={status.error ? "error" : "muted"}>{status.text}</StatusText>
+      {view && <StaleNote version={ranAt} />}
     </div>
   );
 }

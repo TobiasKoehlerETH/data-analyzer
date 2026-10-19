@@ -3,6 +3,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
 /** A+P content panel: white surface, thin rule, uppercase eyebrow title. */
@@ -168,6 +169,13 @@ export function EmptyState({ title, children, icon }: { title: string; children?
       {children && <div className="max-w-md text-xs leading-relaxed text-muted-foreground">{children}</div>}
     </div>
   );
+}
+
+/** Warns that the data changed after a result was computed (`version` = dataVersion then). */
+export function StaleNote({ version }: { version: number | null }) {
+  const current = useApp((s) => s.dataVersion);
+  if (version === null || version === current) return null;
+  return <p className="text-xs text-ap-darkblue">The data changed since this result was computed. Run it again to update it.</p>;
 }
 
 export function StatusText({ children, tone = "muted" }: { children: ReactNode; tone?: "muted" | "error" | "ok" }) {

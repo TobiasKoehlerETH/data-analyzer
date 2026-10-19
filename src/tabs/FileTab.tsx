@@ -3,8 +3,6 @@ import { Clock, FileSpreadsheet, FolderOpen, Info, Loader2, Plus, SlidersHorizon
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { NumberInput } from "@/components/common";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ImportSettings } from "@/components/ImportSettings";
@@ -49,7 +47,6 @@ export function FileTab() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [fresh, setFresh] = useState<string[]>([]);
-  const [valueEdit, setValueEdit] = useState<{ name: string; op: "offset" | "scale"; value: number; all: boolean } | null>(null);
 
   const applyWs = (v: WorkspaceView) => {
     setWs(v);
@@ -170,7 +167,6 @@ export function FileTab() {
         run={run}
         onAddFiles={browse}
         onExport={exportCsv}
-        onValueEdit={(name, op) => setValueEdit({ name, op, value: op === "offset" ? 0 : 1, all: false })}
       />
 
       {/* Import from a file */}
@@ -313,48 +309,6 @@ export function FileTab() {
         )}
       </div>
 
-      <Dialog open={!!valueEdit} onOpenChange={(o) => !o && setValueEdit(null)}>
-        <DialogContent className="rounded-none sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="font-normal">
-              {valueEdit?.op === "offset" ? "Add offset" : "Multiply by"}
-              {!valueEdit?.all && (
-                <>
-                  {" "}
-                  · <span className="text-ap-red">{valueEdit?.name}</span>
-                </>
-              )}
-            </DialogTitle>
-          </DialogHeader>
-          {valueEdit && (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                const { name, op, value, all } = valueEdit;
-                setValueEdit(null);
-                const names = all ? ws.variables.filter((x) => x.kind !== "text" && !x.is_time).map((x) => x.name) : [name];
-                run(async () => {
-                  let last = ws;
-                  for (const n of names) last = await api.workspaceEdit(n, "edit", { op, value });
-                  return last;
-                });
-              }}
-            >
-              <NumberInput value={valueEdit.value} step={0.1} onChange={(value) => setValueEdit({ ...valueEdit, value })} />
-              <label className="mt-3 flex cursor-pointer items-center gap-2 text-[12.5px]">
-                <Checkbox checked={valueEdit.all} onCheckedChange={(c) => setValueEdit({ ...valueEdit, all: !!c })} />
-                All variables
-              </label>
-              <DialogFooter className="mt-4">
-                <Button type="button" variant="outline" onClick={() => setValueEdit(null)}>
-                  Cancel
-                </Button>
-                <Button type="submit">Apply</Button>
-              </DialogFooter>
-            </form>
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

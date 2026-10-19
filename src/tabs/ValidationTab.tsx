@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { EmptyState, Field, Panel, StatusText } from "@/components/common";
+import { EmptyState, Field, Panel, StaleNote, StatusText } from "@/components/common";
 import { Plot } from "@/components/Plot";
 import { ModelSelect } from "@/components/ModelSelect";
 import { StackedChart, type ChartPanel } from "@/components/StackedChart";
@@ -21,6 +21,7 @@ export function ValidationTab() {
   const [tab, setTab] = useState("residuals");
   const [status, setStatus] = useState<{ text: string; error?: boolean }>({ text: "" });
   const [busy, setBusy] = useState(false);
+  const [ranAt, setRanAt] = useState<number | null>(null);
 
   const run = async () => {
     if (!model) {
@@ -31,6 +32,7 @@ export function ValidationTab() {
     try {
       const v = await api.validationRun(model);
       setView(v);
+      setRanAt(useApp.getState().dataVersion);
       setOutput(v.outputs[0]?.name ?? null);
       setStatus({ text: `Validation complete for '${model}'.` });
     } catch (e) {
@@ -236,6 +238,7 @@ export function ValidationTab() {
         </Panel>
       )}
       <StatusText tone={status.error ? "error" : "muted"}>{status.text}</StatusText>
+      {view && <StaleNote version={ranAt} />}
     </div>
   );
 }

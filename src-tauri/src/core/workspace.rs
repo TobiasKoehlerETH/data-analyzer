@@ -493,6 +493,29 @@ pub fn interp_onto(t: &[f64], v: &[f64], grid: &[f64]) -> Vec<f64> {
         }
         *o = v0 + (v1 - v0) * (g - ti0) / (t1 - ti0);
     }
+    // A grid at least twice as coarse as the data averages each grid cell (a boxcar
+    // anti-alias filter) instead of picking single samples, so resampling does not alias.
+    // Only uniform grids (the workspace's) qualify; points left missing above stay missing.
+    let cells: Vec<f64> = grid.windows(2).map(|w| w[1] - w[0]).collect();
+    let cell = cells.first().copied().unwrap_or(0.0);
+    let uniform = cell > 0.0 && cells.iter().all(|d| (d - cell).abs() <= 1e-6 * cell);
+    if uniform && gap.is_finite() && cell >= 2.0 * gap / 3.0 {
+        let h = cell / 2.0;
+        let (mut lo, mut hi) = (0, 0);
+        for (g, o) in grid.iter().zip(out.iter_mut()) {
+            while lo < order.len() && t[order[lo]] < g - h {
+                lo += 1;
+            }
+            hi = hi.max(lo);
+            while hi < order.len() && t[order[hi]] < g + h {
+                hi += 1;
+            }
+            let (sum, n) = order[lo..hi].iter().map(|&i| v[i]).filter(|x| x.is_finite()).fold((0.0, 0), |(s, n), x| (s + x, n + 1));
+            if n > 0 && o.is_finite() {
+                *o = sum / n as f64;
+            }
+        }
+    }
     out
 }
 
@@ -1594,6 +1617,19 @@ mod tests {
         assert_eq!(p.columns[1].1[0], 100.0);
         std::fs::remove_file(a).ok();
         std::fs::remove_file(b).ok();
+    }
+
+    #[test]
+    fn coarser_grid_averages_instead_of_aliasing() {
+        // +1/−1 at 10 Hz is pure Nyquist content; resampled to 5 Hz it must average out.
+        let t: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
+        let v: Vec<f64> = (0..100).map(|i| if i % 2 == 0 { 1.0 } else { -1.0 }).collect();
+        let grid: Vec<f64> = (1..49).map(|i| i as f64 * 0.2 + 0.05).collect();
+        let out = interp_onto(&t, &v, &grid);
+        assert!(out.iter().all(|x| x.abs() < 1e-9), "{out:?}");
+        // A finer grid still interpolates.
+        let fine = interp_onto(&t, &v, &[0.05]);
+        assert!(fine[0].abs() < 1e-9 && interp_onto(&t, &v, &[0.0, 0.025])[1] == 0.5);
     }
 
     #[test]

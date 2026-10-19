@@ -6,12 +6,13 @@ A local desktop workspace for exploring numeric datasets, comparing measurements
 
 *Statistics workspace with the bundled bench-log sample (`samples/sample_run3.txt`) and a linked selection.*
 
-- Import CSV, delimited text and Excel files, with preview and format overrides.
-- Clean signals in **Prepare**: remove spikes, outliers and ranges, fill gaps and adjust values, with the original kept in gray, undo and reset.
+- Import CSV, delimited text, Excel, Parquet, MAT, HDF5 and TDMS files into one workspace. Files keep their own time base and are aligned on a common time grid, with a time shift per file.
+- Clean and filter signals in **Prepare**: remove spikes, outliers and ranges, fill gaps, adjust values and add filters, with the original kept in gray, undo and reset.
 - Plot columns against row positions, time or another numeric column.
 - Fit curves from numeric charts using built-in or custom equations, coefficient bounds, exclusions, residuals and uncertainty estimates.
 - Explore linked scatter plots, distributions, row plots and summary statistics.
-- Clean and filter signals in Prepare (edited vs original), compare files, inspect spectra and correlations, identify state-space models, simulate and validate them.
+- Compare the workspace's files, inspect spectra and correlations, and identify, simulate and validate state-space models on one Model page.
+- Save projects and reusable processing recipes.
 - Export reports, fit results and statistics.
 
 Every chart navigates the same way: drag to zoom (a horizontal drag zooms X only), scroll to zoom, double-click to reset. The toolbar above each chart adds Pan, **Previous view**, Reset, a data-table view with CSV export, and PNG export. Stacked plots share their X axis.

@@ -27,7 +27,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { NumberInput } from "@/components/common";
-import { api, errorText, type Align, type VariableEdit, type VariableInfo, type WorkspaceView } from "@/lib/api";
+import { api, errorText, type Align, type VariableInfo, type WorkspaceView } from "@/lib/api";
 import { ask, message, open, save } from "@/lib/platform";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -46,11 +46,10 @@ interface Props {
   run: (f: () => Promise<WorkspaceView>) => Promise<void>;
   onAddFiles: () => void;
   onExport: () => void;
-  onValueEdit: (name: string, op: "offset" | "scale") => void;
 }
 
 /** Workspace list: variables grouped by file, derived variables, alignment, projects and recipes. */
-export function WorkspacePanel({ ws, fresh, run, onAddFiles, onExport, onValueEdit }: Props) {
+export function WorkspacePanel({ ws, fresh, run, onAddFiles, onExport }: Props) {
   const { setActiveTab, setPrepareVariable, showStatus } = useApp();
   const [renaming, setRenaming] = useState<{ name: string; value: string } | null>(null);
   const [formula, setFormula] = useState<{ name: string; text: string; editing: string | null; error: string } | null>(null);
@@ -218,26 +217,6 @@ export function WorkspacePanel({ ws, fresh, run, onAddFiles, onExport, onValueEd
               <Sigma /> Edit formula…
             </DropdownMenuItem>
           )}
-          {v.kind !== "text" && (
-            <>
-              <DropdownMenuItem onSelect={() => onValueEdit(v.name, "offset")}>Add offset…</DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => onValueEdit(v.name, "scale")}>Multiply by…</DropdownMenuItem>
-              {(
-                [
-                  ["normalize", "Normalize 0–1"],
-                  ["zscore", "Standardize (z-score)"],
-                  ["demean", "Remove mean"],
-                  ["zero_start", "Start at zero"],
-                  ["invert", "Invert sign"],
-                ] as const
-              ).map(([op, label]) => (
-                <DropdownMenuItem key={op} onSelect={() => run(() => api.workspaceEdit(v.name, "edit", { op } as VariableEdit))}>
-                  {label}
-                </DropdownMenuItem>
-              ))}
-              <DropdownMenuSeparator />
-            </>
-          )}
           <DropdownMenuItem onSelect={() => setRenaming({ name: v.name, value: v.name })}>
             <Pencil /> Rename
           </DropdownMenuItem>
@@ -320,19 +299,25 @@ export function WorkspacePanel({ ws, fresh, run, onAddFiles, onExport, onValueEd
         </div>
       )}
 
-      {ws.sources.length > 1 && (
+      {ws.sources.length > 0 && (
         <div className="flex items-center gap-2 border-b border-ap-line px-4 py-2 text-[12px]">
-          <span className="text-muted-foreground">Align</span>
-          <Select value={ws.align} onValueChange={(a) => run(() => api.workspaceSetAlign(a as Align, ws.grid_step))}>
-            <SelectTrigger className="h-7 flex-1" title="How files with different time bases are combined">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="time">By time</SelectItem>
-              <SelectItem value="clock">By clock time</SelectItem>
-              <SelectItem value="row">By row</SelectItem>
-            </SelectContent>
-          </Select>
+          {ws.sources.length > 1 ? (
+            <>
+              <span className="text-muted-foreground">Align</span>
+              <Select value={ws.align} onValueChange={(a) => run(() => api.workspaceSetAlign(a as Align, ws.grid_step))}>
+                <SelectTrigger className="h-7 flex-1" title="How files with different time bases are combined">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="time">By time</SelectItem>
+                  <SelectItem value="clock">By clock time</SelectItem>
+                  <SelectItem value="row">By row</SelectItem>
+                </SelectContent>
+              </Select>
+            </>
+          ) : (
+            <span className="flex-1 text-muted-foreground">Resample to</span>
+          )}
           {ws.align !== "row" && (
             <NumberInput
               className="w-24"
@@ -340,7 +325,7 @@ export function WorkspacePanel({ ws, fresh, run, onAddFiles, onExport, onValueEd
               min={0}
               step={0.001}
               suffix="s"
-              title="Grid step (0 = finest file step)"
+              title="Time step of the common grid (0 = the files' own, finest step). A coarser step averages the samples in each step."
               onChange={(s) => run(() => api.workspaceSetAlign(ws.align, s > 0 ? s : null))}
             />
           )}

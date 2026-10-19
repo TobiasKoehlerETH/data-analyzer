@@ -4,7 +4,6 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen, open, save, message, isTauri } from "@/lib/platform";
 import {
   AudioWaveform,
-  BadgeCheck,
   BrushCleaning,
   ChartLine,
   ChartScatter,
@@ -14,10 +13,8 @@ import {
   FileText,
   FolderOpen,
   Grid3x3,
-  Library,
   PanelLeftClose,
   PanelLeftOpen,
-  Play,
   Scale,
   Spline,
 } from "lucide-react";
@@ -37,10 +34,7 @@ import { StatisticsTab } from "@/tabs/StatisticsTab";
 import { CompareTab } from "@/tabs/CompareTab";
 import { SpectrumTab } from "@/tabs/SpectrumTab";
 import { CorrelationTab } from "@/tabs/CorrelationTab";
-import { SysIdTab } from "@/tabs/SysIdTab";
-import { ModelsTab } from "@/tabs/ModelsTab";
-import { SimulationTab } from "@/tabs/SimulationTab";
-import { ValidationTab } from "@/tabs/ValidationTab";
+import { ModelTab } from "@/tabs/ModelTab";
 import { ReportTab } from "@/tabs/ReportTab";
 import { CurveFitTab } from "@/tabs/CurveFitTab";
 
@@ -62,10 +56,7 @@ const PAGES: Record<TabId, PageDef> = {
   spectrum: { label: "Spectrum", icon: AudioWaveform, component: SpectrumTab, hint: "See which frequencies a signal contains. Drag the cutoff line, then add a low-pass there.", needsData: true },
   correlation: { label: "Correlations", icon: Grid3x3, component: CorrelationTab, hint: "Find signals that move together. Click a cell or pair for details.", needsData: true },
   curvefit: { label: "Curve fit", icon: Spline, component: CurveFitTab, hint: "Pick X and Y variables, choose a model and fit.", needsData: true },
-  sysid: { label: "Identify model", icon: Cpu, component: SysIdTab, hint: "Choose inputs and outputs, then identify a state-space model.", needsData: true },
-  models: { label: "Model library", icon: Library, component: ModelsTab, hint: "Saved models. Double-click a model to inspect or edit it." },
-  simulation: { label: "Simulate", icon: Play, component: SimulationTab, hint: "Run a saved model on the measured inputs and compare outputs.", needsData: true },
-  validation: { label: "Validate", icon: BadgeCheck, component: ValidationTab, hint: "Check a model's residuals and fit quality.", needsData: true },
+  model: { label: "Model", icon: Cpu, component: ModelTab, hint: "Identify, store, simulate and validate state-space models." },
   report: { label: "Report", icon: FileText, component: ReportTab, hint: "Choose sections and export an A+P report as HTML or PDF." },
 };
 
@@ -73,7 +64,7 @@ const STEPS: { label: string; pages: TabId[] }[] = [
   { label: "Import", pages: ["file", "prepare"] },
   { label: "Explore", pages: ["timeseries", "statistics", "compare"] },
   { label: "Analyse", pages: ["spectrum", "correlation", "curvefit"] },
-  { label: "Model", pages: ["sysid", "models", "simulation", "validation"] },
+  { label: "Model", pages: ["model"] },
   { label: "Share", pages: ["report"] },
 ];
 const ORDER: TabId[] = STEPS.flatMap((s) => s.pages);
@@ -275,7 +266,7 @@ export default function App() {
                     const Icon = p.icon;
                     const active = id === activeTab;
                     const locked = p.needsData && !dataset;
-                    const badge = id === "models" && models.length > 0 ? models.length : null;
+                    const badge = id === "model" && models.length > 0 ? models.length : null;
                     return (
                       <button
                         key={id}

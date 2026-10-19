@@ -121,7 +121,8 @@ pub async fn preview_file(path: String, sheet: Option<String>, options: Option<I
     blocking(move || preview_file_with(Path::new(&path), sheet.as_deref(), &options.unwrap_or_default())).await
 }
 
-/// Makes `ds` the active dataset and resets results that depended on the previous data.
+/// Makes `ds` the active dataset. Model results (identification, simulation, validation)
+/// survive edits; the pages flag them as computed on earlier data.
 fn install_dataset(app: &AppHandle, st: &AppState, ds: Dataset) -> CmdResult<DatasetInfo> {
     if ds.signals.is_empty() {
         return Err("No numeric signals found in file.".into());
@@ -130,9 +131,6 @@ fn install_dataset(app: &AppHandle, st: &AppState, ds: Dataset) -> CmdResult<Dat
     let info = ds.info();
     *st.data.write().unwrap() = Some(ds);
     *st.correlation.lock().unwrap() = None;
-    st.simulations.lock().unwrap().clear();
-    *st.validation.lock().unwrap() = None;
-    st.sysid_results.lock().unwrap().clear();
     // Statistics and correlations are computed (and cached) when a page first asks for them,
     // so edits on large datasets stay fast.
     emit_progress(app, "load", 100, "Done.");
@@ -396,8 +394,16 @@ pub async fn workspace_preview(state: AppStateRef<'_>, name: String, edit: Edit)
     blocking(move || st.workspace.lock().unwrap().preview(&name, &edit)).await
 }
 
+/// Drops results computed on a workspace that is being replaced.
+fn clear_model_results(st: &AppState) {
+    st.simulations.lock().unwrap().clear();
+    *st.validation.lock().unwrap() = None;
+    st.sysid_results.lock().unwrap().clear();
+}
+
 #[tauri::command]
 pub async fn workspace_clear(app: AppHandle, state: AppStateRef<'_>) -> CmdResult<WorkspaceView> {
+    clear_model_results(&state);
     ws_change(app, state, move |ws| {
         *ws = Default::default();
         Ok(Default::default())
@@ -455,6 +461,7 @@ pub fn project_save(state: AppStateRef<'_>, path: String) -> CmdResult<()> {
 #[tauri::command]
 pub async fn project_open(app: AppHandle, state: AppStateRef<'_>, path: String) -> CmdResult<WorkspaceView> {
     emit_progress(&app, "load", 20, "Opening project...");
+    clear_model_results(&state);
     ws_change(app, state, move |ws| {
         let text = std::fs::read_to_string(&path).map_err(|e| format!("Cannot read {path}: {e}"))?;
         let project: Project = serde_json::from_str(&text).map_err(|e| format!("Not a project file: {e}"))?;

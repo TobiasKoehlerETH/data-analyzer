@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { CheckList, EmptyState, Field, NumberInput, Panel, StatusText } from "@/components/common";
+import { CheckList, EmptyState, Field, NumberInput, Panel, StaleNote, StatusText } from "@/components/common";
 import { StackedChart, type ChartPanel } from "@/components/StackedChart";
 import { seriesColor } from "@/lib/chart";
 import { api, errorText, type ProgressEvent, type SysIdRow } from "@/lib/api";
@@ -33,16 +33,18 @@ export function SysIdTab() {
   const [status, setStatus] = useState<{ text: string; error?: boolean }>({ text: "" });
   const [results, setResults] = useState<SysIdRow[]>([]);
   const [saved, setSaved] = useState<number[]>([]);
+  const [ranAt, setRanAt] = useState<number | null>(null);
 
   const n = dataset?.n_samples ?? 0;
 
+  // Keep results and selections across edits; drop only signals that no longer exist.
   useEffect(() => {
-    setInputs([]);
-    setOutputs([]);
-    setResults([]);
+    const cols = new Set(dataset?.signals.map((s) => s.column));
+    setInputs((v) => v.filter((c) => cols.has(c)));
+    setOutputs((v) => v.filter((c) => cols.has(c)));
     setStart(0);
     setEnd(n);
-  }, [dataset?.path, n]);
+  }, [dataset, n]);
 
   useEffect(() => {
     const un = listen<ProgressEvent>("progress", (e) => {
@@ -88,6 +90,7 @@ export function SysIdTab() {
     try {
       const r = await api.sysidIdentify({ inputs, outputs, name, method, order_min: orderMin, order_max: Math.max(orderMin, orderMax), decimation, start, end });
       setResults(r);
+      setRanAt(useApp.getState().dataVersion);
       setStatus({ text: `Done — ${r.length} models identified.` });
     } catch (e) {
       setStatus({ text: `Error: ${errorText(e)}`, error: true });
@@ -183,6 +186,7 @@ export function SysIdTab() {
           <Square /> Stop
         </Button>
         <StatusText tone={status.error ? "error" : "muted"}>{status.text}</StatusText>
+        {results.length > 0 && <StaleNote version={ranAt} />}
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col gap-3">

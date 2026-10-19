@@ -2,6 +2,12 @@
 
 Data Plots opens with the first numeric column plotted against row positions **1…N**. Choose **X** and **Y** above the plot before opening **Fit curve**. For example, choose Temperature for X and Pressure for Y to fit pressure as a function of temperature. Choosing two columns produces a scatter plot; row position and time remain available as X options. The swap button exchanges X and Y. Select additional Y columns on the left for multiple plots. Missing values keep their original row positions.
 
+## Workspace
+
+Workspace holds the variables of every imported file. Each file keeps its own time base; with several files, **Align** combines them **By time** (each file starts at its own zero), **By clock time** (from timestamps) or **By row**. The number beside each file shifts it in time; Compare's alignment sets the same shift. The step box sets the common grid's time step, also for a single file (**Resample to**). Leave it at 0 for the files' finest step. A coarser step averages the samples within each step, so resampling does not alias.
+
+A variable's menu offers **Clean in Prepare…**, **Rename**, **Duplicate**, **Reset to original** and **Remove**; value edits live in Prepare.
+
 ## Prepare
 
 Prepare cleans one workspace variable at a time. The edited signal is drawn in red over the imported values in gray; **Show change** adds an edited − original panel. Drag a box on the plot, then choose **Remove points in box** (outliers), **Remove range** or **Keep only range**. **Remove spikes** applies a Hampel filter (11-sample window, threshold in robust standard deviations, floored at the noise level of first differences). **Fill gaps** interpolates linearly between valid neighbours. Offset, scale, remove mean, start at zero, normalize, z-score and invert are also available.
@@ -15,6 +21,10 @@ Removed values become missing; rows are never deleted, so every variable stays a
 Compare overlays the workspace's files, so each run keeps its import settings and the processing steps from Prepare. Signals are matched across files by column name (units ignored, close spellings accepted); **Mapping** overrides a match. The first file ★ is the reference for the difference traces and the RMSE, max deviation, R² and mean error table. **Add files…** imports more runs into the workspace with all their columns, and **Remove** takes a file out of the workspace.
 
 Alignment sets each file's time shift, the same shift shown in Workspace, so it applies on every page. Type the shift (Manual), click the same feature on each trace (Click), or line up the first crossing of a threshold (Trigger). Aligning switches a workspace in By row mode to By time.
+
+## Model
+
+Model groups the state-space tools in tabs: **Identify** fits models over a range of orders, **Library** stores them, **Simulate** runs a model on the measured inputs and **Validate** checks its residuals. Results stay when you edit the data; a note says when they were computed on earlier data.
 
 ## Curve fitting
 
