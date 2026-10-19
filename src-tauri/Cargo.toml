@@ -33,6 +33,11 @@ anyhow = "1"
 libm = "0.2"
 calamine = { version = "0.36", features = ["chrono"] }
 tiny_http = "0.12"
+# Extra file formats, all pure Rust (no C libraries needed on Windows).
+parquet = { version = "60", default-features = false, features = ["snap", "brotli", "flate2-zlib-rs", "lz4", "zstd", "simdutf8"] }
+matfile = "0.5"
+tdms = "0.3"
+hdf5-reader = { version = "0.9", default-features = false, features = ["lz4"] }
 
 [dev-dependencies]
 rust_xlsxwriter = { version = "0.100", features = ["chrono"] }

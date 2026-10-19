@@ -17,14 +17,21 @@ pub fn window_indices(t: &[f64], range: Option<(f64, f64)>) -> (usize, usize) {
 
 /// Peak-preserving decimation of `y` over `x` in [i0, i1) to at most `max_points` points.
 pub fn minmax(x: &[f64], y: &[f64], i0: usize, i1: usize, max_points: usize) -> (Vec<f64>, Vec<f64>) {
-    let i1 = i1.min(y.len()).min(x.len());
+    let i1 = i1.min(x.len());
+    let idx = minmax_indices(y, i0, i1, max_points);
+    (idx.iter().map(|&(i, _)| x[i]).collect(), idx.iter().map(|&(i, ok)| if ok { y[i] } else { f64::NAN }).collect())
+}
+
+/// Sample indices kept by [`minmax`]: per bucket the minimum and maximum in time order.
+/// A bucket without finite values yields its first index flagged `false` (shown as a gap).
+pub fn minmax_indices(y: &[f64], i0: usize, i1: usize, max_points: usize) -> Vec<(usize, bool)> {
+    let i1 = i1.min(y.len());
     let n = i1.saturating_sub(i0);
     if n <= max_points.max(4) {
-        return (x[i0..i1].to_vec(), y[i0..i1].to_vec());
+        return (i0..i1).map(|i| (i, true)).collect();
     }
     let buckets = (max_points / 2).max(2);
-    let mut xs = Vec::with_capacity(buckets * 2);
-    let mut ys = Vec::with_capacity(buckets * 2);
+    let mut out = Vec::with_capacity(buckets * 2);
     for b in 0..buckets {
         let s = i0 + b * n / buckets;
         let e = i0 + (b + 1) * n / buckets;
@@ -45,19 +52,16 @@ pub fn minmax(x: &[f64], y: &[f64], i0: usize, i1: usize, max_points: usize) -> 
             }
         }
         if imin == usize::MAX {
-            xs.push(x[s]);
-            ys.push(f64::NAN);
+            out.push((s, false));
             continue;
         }
         let (a, b2) = if imin <= imax { (imin, imax) } else { (imax, imin) };
-        xs.push(x[a]);
-        ys.push(y[a]);
+        out.push((a, true));
         if b2 != a {
-            xs.push(x[b2]);
-            ys.push(y[b2]);
+            out.push((b2, true));
         }
     }
-    (xs, ys)
+    out
 }
 
 /// Stride decimation (`data[::step]`) used by the filter preview.

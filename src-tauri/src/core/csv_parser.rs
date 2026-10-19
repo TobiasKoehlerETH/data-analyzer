@@ -708,6 +708,9 @@ fn is_text_column(table: &RawTable, c: usize, decimal_comma: bool) -> bool {
 
 /// Reads the first 100 rows for the File tab preview (with the effective import settings).
 pub fn preview_file_with(path: &Path, sheet: Option<&str>, opts: &ImportOptions) -> Result<PreviewResult, String> {
+    if super::formats::is_binary(path) {
+        return super::formats::preview(path);
+    }
     let det = detect(path, sheet, opts)?;
     let spec = table_spec(&det, opts);
     let table = read_table(&det.text, &spec, det.delimiter, Some(100), det.quoting)?;
@@ -759,6 +762,9 @@ pub fn parse_file(path: &Path, sheet: Option<&str>) -> Result<ParseResult, Strin
 
 /// Parses with user overrides for header row, data start, ignored rows/columns, delimiter and time column.
 pub fn parse_file_with(path: &Path, sheet: Option<&str>, opts: &ImportOptions) -> Result<ParseResult, String> {
+    if super::formats::is_binary(path) {
+        return super::formats::parse(path);
+    }
     let det = detect(path, sheet, opts)?;
     let mut metadata = det.metadata.clone();
     let spec = table_spec(&det, opts);

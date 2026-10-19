@@ -9,11 +9,13 @@ import {
   summarize,
   histogram,
   downloadText,
+  categoryVector,
+  type Categories,
   matchingRows,
   type PlotSelection,
   type Vectors,
 } from "@/lib/analysis";
-import { INK, MARKER_SIZE, axis, baseLayout, esc, fmtG, seriesColor, wash } from "@/lib/chart";
+import { INK, MARKER_SIZE, PALETTE, axis, baseLayout, esc, fmtG, seriesColor, wash } from "@/lib/chart";
 
 type Selection = PlotSelection | null;
 const finite = (v: unknown): v is number =>
@@ -55,13 +57,30 @@ export function StatisticsTab() {
   const [loading, setLoading] = useState(false);
   /** Bumping a chart's epoch clears its drawn selection box (another chart now owns the selection). */
   const [epoch, setEpoch] = useState({ scatter: 0, row: 0, histogram: 0 });
+  /** Text variable the views are split by ("" = none). */
+  const [groupBy, setGroupBy] = useState("");
+  const [cats, setCats] = useState<Categories | null>(null);
   useEffect(() => {
     // Default to a signal-vs-signal scatter; "by row" already shows the row view.
     setXColumn(dataset?.signals[1]?.column ?? "__row");
     setYColumn(dataset?.signals[0]?.column ?? "");
     setSelection(null);
     setData(null);
+    setGroupBy("");
   }, [dataset?.path, dataset?.sheet]);
+  useEffect(() => {
+    if (!groupBy || activeTab !== "statistics") {
+      if (!groupBy) setCats(null);
+      return;
+    }
+    let cancelled = false;
+    categoryVector(groupBy)
+      .then((c) => !cancelled && setCats(c))
+      .catch((e) => !cancelled && setError(String(e)));
+    return () => {
+      cancelled = true;
+    };
+  }, [groupBy, dataVersion, activeTab]);
   useEffect(() => {
     if (!dataset || !yColumn || activeTab !== "statistics") return;
     const requestKey = JSON.stringify([dataset.path, dataset.sheet, dataVersion, yColumn, xColumn]);
@@ -114,8 +133,27 @@ export function StatisticsTab() {
     () => (selectedRows ? [...selectedRows].map((i) => x[i]) : x),
     [x, selectedRows],
   );
+  /** Groups by size: the largest get palette slots, the rest share "Other" (gray). */
+  const groups = useMemo(() => {
+    if (!cats || cats.codes.length !== y.length) return null;
+    const counts = cats.levels.map(() => 0);
+    for (const c of cats.codes) if (c >= 0) counts[c]++;
+    const order = cats.levels.map((_, i) => i).sort((a, b) => counts[b] - counts[a]);
+    const keep = order.length > PALETTE.length ? order.slice(0, PALETTE.length - 1) : order;
+    const slot = new Map(keep.map((lvl, k) => [lvl, k]));
+    const other = order.length > keep.length ? keep.length : -1;
+    const names = [...keep.map((l) => cats.levels[l]), ...(other >= 0 ? ["Other"] : [])];
+    const colors = names.map((_, k) => (k === other ? INK.muted : seriesColor(k)));
+    const of = (i: number) => {
+      const c = cats.codes[i];
+      return c < 0 ? -1 : (slot.get(c) ?? other);
+    };
+    return { names, colors, of };
+  }, [cats, y.length]);
   const summary = useMemo(() => {
     const rows = [{ name: yLabel, scope: "All", ...summarize(y) }];
+    if (groups)
+      groups.names.forEach((g, k) => rows.push({ name: yLabel, scope: g, ...summarize(y.filter((_, i) => groups.of(i) === k)) }));
     if (xColumn !== "__row" && xColumn !== yColumn)
       rows.push({ name: xLabel, scope: "All", ...summarize(x) });
     if (selectedRows) {
@@ -134,6 +172,7 @@ export function StatisticsTab() {
     xLabel,
     yLabel,
     selectedRows,
+    groups,
   ]);
   const charts = useMemo(() => {
     const accent = seriesColor(0);
@@ -166,6 +205,18 @@ export function StatisticsTab() {
     });
     const allBins = histogram(y, bins);
     const yStats = summarize(y);
+    // Grouped views (no selection): one coloured trace per group.
+    const grouped = groups && !selectedRows;
+    const byGroup = (xs: (i: number) => number | null) =>
+      groups!.names.map((g, k) => {
+        const gx: number[] = [], gy: number[] = [];
+        for (let i = 0; i < y.length; i += step) {
+          const xi = xs(i);
+          if (groups!.of(i) === k && finite(y[i]) && finite(xi)) { gx.push(xi); gy.push(y[i] as number); }
+        }
+        const t = points(gx, gy, gx.map(() => groups!.colors[k]), xLabel);
+        return { ...t, name: esc(g), marker: { ...t.marker, color: groups!.colors[k] } };
+      });
     const selectedBins = selectedRows && yStats.min !== null ? histogram(selectedY, bins, [yStats.min, yStats.max!]) : [];
     const binWidth = allBins.length > 1 ? allBins[1][0] - allBins[0][0] : 1;
     const bar = (name: string, bins: [number, number][], color: string) => ({
@@ -178,10 +229,14 @@ export function StatisticsTab() {
       ...keep,
       hovertemplate: `<b>%{y}</b>  ${name.toLowerCase()} rows<br><span style="color:${INK.muted}">${esc(yLabel)} ≈ %{x:.4~g}</span><extra></extra>`,
     });
-    const boxRows = [
-      { name: "All", stats: yStats, color: selectedRows ? INK.muted : accent },
-      ...(selectedRows ? [{ name: "Selected", stats: summarize(selectedY), color: accent }] : []),
-    ].filter((r) => r.stats.count > 0);
+    const boxRows = (
+      grouped
+        ? groups!.names.map((g, k) => ({ name: g, stats: summarize(y.filter((_, i) => groups!.of(i) === k)), color: groups!.colors[k] }))
+        : [
+            { name: "All", stats: yStats, color: selectedRows ? INK.muted : accent },
+            ...(selectedRows ? [{ name: "Selected", stats: summarize(selectedY), color: accent }] : []),
+          ]
+    ).filter((r) => r.stats.count > 0);
     const selectLayout = (xTitle: string, yTitle: string | undefined, direction: "any" | "h") =>
       baseLayout({
         dragmode: "select",
@@ -193,13 +248,26 @@ export function StatisticsTab() {
         xaxis: axis(xTitle),
         yaxis: axis(yTitle),
       });
+    const legend = { showlegend: true };
     return {
-      scatter: { data: [points(sx, sy, sc, xLabel)], layout: selectLayout(xLabel, yLabel, "any") },
-      row: { data: [points(rx, ry, rc, "Row")], layout: selectLayout("Row position", yLabel, "h") },
-      histogram: {
-        data: [bar("All", allBins, selectedRows ? INK.faded : accent), ...(selectedRows ? [bar("Selected", selectedBins, accent)] : [])],
-        layout: { ...selectLayout(yLabel, "Count", "h"), barmode: "overlay", bargap: 0, showlegend: !!selectedRows },
-      },
+      scatter: grouped
+        ? { data: byGroup((i) => x[i]), layout: { ...selectLayout(xLabel, yLabel, "any"), ...legend } }
+        : { data: [points(sx, sy, sc, xLabel)], layout: selectLayout(xLabel, yLabel, "any") },
+      row: grouped
+        ? { data: byGroup((i) => i + 1), layout: { ...selectLayout("Row position", yLabel, "h"), ...legend } }
+        : { data: [points(rx, ry, rc, "Row")], layout: selectLayout("Row position", yLabel, "h") },
+      histogram: grouped
+        ? {
+            // Stacked by group on shared bins.
+            data: groups!.names.map((g, k) =>
+              bar(g, yStats.min !== null ? histogram(y.filter((_, i) => groups!.of(i) === k), bins, [yStats.min, yStats.max!]) : [], groups!.colors[k]),
+            ),
+            layout: { ...selectLayout(yLabel, "Count", "h"), barmode: "stack", bargap: 0, ...legend },
+          }
+        : {
+            data: [bar("All", allBins, selectedRows ? INK.faded : accent), ...(selectedRows ? [bar("Selected", selectedBins, accent)] : [])],
+            layout: { ...selectLayout(yLabel, "Count", "h"), barmode: "overlay", bargap: 0, showlegend: !!selectedRows },
+          },
       box: {
         data: boxRows.map((r) => ({
           type: "box",
@@ -223,7 +291,7 @@ export function StatisticsTab() {
         }),
       },
     };
-  }, [x, y, xLabel, yLabel, bins, selectedRows, selectedY]);
+  }, [x, y, xLabel, yLabel, bins, selectedRows, selectedY, groups]);
   const select = (kind: NonNullable<Selection>["kind"]) => ({
     selected: (event: { range?: { x?: number[]; y?: number[] } } | undefined) => {
       const range = event?.range;
@@ -269,6 +337,19 @@ export function StatisticsTab() {
             ))}
           </select>
         </label>
+        {dataset.texts.length > 0 && (
+          <label className="analysis-field w-[200px]">
+            Group by
+            <select value={groupBy} onChange={(e) => setGroupBy(e.target.value)}>
+              <option value="">None</option>
+              {dataset.texts.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <Button
           size="sm"
           variant="outline"

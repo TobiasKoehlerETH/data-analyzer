@@ -39,6 +39,12 @@ export interface Vectors {
 }
 export const analysisVectors = (columns: string[]) =>
   invoke<Vectors>("analysis_vectors", { columns });
+/** A text variable on the dataset rows: levels in order of appearance, -1 = missing. */
+export interface Categories {
+  levels: string[];
+  codes: number[];
+}
+export const categoryVector = (name: string) => invoke<Categories>("category_vector", { name });
 export const curveFit = (request: FitRequest) =>
   invoke<FitResult>("curve_fit", { request });
 

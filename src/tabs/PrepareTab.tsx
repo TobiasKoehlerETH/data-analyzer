@@ -61,7 +61,12 @@ export function PrepareTab() {
   const label = dataset?.signals.find((s) => s.column === column)?.label ?? column ?? "";
   // The variable's own samples: no interpolation, times on the aligned axis.
   const time = useMemo(() => vec?.time ?? [], [vec]);
-  const x = useMemo(() => (xMode === "time" ? time : time.map((_, i) => i + 1)), [time, xMode]);
+  const origin = vec?.time_origin ?? null;
+  const dateAxis = xMode === "time" && origin !== null;
+  const x = useMemo(
+    () => (xMode === "row" ? time.map((_, i) => i + 1) : dateAxis ? time.map((t) => (origin! + t) * 1000) : time),
+    [time, xMode, dateAxis, origin],
+  );
   const edited = !!vec && vec.edits.length > 0;
 
   const stats = useMemo(() => {
@@ -145,7 +150,7 @@ export function PrepareTab() {
 
   if (!dataset) return <EmptyState title="No data loaded">Add variables in Workspace to prepare them.</EmptyState>;
 
-  const xLabel = xMode === "time" ? "Time [s]" : "Row";
+  const xLabel = xMode === "time" ? (dateAxis ? "Time" : "Time [s]") : "Row";
   const rows = selection?.rows ?? 0;
 
   return (
@@ -183,6 +188,7 @@ export function PrepareTab() {
             <StackedChart
               panels={panels}
               xLabel={xLabel}
+              xDate={dateAxis}
               resetKey={`${column}|${xMode}`}
               onSelect={setBox}
               selectionKey={selectionKey}
@@ -276,7 +282,12 @@ export function PrepareTab() {
         </div>
       </div>
       <StatusText tone={status.error ? "error" : "muted"}>
-        {status.text || (box ? `Box: ${xLabel} ${fmtG(box.x[0])} – ${fmtG(box.x[1])}` : "")}
+        {status.text ||
+          (box
+            ? dateAxis
+              ? `Box: ${new Date(box.x[0]).toISOString().slice(11, 23)} – ${new Date(box.x[1]).toISOString().slice(11, 23)}`
+              : `Box: ${xLabel} ${fmtG(box.x[0])} – ${fmtG(box.x[1])}`
+            : "")}
       </StatusText>
     </div>
   );

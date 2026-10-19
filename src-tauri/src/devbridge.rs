@@ -55,14 +55,15 @@ async fn dispatch(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String>
         "project_save" => { args!(a; path: String); ok(c::project_save(st(), path)?) }
         "project_open" => { args!(a; path: String); ok(c::project_open(app.clone(), st(), path).await?) }
         "workspace_edit" => { args!(a; name: String, action: String, edit: Option<crate::core::workspace::Edit>); ok(c::workspace_edit(app.clone(), st(), name, action, edit).await?) }
-        "workspace_vectors" => { args!(a; names: Vec<String>); ok(c::workspace_vectors(st(), names).await?) }
+        "category_vector" => { args!(a; name: String); ok(c::category_vector(st(), name).await?) }
+        "workspace_vectors" => { args!(a; names: Vec<String>, range: Option<[f64; 2]>, maxPoints: Option<usize>, row: Option<bool>); ok(c::workspace_vectors(st(), names, range, maxPoints, row).await?) }
         "workspace_clear" => ok(c::workspace_clear(app.clone(), st()).await?),
         "export_dataset" => { args!(a; path: String); ok(c::export_dataset(st(), path).await?) }
         "dataset_info" => ok(c::dataset_info(st())),
         "descriptive_stats" => ok(c::descriptive_stats(st()).await?),
         "analysis_vectors" => { args!(a; columns: Vec<String>); ok(c::analysis_vectors(st(), columns).await?) }
         "curve_fit" => { let request = serde_json::from_value(a2.get("request").cloned().unwrap_or(Value::Null)).map_err(|e| e.to_string())?; ok(c::curve_fit(request).await?) }
-        "get_series" => { args!(a; columns: Vec<String>, range: Option<[f64; 2]>, maxPoints: usize); ok(c::get_series(st(), columns, range, maxPoints)?) }
+        "get_series" => { args!(a; columns: Vec<String>, range: Option<[f64; 2]>, maxPoints: usize, row: Option<bool>); ok(c::get_series(st(), columns, range, maxPoints, row)?) }
         "values_at" => { args!(a; columns: Vec<String>, t: f64); ok(c::values_at(st(), columns, t)?) }
         "filter_suggest" => { args!(a; column: String); ok(c::filter_suggest(st(), column).await?) }
         "filter_preview" => { args!(a; column: String, chain: FilterChain, draft: Option<FilterStep>); ok(c::filter_preview(st(), column, chain, draft).await?) }

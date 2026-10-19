@@ -27,6 +27,7 @@ pub fn run() {
             commands::workspace_clear,
             commands::workspace_edit,
             commands::workspace_vectors,
+            commands::category_vector,
             commands::workspace_import_batch,
             commands::workspace_remove_source,
             commands::workspace_set_offset,

@@ -30,7 +30,11 @@ export function TimeSeriesTab() {
   /** Workspace variables with edits, and their imported values when "Show original" is on. */
   const [editedNames, setEditedNames] = useState<string[]>([]);
   const [showOriginal, setShowOriginal] = useState(false);
-  const [originals, setOriginals] = useState<Record<string, (number | null)[]>>({});
+  const [originals, setOriginals] = useState<Record<string, { x: number[]; y: (number | null)[] }>>({});
+  /** Line plots: only the visible window, decimated by the backend (x in axis units). */
+  const [lines, setLines] = useState<Record<string, { x: (number | null)[]; y: (number | null)[] }> | null>(null);
+  /** Visible X range in axis units (row, seconds or Unix ms); null = everything. */
+  const [win, setWin] = useState<[number, number] | null>(null);
   const xSignal = xColumn.startsWith("column:") ? xColumn.slice(7) : null;
 
   useEffect(() => {
@@ -38,7 +42,8 @@ export function TimeSeriesTab() {
     setSelected(initial);
     setGroups(Object.fromEntries(initial.map((c, i) => [c, i + 1])));
     setSlots(Object.fromEntries(initial.map((c, i) => [c, i])));
-    setXColumn("__row");
+    // Timestamped data opens on a date axis; everything else on row numbers.
+    setXColumn(dataset?.time_origin != null ? "__time" : "__row");
     setCoord("");
   }, [dataset?.path, dataset?.sheet]);
 
@@ -69,8 +74,42 @@ export function TimeSeriesTab() {
     setSelected(c);
   };
 
+  const origin = dataset?.time_origin ?? null;
+  const dateAxis = xColumn === "__time" && origin !== null;
+  const rowAxis = xColumn === "__row";
+  /** Axis units → backend units (seconds, or 1-based rows). */
+  const toBackend = (v: number) => (dateAxis ? v / 1000 - origin! : v);
+  const toAxis = (v: number | null) => (v === null ? null : dateAxis ? (origin! + v) * 1000 : v);
+  const resetKey = JSON.stringify([dataset?.path, dataset?.sheet, xColumn, selected]);
+  useEffect(() => setWin(null), [resetKey]);
+
+  // Line plots: fetch the visible window at about two points per pixel column.
   useEffect(() => {
-    if (activeTab !== "timeseries") return;
+    if (activeTab !== "timeseries" || xSignal !== null) return;
+    if (!dataset || selected.length === 0) {
+      setLines(null);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    const range = win ? ([toBackend(win[0]), toBackend(win[1])] as [number, number]) : null;
+    api
+      .getSeries(selected, range, 3000, rowAxis)
+      .then((r) => {
+        if (cancelled) return;
+        setLines(Object.fromEntries(r.series.map((s) => [s.column, { x: s.x.map(toAxis), y: s.y }])));
+      })
+      .catch((e) => !cancelled && toast.error(String(e)))
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, xSignal, xColumn, win, dataVersion, dataset, activeTab]);
+
+  // Signal-vs-signal scatter needs both full vectors.
+  useEffect(() => {
+    if (activeTab !== "timeseries" || xSignal === null) return;
     if (!dataset || selected.length === 0) {
       setData(null);
       return;
@@ -110,31 +149,28 @@ export function TimeSeriesTab() {
   useEffect(() => {
     if (!originalOn || activeTab !== "timeseries") return;
     let cancelled = false;
+    const range = win ? ([toBackend(win[0]), toBackend(win[1])] as [number, number]) : null;
     api
-      .workspaceVectors(overlay)
-      .then((v) => !cancelled && setOriginals(Object.fromEntries(Object.entries(v.variables).map(([k, x]) => [k, x.original]))))
+      .workspaceVectors(overlay, range, 3000, rowAxis)
+      .then(
+        (v) =>
+          !cancelled &&
+          setOriginals(Object.fromEntries(Object.entries(v.variables).map(([k, o]) => [k, { x: o.x.map((t) => toAxis(t) as number), y: o.original }]))),
+      )
       .catch((e) => !cancelled && toast.error(String(e)));
     return () => {
       cancelled = true;
     };
-  }, [originalOn, overlay, dataVersion, activeTab]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [originalOn, overlay, win, xColumn, dataVersion, activeTab]);
 
-  const x = useMemo(
-    () =>
-      !data
-        ? []
-        : xColumn === "__row"
-          ? data.time.map((_, i) => i + 1)
-          : xColumn === "__time"
-            ? data.time
-            : (data.columns[xSignal ?? ""] ?? []),
-    [data, xColumn, xSignal],
-  );
   const xLabel =
     xColumn === "__row"
       ? "Row"
       : xColumn === "__time"
-        ? "Time [s]"
+        ? dateAxis
+          ? "Time"
+          : "Time [s]"
         : (dataset?.signals.find((s) => s.column === xSignal)?.label ??
           xSignal ??
           "X");
@@ -147,30 +183,41 @@ export function TimeSeriesTab() {
   }, [selected, groups]);
 
   const panels: ChartPanel[] = useMemo(() => {
-    if (!data || !dataset) return [];
-    return byGroup.filter(([, cols]) => cols.some((c) => data.columns[c])).map(([g, cols]) => ({
+    if (!dataset) return [];
+    const scatter = xSignal !== null;
+    if (scatter ? !data : !lines) return [];
+    const has = (c: string) => (scatter ? !!data?.columns[c] : !!lines?.[c]);
+    const sx = scatter ? (data!.columns[xSignal] ?? []) : [];
+    const pairs = (c: string): [number | null, number | null][] => {
+      if (scatter) {
+        const y = data!.columns[c];
+        return y ? zip(sx, y) : [];
+      }
+      const l = lines![c];
+      return l ? zip(l.x, l.y) : [];
+    };
+    return byGroup.filter(([, cols]) => cols.some(has)).map(([g, cols]) => ({
       id: String(g),
       yLabel:
         cols.length === 1
           ? dataset.signals.find((s) => s.column === cols[0])?.label
           : undefined,
       series: cols.flatMap((c) => {
-        const y = data.columns[c];
         const name = dataset.signals.find((s) => s.column === c)?.label ?? c;
         const original = originalOn && overlay.includes(c) ? originals[c] : undefined;
         return [
           // The imported values recede to gray behind the edited signal.
-          ...(original ? [{ name: `${name} · original`, color: INK.muted, data: zip(x, original) }] : []),
+          ...(original ? [{ name: `${name} · original`, color: INK.muted, data: zip(original.x, original.y) }] : []),
           {
             name,
             color: seriesColor(slots[c] ?? 0),
-            data: y ? zip(x, y) : [],
-            type: xSignal === null ? ("line" as const) : ("scatter" as const),
+            data: pairs(c),
+            type: scatter ? ("scatter" as const) : ("line" as const),
           },
         ];
       }),
     }));
-  }, [data, byGroup, dataset, x, xSignal, slots, originalOn, overlay, originals]);
+  }, [data, lines, byGroup, dataset, xSignal, slots, originalOn, overlay, originals]);
 
   const grouped = useMemo(() => {
     const m = new Map<
@@ -366,13 +413,12 @@ export function TimeSeriesTab() {
             <StackedChart
               panels={panels}
               xLabel={xLabel}
-              resetKey={JSON.stringify([
-                dataset.path,
-                dataset.sheet,
-                xColumn,
-                selected,
-              ])}
-              onCursor={(v) => setCoord(`${xLabel}: ${v.toPrecision(6)}`)}
+              xDate={dateAxis}
+              resetKey={resetKey}
+              onZoom={xSignal === null ? setWin : undefined}
+              onCursor={(v) =>
+                setCoord(`${xLabel}: ${dateAxis ? new Date(v).toISOString().replace("T", " ").replace("Z", "") : v.toPrecision(6)}`)
+              }
             />
           )}
         </Panel>

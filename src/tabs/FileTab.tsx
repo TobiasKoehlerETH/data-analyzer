@@ -158,6 +158,8 @@ export function FileTab() {
   };
 
   const cols = useMemo(() => (preview ? importable(preview) : []), [preview]);
+  // Binary formats carry their own structure: no header-row or separator settings.
+  const binary = !!preview && ["Parquet", "MATLAB", "MATLAB v7.3", "HDF5", "TDMS"].includes(preview.file_type);
   const meta = preview ? Object.entries(preview.metadata) : [];
 
   return (
@@ -221,7 +223,8 @@ export function FileTab() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              {!adjust && (
+              {binary && <Chip label="Format" value={preview.file_type} />}
+              {!adjust && !binary && (
                 <>
                   <Chip label="Header" value={preview.no_header ? "none" : `row ${preview.header_row + 1}`} />
                   <Chip label="Data from" value={`row ${preview.data_start + 1}`} />
@@ -248,7 +251,7 @@ export function FileTab() {
                 </DropdownMenu>
               )}
               <div className="flex-1" />
-              <Button variant={adjust ? "default" : "outline"} size="sm" onClick={() => setAdjust(!adjust)} title="Header row, data start, ignored rows and columns">
+              <Button variant={adjust ? "default" : "outline"} size="sm" className={binary ? "hidden" : undefined} onClick={() => setAdjust(!adjust)} title="Header row, data start, ignored rows and columns">
                 <SlidersHorizontal /> Rows &amp; columns
                 {Object.keys(options).length > 0 && !adjust && <span className="ml-0.5 size-1.5 rounded-full bg-ap-red" />}
               </Button>

@@ -127,10 +127,9 @@ export interface VariableSamples {
   time_origin: number | null;
 }
 
-/** Imported and edited values of a workspace variable, row-aligned with the dataset time axis. */
+/** Imported values of variables on the common grid, windowed and decimated (x = time or row). */
 export interface WorkspaceVectors {
-  time: number[];
-  variables: Record<string, { original: (number | null)[]; edited: (number | null)[]; edits: string[]; can_undo: boolean }>;
+  variables: Record<string, { x: number[]; original: (number | null)[]; edits: string[] }>;
 }
 
 export interface WorkspaceView {
@@ -403,12 +402,14 @@ export const api = {
   workspaceClear: () => invoke<WorkspaceView>("workspace_clear"),
   workspaceEdit: (name: string, action: "edit" | "undo" | "reset" | "remove_filters" | "duplicate", edit?: VariableEdit) =>
     invoke<WorkspaceView>("workspace_edit", { name, action, edit: edit ?? null }),
-  workspaceVectors: (names: string[]) => invoke<WorkspaceVectors>("workspace_vectors", { names }),
+  workspaceVectors: (names: string[], range: [number, number] | null, maxPoints: number, row: boolean) =>
+    invoke<WorkspaceVectors>("workspace_vectors", { names, range, maxPoints, row }),
   exportDataset: (path: string) => invoke<number>("export_dataset", { path }),
   datasetInfo: () => invoke<DatasetInfo | null>("dataset_info"),
   descriptiveStats: () => invoke<StatRow[]>("descriptive_stats"),
-  getSeries: (columns: string[], range: [number, number] | null, maxPoints: number) =>
-    invoke<SeriesResponse>("get_series", { columns, range, maxPoints }),
+  /** Visible window, peak-preserving decimated; `row` = x is the 1-based row number. */
+  getSeries: (columns: string[], range: [number, number] | null, maxPoints: number, row = false) =>
+    invoke<SeriesResponse>("get_series", { columns, range, maxPoints, row }),
   valuesAt: (columns: string[], t: number) => invoke<{ t: number; values: (number | null)[] }>("values_at", { columns, t }),
 
   filterSuggest: (column: string) => invoke<Suggestion[]>("filter_suggest", { column }),
@@ -487,12 +488,14 @@ export function errorText(e: unknown): string {
   return JSON.stringify(e);
 }
 
-export const DATA_FILE_EXTENSIONS = ["csv", "txt", "tsv", "tab", "dat", "log", "asc", "xlsx", "xlsm", "xlsb", "xls", "ods"];
+export const BINARY_FILE_EXTENSIONS = ["parquet", "mat", "h5", "hdf5", "tdms"];
+export const DATA_FILE_EXTENSIONS = ["csv", "txt", "tsv", "tab", "dat", "log", "asc", "xlsx", "xlsm", "xlsb", "xls", "ods", ...BINARY_FILE_EXTENSIONS];
 
 export const DATA_FILE_FILTERS = [
-  { name: "Data files (CSV, TXT, Excel)", extensions: DATA_FILE_EXTENSIONS },
+  { name: "Data files (CSV, TXT, Excel, Parquet, MAT, HDF5, TDMS)", extensions: DATA_FILE_EXTENSIONS },
   { name: "CSV / text", extensions: ["csv", "txt", "tsv", "tab", "dat", "log", "asc"] },
   { name: "Excel workbooks", extensions: ["xlsx", "xlsm", "xlsb", "xls", "ods"] },
+  { name: "Parquet, MATLAB, HDF5, TDMS", extensions: BINARY_FILE_EXTENSIONS },
   { name: "All files", extensions: ["*"] },
 ];
 

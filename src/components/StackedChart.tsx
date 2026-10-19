@@ -33,6 +33,8 @@ export interface StackedChartProps {
   /** Columns per row; panels fill row-major (side-by-side layouts). */
   columns?: number;
   xLabel?: string;
+  /** X values are Unix milliseconds: show a date/time axis. */
+  xDate?: boolean;
   xRange?: [number, number] | null;
   /** Called (debounced) with the visible x range after zoom/pan; null = full range. */
   onZoom?: (range: [number, number] | null) => void;
@@ -60,6 +62,7 @@ export function StackedChart({
   panels,
   columns = 1,
   xLabel,
+  xDate = false,
   xRange,
   onZoom,
   onCursor,
@@ -129,6 +132,7 @@ export function StackedChart({
       const x0 = col * (colW + colGap);
       const lastRow = row === rows - 1 || i + columns >= n;
       layout[`xaxis${id}`] = axis(lastRow ? xLabel : undefined, {
+        type: xDate ? "date" : undefined,
         domain: [x0, x0 + colW],
         anchor: `y${id}`,
         matches: i === 0 ? undefined : "x",
@@ -294,7 +298,7 @@ export function StackedChart({
         : {}),
     };
     return { data, layout: full };
-  }, [panels, columns, rows, n, size, xLabel, xRange, tooltip, scatterOnly, view, target, selectable]);
+  }, [panels, columns, rows, n, size, xLabel, xDate, xRange, tooltip, scatterOnly, view, target, selectable]);
 
   const table = (): PlotTable => {
     const out: PlotTable = { columns: ["Panel", "Series", xLabel ?? "X", "Y"], rows: [] };
@@ -312,8 +316,8 @@ export function StackedChart({
       let range: [number, number] | null | undefined;
       for (const [k, v] of Object.entries(e)) {
         if (/^xaxis\d*\.autorange$/.test(k) && v) range = null;
-        else if (/^xaxis\d*\.range\[0\]$/.test(k)) range = [Number(v), Number(e[k.replace("[0]", "[1]")])];
-        else if (/^xaxis\d*\.range$/.test(k) && Array.isArray(v)) range = [Number(v[0]), Number(v[1])];
+        else if (/^xaxis\d*\.range\[0\]$/.test(k)) range = [toNum(v), toNum(e[k.replace("[0]", "[1]")])];
+        else if (/^xaxis\d*\.range$/.test(k) && Array.isArray(v)) range = [toNum(v[0]), toNum(v[1])];
       }
       if (range === undefined) return;
       clearTimeout(zoomTimer.current);
@@ -330,13 +334,16 @@ export function StackedChart({
       const xr = range[xKey];
       const yr = range[`y${id}`];
       if (!xr || !yr) return;
-      const sorted = (v: number[]): [number, number] => [Math.min(v[0], v[1]), Math.max(v[0], v[1])];
+      const sorted = (v: (number | string)[]): [number, number] => {
+        const [a, b] = [toNum(v[0]), toNum(v[1])];
+        return [Math.min(a, b), Math.max(a, b)];
+      };
       cbs.current.onSelect?.({ panel: id ? Number(id) - 1 : 0, x: sorted(xr), y: sorted(yr) });
     },
     deselect: () => cbs.current.onSelect?.(null),
-    hover: (e: { points?: { x: number }[] }) => {
+    hover: (e: { points?: { x: number | string }[] }) => {
       const x = e.points?.[0]?.x;
-      if (typeof x === "number") cbs.current.onCursor?.(x);
+      if (x !== undefined && Number.isFinite(toNum(x))) cbs.current.onCursor?.(toNum(x));
     },
     click: (e: { event?: MouseEvent }, gd: PlotElement) => {
       if (!e.event || (!cbs.current.onClick && !cbs.current.onDragLine)) return;
@@ -373,6 +380,14 @@ export function StackedChart({
       )}
     </div>
   );
+}
+
+/** Axis values as numbers; date axes report "2026-10-01 09:00:12.5" strings (UTC). */
+function toNum(v: unknown): number {
+  if (typeof v === "number") return v;
+  const s = String(v);
+  const n = Number(s);
+  return Number.isFinite(n) ? n : Date.parse(s.replace(" ", "T") + (/[zZ]|[+-]\d\d:?\d\d$/.test(s) ? "" : "Z"));
 }
 
 function legendOn(p: ChartPanel) {

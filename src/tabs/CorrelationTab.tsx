@@ -12,7 +12,7 @@ import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
 export function CorrelationTab() {
-  const { dataset, dataVersion } = useApp();
+  const { dataset, dataVersion, activeTab } = useApp();
   const [result, setResult] = useState<CorrelationView | null>(null);
   const [method, setMethod] = useState<"Pearson" | "Spearman">("Pearson");
   const [pairs, setPairs] = useState<PairDto[]>([]);
@@ -51,6 +51,15 @@ export function CorrelationTab() {
       setBusy(false);
     }
   };
+
+  // Computed on first visit (and after data changes) rather than at import.
+  const [computedFor, setComputedFor] = useState(-1);
+  useEffect(() => {
+    if (activeTab !== "correlation" || !dataset || busy || computedFor === dataVersion) return;
+    setComputedFor(dataVersion);
+    compute();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, dataset, dataVersion]);
 
   const showPair = async (ca: string, cb: string) => {
     if (ca === cb) return;
@@ -118,7 +127,7 @@ export function CorrelationTab() {
     <div className="flex h-full flex-col gap-3">
       <div className="flex items-center gap-3">
         <Button onClick={compute} disabled={busy} title="Compute the full correlation matrix for all numeric signals">
-          <Calculator /> Compute Correlations
+          <Calculator /> {result ? "Recompute" : "Compute Correlations"}
         </Button>
         <Field label="Method" className="w-56" hint="Pearson measures linear correlation; Spearman measures monotonic relationships">
           <Select value={method} onValueChange={(v) => setMethod(v as "Pearson" | "Spearman")}>

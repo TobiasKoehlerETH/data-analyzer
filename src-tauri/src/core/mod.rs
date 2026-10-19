@@ -8,6 +8,7 @@ pub mod dataset;
 pub mod downsample;
 pub mod dsp;
 pub mod filters;
+pub mod formats;
 pub mod fitting;
 pub mod models;
 pub mod report;

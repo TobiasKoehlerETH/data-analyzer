@@ -12,7 +12,7 @@ use crate::core::compare::{CompareManager, CompareStatistics};
 use crate::core::correlation::{compute_correlation_matrix, compute_cross_correlation, compute_lagged_correlations, CorrelationPair};
 use crate::core::csv_parser::{preview_file_with, ImportOptions, PreviewResult};
 use crate::core::dataset::{Dataset, DatasetInfo};
-use crate::core::downsample::{minmax, stride, window_indices};
+use crate::core::downsample::{minmax, minmax_indices, stride, window_indices};
 use crate::core::dsp::{decimate, mean, searchsorted, std};
 use crate::core::filters::{apply_chain, apply_steps, suggest_filters, FilterChain, FilterStep};
 use crate::core::models::{ModelSummary, OutputMetrics, StateSpaceResult};
@@ -47,6 +47,41 @@ pub async fn analysis_vectors(state: AppStateRef<'_>, columns: Vec<String>) -> C
     })).await
 }
 
+
+#[derive(Serialize)]
+pub struct CategoryVector {
+    /// Distinct values in order of first appearance.
+    levels: Vec<String>,
+    /// Index into `levels` per row; -1 where the value is missing.
+    codes: Vec<i32>,
+}
+
+/// A text variable on the dataset rows, for grouping.
+#[tauri::command]
+pub async fn category_vector(state: AppStateRef<'_>, name: String) -> CmdResult<CategoryVector> {
+    let st = state.inner().clone();
+    blocking(move || {
+        with_data(&st, |d| {
+            let values = d.get_text(&name).ok_or_else(|| format!("Text variable not found: {name}"))?;
+            let mut levels: Vec<String> = Vec::new();
+            let mut index: std::collections::HashMap<&str, i32> = std::collections::HashMap::new();
+            let codes = values
+                .iter()
+                .map(|v| {
+                    if v.is_empty() {
+                        return -1;
+                    }
+                    *index.entry(v.as_str()).or_insert_with(|| {
+                        levels.push(v.clone());
+                        levels.len() as i32 - 1
+                    })
+                })
+                .collect();
+            Ok(CategoryVector { levels, codes })
+        })
+    })
+    .await
+}
 
 #[derive(Clone, Serialize)]
 struct ProgressEvent {
@@ -282,34 +317,42 @@ pub async fn workspace_set_formula(app: AppHandle, state: AppStateRef<'_>, name:
 
 #[derive(Serialize)]
 pub struct VariableVectors {
+    /// Time (or 1-based row) of each value below.
+    x: Vec<f64>,
     original: Vec<f64>,
-    edited: Vec<f64>,
     edits: Vec<String>,
-    can_undo: bool,
 }
 
 #[derive(Serialize)]
 pub struct WorkspaceVectors {
-    /// Dataset time axis; vectors are aligned to it.
-    time: Vec<f64>,
     variables: std::collections::BTreeMap<String, VariableVectors>,
 }
 
-/// Imported and processed values of variables on the common grid.
+/// Imported values of variables on the common grid (the "show original" overlay), limited to
+/// the visible window and decimated like `get_series`.
 #[tauri::command]
-pub async fn workspace_vectors(state: AppStateRef<'_>, names: Vec<String>) -> CmdResult<WorkspaceVectors> {
+pub async fn workspace_vectors(state: AppStateRef<'_>, names: Vec<String>, range: Option<[f64; 2]>, max_points: Option<usize>, row: Option<bool>) -> CmdResult<WorkspaceVectors> {
     let st = state.inner().clone();
     blocking(move || {
         let ws = st.workspace.lock().unwrap();
+        let row = row.unwrap_or(false);
+        let t = ws.grid.clone();
+        let (i0, i1) = window_of(&t, range, row);
         let mut variables = std::collections::BTreeMap::new();
         for name in names {
             let v = ws.get(&name).ok_or_else(|| format!("Variable not found: {name}"))?;
+            let original = ws.aligned(v, true);
+            let idx = minmax_indices(&original, i0, i1, max_points.unwrap_or(4000).max(100));
             variables.insert(
                 name,
-                VariableVectors { original: ws.aligned(v, true), edited: ws.aligned(v, false), edits: v.edits.clone(), can_undo: !v.steps.is_empty() },
+                VariableVectors {
+                    x: idx.iter().map(|&(i, _)| if row { (i + 1) as f64 } else { t[i] }).collect(),
+                    original: idx.iter().map(|&(i, ok)| if ok { original[i] } else { f64::NAN }).collect(),
+                    edits: v.edits.clone(),
+                },
             );
         }
-        Ok(WorkspaceVectors { time: ws.grid.to_vec(), variables })
+        Ok(WorkspaceVectors { variables })
     })
     .await
 }
@@ -481,16 +524,33 @@ pub struct SeriesResponse {
     series: Vec<SeriesData>,
 }
 
+/// Rows `[i0, i1)` covering `range` on the time axis, or on 1-based row numbers when `row`.
+fn window_of(t: &[f64], range: Option<[f64; 2]>, row: bool) -> (usize, usize) {
+    match (range, row) {
+        (Some([a, b]), true) => {
+            let i0 = (a.min(b).floor() as i64 - 2).clamp(0, t.len() as i64) as usize;
+            let i1 = (a.max(b).ceil() as i64 + 1).clamp(0, t.len() as i64) as usize;
+            (i0, i1.max(i0))
+        }
+        (r, _) => window_indices(t, r.map(|r| (r[0], r[1]))),
+    }
+}
+
+/// The visible window of each signal, peak-preserving decimated to `max_points`.
+/// With `row`, x is the 1-based row number instead of time.
 #[tauri::command]
-pub fn get_series(state: AppStateRef<'_>, columns: Vec<String>, range: Option<[f64; 2]>, max_points: usize) -> CmdResult<SeriesResponse> {
+pub fn get_series(state: AppStateRef<'_>, columns: Vec<String>, range: Option<[f64; 2]>, max_points: usize, row: Option<bool>) -> CmdResult<SeriesResponse> {
+    let row = row.unwrap_or(false);
     with_data(&state, |d| {
         let t = &d.time;
-        let (i0, i1) = window_indices(t, range.map(|r| (r[0], r[1])));
+        let (i0, i1) = window_of(t, range, row);
         let series = columns
             .iter()
             .filter_map(|c| {
                 d.get_signal(c).map(|y| {
-                    let (x, y) = minmax(t, &y, i0, i1, max_points.max(100));
+                    let idx = minmax_indices(&y, i0, i1, max_points.max(100));
+                    let x = idx.iter().map(|&(i, _)| if row { (i + 1) as f64 } else { t[i] }).collect();
+                    let y = idx.iter().map(|&(i, ok)| if ok { y[i] } else { f64::NAN }).collect();
                     SeriesData { column: c.clone(), x, y }
                 })
             })
