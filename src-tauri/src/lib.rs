@@ -26,6 +26,7 @@ pub fn run() {
             commands::workspace_set_time,
             commands::workspace_clear,
             commands::workspace_edit,
+            commands::workspace_vectors,
             commands::export_dataset,
             commands::dataset_info,
             commands::descriptive_stats,

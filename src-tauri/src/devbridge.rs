@@ -42,6 +42,7 @@ async fn dispatch(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String>
         "workspace_rename" => { args!(a; old: String, new: String); ok(c::workspace_rename(app.clone(), st(), old, new).await?) }
         "workspace_set_time" => { args!(a; name: Option<String>); ok(c::workspace_set_time(app.clone(), st(), name).await?) }
         "workspace_edit" => { args!(a; name: String, action: String, edit: Option<crate::core::workspace::Edit>); ok(c::workspace_edit(app.clone(), st(), name, action, edit).await?) }
+        "workspace_vectors" => { args!(a; names: Vec<String>); ok(c::workspace_vectors(st(), names).await?) }
         "workspace_clear" => ok(c::workspace_clear(app.clone(), st()).await?),
         "export_dataset" => { args!(a; path: String); ok(c::export_dataset(st(), path).await?) }
         "dataset_info" => ok(c::dataset_info(st())),

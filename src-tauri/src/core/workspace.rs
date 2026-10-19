@@ -20,10 +20,15 @@ pub struct Variable {
     pub original: Arc<Vec<f64>>,
     /// Applied edits, in order (e.g. "offset +2", "normalize 0–1").
     pub edits: Vec<String>,
+    /// Values before each recent edit, newest last, for undo.
+    pub history: Vec<Arc<Vec<f64>>>,
 }
 
-/// Value edits that can be applied to a variable.
-#[derive(Debug, Clone, Copy, serde::Deserialize)]
+/// Undo depth per variable; older states are dropped (reset still restores the original).
+const UNDO_DEPTH: usize = 30;
+
+/// Value edits that can be applied to a variable. Row ranges are half-open `[start, end)`.
+#[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "snake_case", tag = "op", content = "value")]
 pub enum Edit {
     Offset(f64),
@@ -35,6 +40,59 @@ pub enum Edit {
     Invert,
     /// Keep every k-th point.
     Downsample(f64),
+    /// Mark rows as missing.
+    ClearRange((usize, usize)),
+    /// Mark every row outside the range as missing.
+    KeepRange((usize, usize)),
+    /// Mark individual rows as missing (e.g. outliers picked on a plot).
+    ClearPoints(Vec<usize>),
+    /// Hampel filter: mark points further than k robust sigmas from the local median as missing.
+    Despike(f64),
+    /// Linearly interpolate interior gaps; leading and trailing gaps stay missing.
+    FillGaps,
+}
+
+/// Half-width of the Hampel window (11 samples).
+const HAMPEL_HALF: usize = 5;
+
+fn median(v: &mut [f64]) -> f64 {
+    v.sort_by(|a, b| a.total_cmp(b));
+    let n = v.len();
+    if n % 2 == 1 { v[n / 2] } else { (v[n / 2 - 1] + v[n / 2]) / 2.0 }
+}
+
+/// Rows flagged by a Hampel filter. The local spread is floored at the noise level
+/// estimated from first differences, so flat or quantised stretches are not flagged.
+fn hampel(v: &[f64], k: f64) -> Vec<usize> {
+    let mut diffs: Vec<f64> = v.windows(2).map(|w| (w[1] - w[0]).abs()).filter(|d| d.is_finite()).collect();
+    let noise = if diffs.is_empty() { 0.0 } else { 1.4826 * median(&mut diffs) / std::f64::consts::SQRT_2 };
+    let mut out = Vec::new();
+    for i in 0..v.len() {
+        if !v[i].is_finite() {
+            continue;
+        }
+        let lo = i.saturating_sub(HAMPEL_HALF);
+        let hi = (i + HAMPEL_HALF + 1).min(v.len());
+        let mut win: Vec<f64> = v[lo..hi].iter().copied().filter(|x| x.is_finite()).collect();
+        if win.len() < 3 {
+            continue;
+        }
+        let med = median(&mut win);
+        let mut dev: Vec<f64> = win.iter().map(|x| (x - med).abs()).collect();
+        let sigma = (1.4826 * median(&mut dev)).max(noise);
+        if sigma > 0.0 && (v[i] - med).abs() > k * sigma {
+            out.push(i);
+        }
+    }
+    out
+}
+
+fn clamp_range(len: usize, (a, b): (usize, usize)) -> Result<(usize, usize), String> {
+    let (a, b) = (a.min(len), b.min(len));
+    if a >= b {
+        return Err("The selection contains no rows.".into());
+    }
+    Ok((a, b))
 }
 
 fn finite_stats(v: &[f64]) -> (f64, f64, f64, f64) {
@@ -82,6 +140,67 @@ impl Edit {
                 }
                 (v.iter().step_by(k as usize).copied().collect(), format!("downsample ÷{k}"))
             }
+            Edit::ClearRange(range) => {
+                let (a, b) = clamp_range(v.len(), range)?;
+                let mut out = v.to_vec();
+                out[a..b].fill(f64::NAN);
+                (out, format!("remove rows {}–{}", a + 1, b))
+            }
+            Edit::KeepRange(range) => {
+                let (a, b) = clamp_range(v.len(), range)?;
+                let out = v.iter().enumerate().map(|(i, x)| if i >= a && i < b { *x } else { f64::NAN }).collect();
+                (out, format!("keep rows {}–{}", a + 1, b))
+            }
+            Edit::ClearPoints(ref rows) => {
+                let mut out = v.to_vec();
+                let mut n = 0;
+                for &i in rows {
+                    if i < out.len() && out[i].is_finite() {
+                        out[i] = f64::NAN;
+                        n += 1;
+                    }
+                }
+                if n == 0 {
+                    return Err("The selection contains no points.".into());
+                }
+                (out, format!("remove {n} point{}", if n == 1 { "" } else { "s" }))
+            }
+            Edit::Despike(k) => {
+                if !(k > 0.0) {
+                    return Err("The spike threshold must be positive.".into());
+                }
+                let rows = hampel(v, k);
+                if rows.is_empty() {
+                    return Err(format!("No spikes beyond {k} σ found."));
+                }
+                let mut out = v.to_vec();
+                for &i in &rows {
+                    out[i] = f64::NAN;
+                }
+                (out, format!("remove {} spike{} (> {k} σ)", rows.len(), if rows.len() == 1 { "" } else { "s" }))
+            }
+            Edit::FillGaps => {
+                let mut out = v.to_vec();
+                let mut filled = 0;
+                let mut prev: Option<usize> = None;
+                for i in 0..out.len() {
+                    if !out[i].is_finite() {
+                        continue;
+                    }
+                    if let Some(p) = prev {
+                        for j in p + 1..i {
+                            let t = (j - p) as f64 / (i - p) as f64;
+                            out[j] = out[p] + (out[i] - out[p]) * t;
+                            filled += 1;
+                        }
+                    }
+                    prev = Some(i);
+                }
+                if filled == 0 {
+                    return Err("There are no gaps between valid values.".into());
+                }
+                (out, format!("fill {filled} gap value{}", if filled == 1 { "" } else { "s" }))
+            }
         })
     }
 }
@@ -95,6 +214,7 @@ pub struct VariableInfo {
     pub max: Option<f64>,
     pub is_time: bool,
     pub edits: Vec<String>,
+    pub can_undo: bool,
 }
 
 #[derive(Default)]
@@ -123,15 +243,27 @@ impl Workspace {
     pub fn add(&mut self, name: &str, data: Vec<f64>, source: String) -> String {
         let name = self.unique_name(name);
         let data = Arc::new(data);
-        self.vars.push(Variable { name: name.clone(), original: data.clone(), data, source, edits: vec![] });
+        self.vars.push(Variable { name: name.clone(), original: data.clone(), data, source, edits: vec![], history: vec![] });
         name
     }
 
     pub fn edit(&mut self, name: &str, edit: Edit) -> Result<(), String> {
         let v = self.vars.iter_mut().find(|v| v.name == name).ok_or("Variable not found.")?;
         let (data, label) = edit.apply(&v.data)?;
-        v.data = Arc::new(data);
+        v.history.push(std::mem::replace(&mut v.data, Arc::new(data)));
+        if v.history.len() > UNDO_DEPTH {
+            v.history.remove(0);
+        }
         v.edits.push(label);
+        Ok(())
+    }
+
+    /// Reverts the most recent edit.
+    pub fn undo(&mut self, name: &str) -> Result<(), String> {
+        let v = self.vars.iter_mut().find(|v| v.name == name).ok_or("Variable not found.")?;
+        let prev = v.history.pop().ok_or("Nothing to undo.")?;
+        v.data = prev;
+        v.edits.pop();
         Ok(())
     }
 
@@ -140,6 +272,7 @@ impl Workspace {
         let v = self.vars.iter_mut().find(|v| v.name == name).ok_or("Variable not found.")?;
         v.data = v.original.clone();
         v.edits.clear();
+        v.history.clear();
         Ok(())
     }
 
@@ -201,6 +334,7 @@ impl Workspace {
                     max: hi.is_finite().then_some(hi),
                     is_time: self.time_var.as_deref() == Some(v.name.as_str()),
                     edits: v.edits.clone(),
+                    can_undo: !v.history.is_empty(),
                 }
             })
             .collect()
@@ -322,8 +456,39 @@ mod tests {
         assert_eq!(ws.duplicate("x_b").unwrap(), "x_b copy");
         ws.remove(&["time".into()]);
         assert!(ws.time_var.is_none());
+        assert!(ws.get("x_b").unwrap().history.is_empty());
         assert!(ws.to_parse().unwrap().time.is_none());
         std::fs::remove_file(a).ok();
         std::fs::remove_file(b).ok();
+    }
+
+    #[test]
+    fn cleaning_edits_and_undo() {
+        let mut ws = Workspace::default();
+        let mut v: Vec<f64> = (0..40).map(|i| (i as f64 * 0.3).sin()).collect();
+        v[17] = 25.0;
+        ws.add("s", v.clone(), "test".into());
+        ws.edit("s", Edit::Despike(4.0)).unwrap();
+        let d = ws.get("s").unwrap().data.clone();
+        assert!(d[17].is_nan());
+        assert_eq!(d.iter().filter(|x| x.is_nan()).count(), 1, "only the spike is removed");
+        ws.edit("s", Edit::FillGaps).unwrap();
+        let d = ws.get("s").unwrap().data.clone();
+        assert!((d[17] - (v[16] + v[18]) / 2.0).abs() < 1e-12);
+        ws.edit("s", Edit::ClearRange((0, 5))).unwrap();
+        ws.edit("s", Edit::ClearPoints(vec![10, 11, 999])).unwrap();
+        let d = ws.get("s").unwrap().data.clone();
+        assert!(d[..5].iter().all(|x| x.is_nan()) && d[10].is_nan() && d[11].is_nan() && d[12].is_finite());
+        assert_eq!(ws.get("s").unwrap().edits.last().unwrap(), "remove 2 points");
+        ws.edit("s", Edit::KeepRange((20, 30))).unwrap();
+        assert_eq!(ws.get("s").unwrap().data.iter().filter(|x| x.is_finite()).count(), 10);
+        assert!(ws.edit("s", Edit::ClearRange((50, 60))).is_err());
+        ws.undo("s").unwrap();
+        ws.undo("s").unwrap();
+        assert!(ws.get("s").unwrap().data[10].is_finite());
+        assert_eq!(ws.get("s").unwrap().edits.len(), 3);
+        ws.reset("s").unwrap();
+        assert!(ws.undo("s").is_err());
+        assert_eq!(ws.get("s").unwrap().data.as_slice(), v.as_slice());
     }
 }

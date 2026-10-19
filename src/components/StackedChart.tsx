@@ -1,3 +1,4 @@
+import Plotly from "plotly.js-cartesian-dist-min";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { WorkspaceActive } from "@/lib/workspace";
 import { Plot, type PlotElement, type PlotTable } from "./Plot";
@@ -39,6 +40,10 @@ export interface StackedChartProps {
   onClick?: (panelIndex: number, x: number, y: number) => void;
   /** Called while the draggable vertical line moves. */
   onDragLine?: (x: number) => void;
+  /** Enables box selection (drag) and reports the box in data coordinates; null when cleared. */
+  onSelect?: (box: { panel: number; x: [number, number]; y: [number, number] } | null) => void;
+  /** Changing this key removes the drawn selection box without touching the zoom. */
+  selectionKey?: string | number;
   /** Changing this key resets the zoom. */
   resetKey?: string | number;
   tooltip?: boolean;
@@ -60,6 +65,8 @@ export function StackedChart({
   onCursor,
   onClick,
   onDragLine,
+  onSelect,
+  selectionKey,
   resetKey,
   tooltip = true,
   className,
@@ -69,10 +76,16 @@ export function StackedChart({
   const [size, setSize] = useState({ w: 800, h: 400 });
   const [view, setView] = useState<[number, number] | null>(null);
   const zoomTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const cbs = useRef({ onZoom, onCursor, onClick, onDragLine });
-  cbs.current = { onZoom, onCursor, onClick, onDragLine };
+  const cbs = useRef({ onZoom, onCursor, onClick, onDragLine, onSelect });
+  cbs.current = { onZoom, onCursor, onClick, onDragLine, onSelect };
+  const gdRef = useRef<PlotElement | null>(null);
+  const selectable = !!onSelect;
 
   useEffect(() => setView(null), [resetKey]);
+  useEffect(() => {
+    const gd = gdRef.current;
+    if (gd && selectionKey !== undefined) Plotly.relayout(gd, { selections: [] } as any).catch(() => {});
+  }, [selectionKey]);
 
   useEffect(() => {
     if (!host.current || !active) return;
@@ -271,9 +284,17 @@ export function StackedChart({
       margin: { l: 64, r: 16, t: top, b: bottom, pad: 0 },
       hovermode: !tooltip ? false : scatterOnly ? "closest" : "x unified",
       bargap: 0.08,
+      ...(selectable
+        ? {
+            dragmode: "select",
+            selectdirection: "any",
+            newselection: { line: { color: INK.secondary, width: 1, dash: "solid" } },
+            activeselection: { fillcolor: INK.primary, opacity: 0.06 },
+          }
+        : {}),
     };
     return { data, layout: full };
-  }, [panels, columns, rows, n, size, xLabel, xRange, tooltip, scatterOnly, view, target]);
+  }, [panels, columns, rows, n, size, xLabel, xRange, tooltip, scatterOnly, view, target, selectable]);
 
   const table = (): PlotTable => {
     const out: PlotTable = { columns: ["Panel", "Series", xLabel ?? "X", "Y"], rows: [] };
@@ -301,6 +322,18 @@ export function StackedChart({
         cbs.current.onZoom?.(range);
       }, 140);
     },
+    selected: (e: { range?: Record<string, number[]> } | undefined) => {
+      const range = e?.range;
+      const xKey = range && Object.keys(range).find((k) => /^x\d*$/.test(k));
+      if (!range || !xKey) return;
+      const id = xKey.slice(1);
+      const xr = range[xKey];
+      const yr = range[`y${id}`];
+      if (!xr || !yr) return;
+      const sorted = (v: number[]): [number, number] => [Math.min(v[0], v[1]), Math.max(v[0], v[1])];
+      cbs.current.onSelect?.({ panel: id ? Number(id) - 1 : 0, x: sorted(xr), y: sorted(yr) });
+    },
+    deselect: () => cbs.current.onSelect?.(null),
     hover: (e: { points?: { x: number }[] }) => {
       const x = e.points?.[0]?.x;
       if (typeof x === "number") cbs.current.onCursor?.(x);
@@ -334,6 +367,8 @@ export function StackedChart({
           table={table}
           events={events}
           config={config}
+          select={selectable}
+          onInit={(gd) => (gdRef.current = gd)}
         />
       )}
     </div>

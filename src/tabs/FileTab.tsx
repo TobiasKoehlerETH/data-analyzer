@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChartLine, Clock, Copy, Download, FileSpreadsheet, FolderOpen, Info, Loader2, MoreHorizontal, Pencil, Plus, RotateCcw, SlidersHorizontal, Trash2, X } from "lucide-react";
+import { BrushCleaning, ChartLine, Clock, Copy, Download, FileSpreadsheet, FolderOpen, Info, Loader2, MoreHorizontal, Pencil, Plus, RotateCcw, SlidersHorizontal, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -37,7 +37,7 @@ function importable(p: PreviewResult): number[] {
 }
 
 export function FileTab() {
-  const { setDataset, setActiveTab, setProgress, showStatus } = useApp();
+  const { setDataset, setActiveTab, setProgress, showStatus, dataVersion, setPrepareVariable } = useApp();
   const [ws, setWs] = useState<WorkspaceView>({ variables: [], time_var: null, dataset: null, added: [] });
   const [queue, setQueue] = useState<string[]>([]);
   const [path, setPath] = useState("");
@@ -57,9 +57,10 @@ export function FileTab() {
     setDataset(v.dataset);
   };
 
+  // Refresh after any data change, including edits made on the Prepare page.
   useEffect(() => {
     api.workspaceView().then(setWs).catch(() => {});
-  }, []);
+  }, [dataVersion]);
 
   const openFile = async (p: string, sh: string | null = null, opts: ImportOptions = {}, keepPicked = false) => {
     setError("");
@@ -228,6 +229,19 @@ export function FileTab() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-48 rounded-none">
+                  {!v.is_time && (
+                    <>
+                      <DropdownMenuItem
+                        onSelect={() => {
+                          setPrepareVariable(v.name);
+                          setActiveTab("prepare");
+                        }}
+                      >
+                        <BrushCleaning /> Clean in Prepare…
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                    </>
+                  )}
                   <DropdownMenuItem onSelect={() => setValueEdit({ name: v.name, op: "offset", value: 0, all: false })}>Add offset…</DropdownMenuItem>
                   <DropdownMenuItem onSelect={() => setValueEdit({ name: v.name, op: "scale", value: 1, all: false })}>Multiply by…</DropdownMenuItem>
                   <DropdownMenuItem onSelect={() => setValueEdit({ name: v.name, op: "downsample", value: 10, all: true })}>Downsample…</DropdownMenuItem>

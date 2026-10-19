@@ -2,6 +2,12 @@
 
 Data Plots opens with the first numeric column plotted against row positions **1…N**. Choose **X** and **Y** above the plot before opening **Fit curve**. For example, choose Temperature for X and Pressure for Y to fit pressure as a function of temperature. Choosing two columns produces a scatter plot; row position and time remain available as X options. The swap button exchanges X and Y. Select additional Y columns on the left for multiple plots. Missing values keep their original row positions.
 
+## Prepare
+
+Prepare cleans one workspace variable at a time. The edited signal is drawn in red over the imported values in gray; **Show change** adds an edited − original panel. Drag a box on the plot, then choose **Remove points in box** (outliers), **Remove range** or **Keep only range**. **Remove spikes** applies a Hampel filter (11-sample window, threshold in robust standard deviations, floored at the noise level of first differences). **Fill gaps** interpolates linearly between valid neighbours. Offset, scale, remove mean, start at zero, normalize, z-score and invert are also available.
+
+Removed values become missing; rows are never deleted, so every variable stays aligned. Every edit is listed under History; **Undo** reverts the last one (up to 30 steps) and **Reset** restores the imported values. Spectra and filters bridge missing values linearly for the computation, and filtered output keeps them missing. Plots offers **Show original** to overlay the imported values behind edited signals. Open a variable from the Workspace list with **Clean in Prepare…**.
+
 ## Curve fitting
 
 Choose **Fit curve** on a numeric line, scatter or bar chart. Select the data and model, then **Fit**. **Fit options** contains range limits, starting coefficients, bounds, fixed coefficients, normalization and robust fitting. Click a preview point to exclude it. For large datasets, the preview is sampled; the fit uses all included observations.

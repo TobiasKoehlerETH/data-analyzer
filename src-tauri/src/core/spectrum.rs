@@ -4,7 +4,7 @@ use serde::Serialize;
 use std::sync::Arc;
 
 use super::cache::{CacheManager, CacheValue};
-use super::dsp::{find_peaks_prominence, mean, median, rfft, rfftfreq, welch};
+use super::dsp::{bridge_gaps, find_peaks_prominence, mean, median, rfft, rfftfreq, welch};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SpectrumResult {
@@ -32,6 +32,8 @@ pub fn compute_fft(signal: &[f64], fs: f64, cache: Option<&CacheManager>, name: 
             return v;
         }
     }
+    let bridged = bridge_gaps(signal);
+    let signal = bridged.as_deref().unwrap_or(signal);
     let n = signal.len();
     let m = mean(signal);
     let centered: Vec<f64> = signal.iter().map(|v| v - m).collect();
@@ -62,7 +64,8 @@ pub fn compute_psd(
             return v;
         }
     }
-    let (freqs, psd) = welch(signal, fs, nperseg);
+    let bridged = bridge_gaps(signal);
+    let (freqs, psd) = welch(bridged.as_deref().unwrap_or(signal), fs, nperseg);
     let result = Arc::new(PsdResult { freqs, psd });
     if let (Some(c), false) = (cache, name.is_empty()) {
         c.set(key, CacheValue::Psd(result.clone()));

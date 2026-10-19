@@ -5,6 +5,7 @@ import { listen, open, save, message, isTauri } from "@/lib/platform";
 import {
   AudioWaveform,
   BadgeCheck,
+  BrushCleaning,
   ChartLine,
   ChartScatter,
   Database,
@@ -31,6 +32,7 @@ import { useApp, type TabId } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { WorkspaceActive } from "@/lib/workspace";
 import { FileTab } from "@/tabs/FileTab";
+import { PrepareTab } from "@/tabs/PrepareTab";
 import { TimeSeriesTab } from "@/tabs/TimeSeriesTab";
 import { StatisticsTab } from "@/tabs/StatisticsTab";
 import { CompareTab } from "@/tabs/CompareTab";
@@ -55,6 +57,7 @@ interface PageDef {
 
 const PAGES: Record<TabId, PageDef> = {
   file: { label: "Workspace", icon: Database, component: FileTab, hint: "Add columns from any number of files as variables." },
+  prepare: { label: "Prepare", icon: BrushCleaning, component: PrepareTab, hint: "Clean a signal before analysis. Drag a box to select, then remove or keep. The original stays in gray.", needsData: true },
   timeseries: { label: "Plots", icon: ChartLine, component: TimeSeriesTab, hint: "Tick signals on the left to plot them. Drag to zoom, double-click to reset.", needsData: true },
   statistics: { label: "Statistics", icon: ChartScatter, component: StatisticsTab, hint: "Pick a signal; drag on any chart to select rows and compare.", needsData: true },
   compare: { label: "Compare files", icon: Scale, component: CompareTab, hint: "Add two or more files to overlay and align the same signals." },
@@ -70,7 +73,7 @@ const PAGES: Record<TabId, PageDef> = {
 };
 
 const STEPS: { label: string; pages: TabId[] }[] = [
-  { label: "Import", pages: ["file"] },
+  { label: "Import", pages: ["file", "prepare"] },
   { label: "Explore", pages: ["timeseries", "statistics", "compare"] },
   { label: "Analyse", pages: ["filter", "spectrum", "correlation", "curvefit"] },
   { label: "Model", pages: ["sysid", "models", "simulation", "validation"] },

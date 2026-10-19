@@ -4,6 +4,7 @@ import { api } from "./api";
 
 export type TabId =
   | "file"
+  | "prepare"
   | "timeseries"
   | "statistics"
   | "compare"
@@ -19,6 +20,7 @@ export type TabId =
 
 export const DEFAULT_TAB_ORDER: TabId[] = [
   "file",
+  "prepare",
   "timeseries",
   "statistics",
   "compare",
@@ -50,6 +52,9 @@ interface AppStore {
   flash: string | null;
   progress: ProgressState | null;
   models: ModelSummary[];
+  /** Variable the Prepare page should open (set from the Workspace list). */
+  prepareVariable: string | null;
+  setPrepareVariable: (name: string | null) => void;
   setDataset: (d: DatasetInfo | null) => void;
   bumpData: (d?: DatasetInfo) => void;
   setActiveTab: (t: TabId) => void;
@@ -83,6 +88,8 @@ export const useApp = create<AppStore>((set, get) => ({
   flash: null,
   progress: null,
   models: [],
+  prepareVariable: null,
+  setPrepareVariable: (name) => set({ prepareVariable: name }),
   setDataset: (d) =>
     set({
       dataset: d,

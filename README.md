@@ -7,6 +7,7 @@ A local desktop workspace for exploring numeric datasets, comparing measurements
 *Statistics workspace with the bundled bench-log sample (`samples/sample_run3.txt`) and a linked selection.*
 
 - Import CSV, delimited text and Excel files, with preview and format overrides.
+- Clean signals in **Prepare**: remove spikes, outliers and ranges, fill gaps and adjust values, with the original kept in gray, undo and reset.
 - Plot columns against row positions, time or another numeric column.
 - Fit curves from numeric charts using built-in or custom equations, coefficient bounds, exclusions, residuals and uncertainty estimates.
 - Explore linked scatter plots, distributions, row plots and summary statistics.

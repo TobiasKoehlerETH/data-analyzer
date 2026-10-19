@@ -594,6 +594,31 @@ pub fn decimate(x: &[f64], q: usize) -> Result<Vec<f64>, String> {
 // Basic numerics
 // ---------------------------------------------------------------------------
 
+/// A copy with missing values bridged for computations that need a continuous signal:
+/// interior gaps are linearly interpolated, leading/trailing gaps hold the nearest value.
+/// `None` when nothing is missing (or nothing is finite), so callers can borrow the input.
+pub fn bridge_gaps(x: &[f64]) -> Option<Vec<f64>> {
+    if x.iter().all(|v| v.is_finite()) {
+        return None;
+    }
+    let first = x.iter().position(|v| v.is_finite())?;
+    let mut out = x.to_vec();
+    out[..first].fill(x[first]);
+    let mut prev = first;
+    for i in first + 1..x.len() {
+        if !x[i].is_finite() {
+            continue;
+        }
+        for j in prev + 1..i {
+            out[j] = x[prev] + (x[i] - x[prev]) * (j - prev) as f64 / (i - prev) as f64;
+        }
+        prev = i;
+    }
+    let last = x[prev];
+    out[prev + 1..].fill(last);
+    Some(out)
+}
+
 pub fn mean(x: &[f64]) -> f64 {
     if x.is_empty() {
         return f64::NAN;
@@ -662,4 +687,17 @@ pub fn interp(x: &[f64], xp: &[f64], fp: &[f64]) -> Vec<f64> {
 /// numpy.searchsorted(a, v) (side="left").
 pub fn searchsorted(a: &[f64], v: f64) -> usize {
     a.partition_point(|&x| x < v)
+}
+
+#[cfg(test)]
+mod gap_tests {
+    use super::bridge_gaps;
+
+    #[test]
+    fn bridges_interior_and_edge_gaps() {
+        let n = f64::NAN;
+        assert_eq!(bridge_gaps(&[1.0, 2.0]), None);
+        assert_eq!(bridge_gaps(&[n, n]), None);
+        assert_eq!(bridge_gaps(&[n, 1.0, n, n, 4.0, n]).unwrap(), vec![1.0, 1.0, 2.0, 3.0, 4.0, 4.0]);
+    }
 }

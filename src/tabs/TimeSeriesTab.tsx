@@ -5,10 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { EmptyState, NumberInput, Panel } from "@/components/common";
+import { CheckField, EmptyState, NumberInput, Panel } from "@/components/common";
 import { StackedChart, type ChartPanel } from "@/components/StackedChart";
 import { analysisVectors, type Vectors } from "@/lib/analysis";
-import { PALETTE, seriesColor, zip } from "@/lib/chart";
+import { api } from "@/lib/api";
+import { INK, PALETTE, seriesColor, zip } from "@/lib/chart";
 import { useApp } from "@/lib/store";
 
 /** One palette slot per signal, so colours never repeat. */
@@ -26,6 +27,10 @@ export function TimeSeriesTab() {
   const [xColumn, setXColumn] = useState("__row");
   const [coord, setCoord] = useState("");
   const [loading, setLoading] = useState(false);
+  /** Workspace variables with edits, and their imported values when "Show original" is on. */
+  const [editedNames, setEditedNames] = useState<string[]>([]);
+  const [showOriginal, setShowOriginal] = useState(false);
+  const [originals, setOriginals] = useState<Record<string, (number | null)[]>>({});
   const xSignal = xColumn.startsWith("column:") ? xColumn.slice(7) : null;
 
   useEffect(() => {
@@ -93,6 +98,27 @@ export function TimeSeriesTab() {
     };
   }, [selected, xSignal, dataVersion, dataset, activeTab]);
 
+  useEffect(() => {
+    api
+      .workspaceView()
+      .then((v) => setEditedNames(v.variables.filter((x) => x.edits.length > 0).map((x) => x.name)))
+      .catch(() => setEditedNames([]));
+  }, [dataVersion]);
+
+  const overlay = useMemo(() => selected.filter((c) => editedNames.includes(c)), [selected, editedNames]);
+  const originalOn = showOriginal && xSignal === null && overlay.length > 0;
+  useEffect(() => {
+    if (!originalOn || activeTab !== "timeseries") return;
+    let cancelled = false;
+    api
+      .workspaceVectors(overlay)
+      .then((v) => !cancelled && setOriginals(Object.fromEntries(Object.entries(v.variables).map(([k, x]) => [k, x.original]))))
+      .catch((e) => !cancelled && toast.error(String(e)));
+    return () => {
+      cancelled = true;
+    };
+  }, [originalOn, overlay, dataVersion, activeTab]);
+
   const x = useMemo(
     () =>
       !data
@@ -128,17 +154,23 @@ export function TimeSeriesTab() {
         cols.length === 1
           ? dataset.signals.find((s) => s.column === cols[0])?.label
           : undefined,
-      series: cols.map((c) => {
+      series: cols.flatMap((c) => {
         const y = data.columns[c];
-        return {
-          name: dataset.signals.find((s) => s.column === c)?.label ?? c,
-          color: seriesColor(slots[c] ?? 0),
-          data: y ? zip(x, y) : [],
-          type: xSignal === null ? ("line" as const) : ("scatter" as const),
-        };
+        const name = dataset.signals.find((s) => s.column === c)?.label ?? c;
+        const original = originalOn && overlay.includes(c) ? originals[c] : undefined;
+        return [
+          // The imported values recede to gray behind the edited signal.
+          ...(original ? [{ name: `${name} · original`, color: INK.muted, data: zip(x, original) }] : []),
+          {
+            name,
+            color: seriesColor(slots[c] ?? 0),
+            data: y ? zip(x, y) : [],
+            type: xSignal === null ? ("line" as const) : ("scatter" as const),
+          },
+        ];
       }),
     }));
-  }, [data, byGroup, dataset, x, xSignal, slots]);
+  }, [data, byGroup, dataset, x, xSignal, slots, originalOn, overlay, originals]);
 
   const grouped = useMemo(() => {
     const m = new Map<
@@ -246,6 +278,7 @@ export function TimeSeriesTab() {
                       }
                     />
                     <span className="flex-1 truncate">{s.name}</span>
+                    {editedNames.includes(s.column) && <span className="text-[10px] text-muted-foreground">edited</span>}
                     {selected.includes(s.column) && (
                       <span className="h-0.5 w-3 shrink-0 rounded-full" style={{ background: seriesColor(slots[s.column] ?? 0) }} aria-hidden />
                     )}
@@ -298,6 +331,11 @@ export function TimeSeriesTab() {
           >
             <ArrowLeftRight className="size-4" />
           </Button>
+          {xSignal === null && overlay.length > 0 && (
+            <span className="ml-3">
+              <CheckField checked={showOriginal} onChange={setShowOriginal} label="Show original" hint="Overlay the imported values (gray) behind signals edited in Prepare or Workspace" />
+            </span>
+          )}
         </div>
         {selected.length > 1 && (
           <div className="flex flex-wrap items-center gap-3 border border-ap-line bg-ap-bluegray-15 px-3 py-1.5 text-xs">

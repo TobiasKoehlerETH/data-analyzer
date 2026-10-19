@@ -69,13 +69,24 @@ export interface VariableInfo {
   max: number | null;
   is_time: boolean;
   edits: string[];
+  can_undo: boolean;
 }
 
 export type VariableEdit =
   | { op: "offset"; value: number }
   | { op: "scale"; value: number }
   | { op: "downsample"; value: number }
-  | { op: "normalize" | "zscore" | "demean" | "zero_start" | "invert" };
+  | { op: "despike"; value: number }
+  /** Half-open row ranges [start, end). */
+  | { op: "clear_range" | "keep_range"; value: [number, number] }
+  | { op: "clear_points"; value: number[] }
+  | { op: "normalize" | "zscore" | "demean" | "zero_start" | "invert" | "fill_gaps" };
+
+/** Imported and edited values of a workspace variable, row-aligned with the dataset time axis. */
+export interface WorkspaceVectors {
+  time: number[];
+  variables: Record<string, { original: (number | null)[]; edited: (number | null)[]; edits: string[]; can_undo: boolean }>;
+}
 
 export interface WorkspaceView {
   variables: VariableInfo[];
@@ -324,8 +335,9 @@ export const api = {
   workspaceRename: (old: string, newName: string) => invoke<WorkspaceView>("workspace_rename", { old, new: newName }),
   workspaceSetTime: (name: string | null) => invoke<WorkspaceView>("workspace_set_time", { name }),
   workspaceClear: () => invoke<WorkspaceView>("workspace_clear"),
-  workspaceEdit: (name: string, action: "edit" | "reset" | "duplicate", edit?: VariableEdit) =>
+  workspaceEdit: (name: string, action: "edit" | "undo" | "reset" | "duplicate", edit?: VariableEdit) =>
     invoke<WorkspaceView>("workspace_edit", { name, action, edit: edit ?? null }),
+  workspaceVectors: (names: string[]) => invoke<WorkspaceVectors>("workspace_vectors", { names }),
   exportDataset: (path: string) => invoke<number>("export_dataset", { path }),
   datasetInfo: () => invoke<DatasetInfo | null>("dataset_info"),
   descriptiveStats: () => invoke<StatRow[]>("descriptive_stats"),

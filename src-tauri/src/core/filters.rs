@@ -318,10 +318,20 @@ pub fn apply_step(x: &[f64], step: &FilterStep, fs: f64) -> FResult {
     }
 }
 
+/// Missing values are bridged while filtering (one gap would otherwise spread NaN through
+/// every recursive filter) and stay missing in the result.
 pub fn apply_steps<'a>(x: &[f64], steps: impl Iterator<Item = &'a FilterStep>, fs: f64) -> FResult {
-    let mut result = x.to_vec();
+    let bridged = super::dsp::bridge_gaps(x);
+    let mut result = bridged.clone().unwrap_or_else(|| x.to_vec());
     for step in steps {
         result = apply_step(&result, step, fs).map_err(|e| format!("{}: {e}", step.describe()))?;
+    }
+    if bridged.is_some() && result.len() == x.len() {
+        for (r, v) in result.iter_mut().zip(x) {
+            if !v.is_finite() {
+                *r = f64::NAN;
+            }
+        }
     }
     Ok(result)
 }

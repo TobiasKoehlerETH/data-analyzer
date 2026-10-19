@@ -183,7 +183,7 @@ pub async fn workspace_set_time(app: AppHandle, state: AppStateRef<'_>, name: Op
     .await
 }
 
-/// Edit, reset or duplicate one variable: `action` is "edit" (with `edit`), "reset" or "duplicate".
+/// Edit, undo, reset or duplicate one variable: `action` is "edit" (with `edit`), "undo", "reset" or "duplicate".
 #[tauri::command]
 pub async fn workspace_edit(app: AppHandle, state: AppStateRef<'_>, name: String, action: String, edit: Option<crate::core::workspace::Edit>) -> CmdResult<WorkspaceView> {
     let st = state.inner().clone();
@@ -193,12 +193,54 @@ pub async fn workspace_edit(app: AppHandle, state: AppStateRef<'_>, name: String
             let mut ws = st.workspace.lock().unwrap();
             match action.as_str() {
                 "edit" => ws.edit(&name, edit.ok_or("No edit given.")?)?,
+                "undo" => ws.undo(&name)?,
                 "reset" => ws.reset(&name)?,
                 "duplicate" => added.push(ws.duplicate(&name)?),
                 other => return Err(format!("Unknown action '{other}'")),
             }
         }
         sync_workspace(&app, &st, added)
+    })
+    .await
+}
+
+#[derive(Serialize)]
+pub struct VariableVectors {
+    original: Vec<f64>,
+    edited: Vec<f64>,
+    edits: Vec<String>,
+    can_undo: bool,
+}
+
+#[derive(Serialize)]
+pub struct WorkspaceVectors {
+    /// Dataset time axis; vectors are padded/truncated to its length so rows line up.
+    time: Vec<f64>,
+    variables: std::collections::BTreeMap<String, VariableVectors>,
+}
+
+/// Imported and edited values of workspace variables, row-aligned with the dataset.
+#[tauri::command]
+pub async fn workspace_vectors(state: AppStateRef<'_>, names: Vec<String>) -> CmdResult<WorkspaceVectors> {
+    let st = state.inner().clone();
+    blocking(move || {
+        let time = with_data(&st, |d| Ok(d.time.to_vec()))?;
+        let n = time.len();
+        let fit = |v: &[f64]| {
+            let mut v = v[..v.len().min(n)].to_vec();
+            v.resize(n, f64::NAN);
+            v
+        };
+        let ws = st.workspace.lock().unwrap();
+        let mut variables = std::collections::BTreeMap::new();
+        for name in names {
+            let v = ws.get(&name).ok_or_else(|| format!("Variable not found: {name}"))?;
+            variables.insert(
+                name,
+                VariableVectors { original: fit(&v.original), edited: fit(&v.data), edits: v.edits.clone(), can_undo: !v.history.is_empty() },
+            );
+        }
+        Ok(WorkspaceVectors { time, variables })
     })
     .await
 }
