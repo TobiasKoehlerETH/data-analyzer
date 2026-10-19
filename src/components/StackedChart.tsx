@@ -1,4 +1,4 @@
-import Plotly from "plotly.js-cartesian-dist-min";
+import Plotly from "plotly.js-dist-min";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { WorkspaceActive } from "@/lib/workspace";
 import { Plot, type PlotElement, type PlotTable } from "./Plot";
@@ -255,7 +255,7 @@ export function StackedChart({
         } else if (type === "scatter") {
           data.push({
             ...common,
-            type: "scatter",
+            type: "scattergl",
             mode: "markers",
             x: xs,
             y: ys,

@@ -155,7 +155,7 @@ export function StatisticsTab() {
     });
     const keep = { selected: { marker: { opacity: 1 } }, unselected: { marker: { opacity: 1 } } } as const;
     const points = (xs: number[], ys: number[], colors: string[], xName: string) => ({
-      type: "scatter",
+      type: "scattergl",
       mode: "markers",
       name: esc(yLabel),
       x: xs,

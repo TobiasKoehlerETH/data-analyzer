@@ -1,4 +1,4 @@
-import Plotly from "plotly.js-cartesian-dist-min";
+import Plotly from "plotly.js-dist-min";
 import type { Config, PlotlyHTMLElement } from "plotly.js";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Download, X } from "lucide-react";
@@ -119,6 +119,76 @@ export function Plot({ data, layout, config, uirevision, table, events, classNam
   useEffect(() => {
     history.current = [];
   }, [uirevision]);
+
+  // Middle-button drag always pans, whatever tool the toolbar has selected.
+  useEffect(() => {
+    const node = el.current;
+    if (!node) return;
+    let drag: { x: number; y: number; xa: any; ya: any; x0: number[]; y0: number[] } | null = null;
+    let frame = 0;
+    let pending: MouseEvent | null = null;
+    const axesAt = (gd: PlotElement, px: number, py: number) => {
+      const fl = gd._fullLayout ?? {};
+      for (const key of Object.keys(fl).filter((k) => /^xaxis\d*$/.test(k))) {
+        const xa = fl[key];
+        const ya = fl[`yaxis${key.slice(5)}`] ?? fl[xa?.anchor?.replace("y", "yaxis")];
+        if (!xa?._length || !ya?._length) continue;
+        if (px >= xa._offset && px <= xa._offset + xa._length && py >= ya._offset && py <= ya._offset + ya._length) return { xa, ya };
+      }
+      return null;
+    };
+    const apply = () => {
+      frame = 0;
+      const gd = gdRef.current;
+      const e = pending;
+      if (!gd || !drag || !e) return;
+      const { xa, ya } = drag;
+      const dx = ((e.clientX - drag.x) / xa._length) * (drag.x0[1] - drag.x0[0]);
+      const dy = ((e.clientY - drag.y) / ya._length) * (drag.y0[1] - drag.y0[0]);
+      const update: Record<string, unknown> = {};
+      if (xa.fixedrange !== true) update[`${xa._name}.range`] = drag.x0.map((v) => xa.l2r(v - dx));
+      if (ya.fixedrange !== true) update[`${ya._name}.range`] = drag.y0.map((v) => ya.l2r(v + dy));
+      Plotly.relayout(gd, update);
+    };
+    const move = (e: MouseEvent) => {
+      pending = e;
+      if (!frame) frame = requestAnimationFrame(apply);
+    };
+    const up = () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      cancelAnimationFrame(frame);
+      frame = 0;
+      if (drag) {
+        restoring.current = false;
+        drag = null;
+      }
+    };
+    const down = (e: MouseEvent) => {
+      const gd = gdRef.current;
+      if (e.button !== 1 || !gd) return;
+      const rect = gd.getBoundingClientRect();
+      const hit = axesAt(gd, e.clientX - rect.left, e.clientY - rect.top);
+      if (!hit) return;
+      e.preventDefault();
+      e.stopPropagation();
+      // One history entry per pan, not one per mouse move.
+      history.current.push(ranges(gd));
+      restoring.current = true;
+      drag = { x: e.clientX, y: e.clientY, xa: hit.xa, ya: hit.ya, x0: hit.xa.range.map(hit.xa.r2l), y0: hit.ya.range.map(hit.ya.r2l) };
+      window.addEventListener("mousemove", move);
+      window.addEventListener("mouseup", up);
+    };
+    // Stops the browser's middle-click autoscroll.
+    const aux = (e: MouseEvent) => e.button === 1 && e.preventDefault();
+    node.addEventListener("mousedown", down, true);
+    node.addEventListener("auxclick", aux);
+    return () => {
+      node.removeEventListener("mousedown", down, true);
+      node.removeEventListener("auxclick", aux);
+      up();
+    };
+  }, []);
 
   useEffect(() => {
     if (!active || !el.current) return;

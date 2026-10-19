@@ -142,7 +142,7 @@ export function CurveFitTab() {
     const yName = esc(label(yCol));
     const traces: any[] = [
       {
-        type: "scatter",
+        type: "scattergl",
         mode: "markers",
         name: yName,
         x: plotted.map((p) => p[0]),
@@ -172,7 +172,7 @@ export function CurveFitTab() {
     if (split) {
       const res = current.result.residuals.filter((_, i) => i % step === 0);
       traces.push({
-        type: "scatter",
+        type: "scattergl",
         mode: "markers",
         name: "Residual",
         xaxis: "x2",
