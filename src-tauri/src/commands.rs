@@ -1201,10 +1201,11 @@ pub struct CompareStateDto {
     files: Vec<CompareFileDto>,
     mapped_signals: Vec<String>,
     mappings: Vec<MappingDto>,
-    errors: Vec<String>,
+    /// The rebuilt dataset when the call changed the workspace (time shifts, removed files).
+    dataset: Option<DatasetInfo>,
 }
 
-fn compare_dto(c: &CompareManager, errors: Vec<String>) -> CompareStateDto {
+fn compare_dto(c: &CompareManager, dataset: Option<DatasetInfo>) -> CompareStateDto {
     CompareStateDto {
         files: c
             .file_order
@@ -1230,78 +1231,79 @@ fn compare_dto(c: &CompareManager, errors: Vec<String>) -> CompareStateDto {
             .iter()
             .map(|m| MappingDto { canonical: m.canonical_name.clone(), file_columns: m.file_columns.iter().cloned().collect() })
             .collect(),
-        errors,
+        dataset,
     }
 }
 
-#[tauri::command]
-pub async fn compare_add_files(app: AppHandle, state: AppStateRef<'_>, paths: Vec<String>) -> CmdResult<CompareStateDto> {
+/// The comparison, refreshed from the workspace. Locks the workspace before the comparison,
+/// like every caller.
+fn compare_synced(st: &AppState) -> std::sync::MutexGuard<'_, CompareManager> {
+    let ws = st.workspace.lock().unwrap();
+    let mut c = st.compare.lock().unwrap();
+    c.sync(&ws);
+    c
+}
+
+/// Runs an alignment on the comparison and writes the resulting per-file shifts to the
+/// workspace sources, then rebuilds the dataset.
+async fn compare_align(app: AppHandle, state: AppStateRef<'_>, f: impl FnOnce(&mut CompareManager) + Send + 'static) -> CmdResult<CompareStateDto> {
     let st = state.inner().clone();
     blocking(move || {
-        let mut errors = Vec::new();
-        let n = paths.len().max(1);
-        for (i, p) in paths.iter().enumerate() {
-            emit_progress(&app, "compare", (i * 100 / n) as i32, format!("Loading {p}..."));
-            if let Err(e) = st.compare.lock().unwrap().add_file(p) {
-                errors.push(format!("Could not load {p}:\n{e}"));
+        {
+            let mut ws = st.workspace.lock().unwrap();
+            if ws.align == Align::Row {
+                // Shifts mean nothing on a row axis.
+                let step = ws.grid_step;
+                ws.set_align(Align::Time, step)?;
+            }
+            let mut c = st.compare.lock().unwrap();
+            c.sync(&ws);
+            let before = c.offsets();
+            f(&mut c);
+            for ((fid, old), (_, new)) in before.iter().zip(c.offsets()) {
+                let id: u32 = fid.parse().map_err(|_| "Unknown file.".to_string())?;
+                let current = ws.source(id).map(|s| s.offset).ok_or("Unknown file.")?;
+                if (new - old).abs() > 0.0 {
+                    ws.set_offset(id, current + (new - old))?;
+                }
             }
         }
-        emit_progress(&app, "compare", 100, "Done.");
-        Ok(compare_dto(&st.compare.lock().unwrap(), errors))
+        let view = sync_workspace(&app, &st, vec![], vec![])?;
+        Ok(compare_dto(&compare_synced(&st), view.dataset))
     })
     .await
 }
 
 #[tauri::command]
 pub fn compare_state(state: AppStateRef<'_>) -> CompareStateDto {
-    compare_dto(&state.compare.lock().unwrap(), vec![])
+    compare_dto(&compare_synced(&state), None)
 }
 
 #[tauri::command]
-pub fn compare_remove_file(state: AppStateRef<'_>, id: String) -> CompareStateDto {
-    let mut c = state.compare.lock().unwrap();
-    c.remove_file(&id);
-    compare_dto(&c, vec![])
+pub async fn compare_set_offset(app: AppHandle, state: AppStateRef<'_>, id: String, offset: f64) -> CmdResult<CompareStateDto> {
+    compare_align(app, state, move |c| c.set_offset(&id, offset)).await
 }
 
 #[tauri::command]
-pub fn compare_clear(state: AppStateRef<'_>) -> CompareStateDto {
-    let mut c = state.compare.lock().unwrap();
-    c.clear();
-    compare_dto(&c, vec![])
+pub async fn compare_align_trigger(app: AppHandle, state: AppStateRef<'_>, signal: String, threshold: f64, rising: bool) -> CmdResult<CompareStateDto> {
+    compare_align(app, state, move |c| c.align_by_trigger(&signal, threshold, rising)).await
 }
 
 #[tauri::command]
-pub fn compare_set_offset(state: AppStateRef<'_>, id: String, offset: f64) -> CompareStateDto {
-    let mut c = state.compare.lock().unwrap();
-    c.set_offset(&id, offset);
-    compare_dto(&c, vec![])
-}
-
-#[tauri::command]
-pub fn compare_align_trigger(state: AppStateRef<'_>, signal: String, threshold: f64, rising: bool) -> CompareStateDto {
-    let mut c = state.compare.lock().unwrap();
-    c.align_by_trigger(&signal, threshold, rising);
-    compare_dto(&c, vec![])
-}
-
-#[tauri::command]
-pub fn compare_align_clicks(state: AppStateRef<'_>, clicks: Vec<(String, f64)>) -> CompareStateDto {
-    let mut c = state.compare.lock().unwrap();
-    c.align_by_clicks(&clicks);
-    compare_dto(&c, vec![])
+pub async fn compare_align_clicks(app: AppHandle, state: AppStateRef<'_>, clicks: Vec<(String, f64)>) -> CmdResult<CompareStateDto> {
+    compare_align(app, state, move |c| c.align_by_clicks(&clicks)).await
 }
 
 #[tauri::command]
 pub fn compare_nearest_file(state: AppStateRef<'_>, signal: String, t: f64, y: f64) -> Option<String> {
-    state.compare.lock().unwrap().nearest_file(&signal, t, y)
+    compare_synced(&state).nearest_file(&signal, t, y)
 }
 
 #[tauri::command]
 pub fn compare_set_mapping(state: AppStateRef<'_>, canonical: String, id: String, column: Option<String>) -> CompareStateDto {
-    let mut c = state.compare.lock().unwrap();
+    let mut c = compare_synced(&state);
     c.set_signal_mapping(&canonical, &id, column.as_deref());
-    compare_dto(&c, vec![])
+    compare_dto(&c, None)
 }
 
 #[derive(Serialize)]
@@ -1321,7 +1323,7 @@ pub struct CompareSignalSeries {
 
 #[tauri::command]
 pub fn compare_series(state: AppStateRef<'_>, signals: Vec<String>, range: Option<[f64; 2]>, max_points: usize) -> Vec<CompareSignalSeries> {
-    let c = state.compare.lock().unwrap();
+    let c = compare_synced(&state);
     signals
         .iter()
         .map(|sig| CompareSignalSeries {
@@ -1345,7 +1347,7 @@ pub fn compare_series(state: AppStateRef<'_>, signals: Vec<String>, range: Optio
 
 #[tauri::command]
 pub fn compare_differences(state: AppStateRef<'_>, signals: Vec<String>, max_points: usize) -> Vec<CompareSignalSeries> {
-    let c = state.compare.lock().unwrap();
+    let c = compare_synced(&state);
     let Some(ref_id) = c.file_order.first().cloned() else { return vec![] };
     signals
         .iter()
@@ -1368,7 +1370,7 @@ pub fn compare_differences(state: AppStateRef<'_>, signals: Vec<String>, max_poi
 
 #[tauri::command]
 pub fn compare_stats(state: AppStateRef<'_>, signals: Vec<String>) -> Vec<CompareStatistics> {
-    let c = state.compare.lock().unwrap();
+    let c = compare_synced(&state);
     let Some(ref_id) = c.file_order.first().cloned() else { return vec![] };
     let mut rows = Vec::new();
     for sig in &signals {
@@ -1535,7 +1537,7 @@ fn build_report(st: &AppState, sections: &[String], app: &AppHandle) -> CmdResul
         }
     }
     if inc("Comparison") {
-        let cm = st.compare.lock().unwrap();
+        let cm = compare_synced(st);
         if cm.file_order.len() >= 2 {
             let mapped = cm.mapped_signals();
             for sig in &mapped {

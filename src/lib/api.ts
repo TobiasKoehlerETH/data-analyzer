@@ -333,7 +333,8 @@ export interface CompareState {
   files: CompareFile[];
   mapped_signals: string[];
   mappings: { canonical: string; file_columns: Record<string, string> }[];
-  errors: string[];
+  /** Rebuilt dataset when the call changed the workspace (time shifts). */
+  dataset: DatasetInfo | null;
 }
 
 export interface CompareTrace {
@@ -444,10 +445,7 @@ export const api = {
 
   validationRun: (model: string) => invoke<ValidationView>("validation_run", { model }),
 
-  compareAddFiles: (paths: string[]) => invoke<CompareState>("compare_add_files", { paths }),
   compareState: () => invoke<CompareState>("compare_state"),
-  compareRemoveFile: (id: string) => invoke<CompareState>("compare_remove_file", { id }),
-  compareClear: () => invoke<CompareState>("compare_clear"),
   compareSetOffset: (id: string, offset: number) => invoke<CompareState>("compare_set_offset", { id, offset }),
   compareAlignTrigger: (signal: string, threshold: number, rising: boolean) =>
     invoke<CompareState>("compare_align_trigger", { signal, threshold, rising }),

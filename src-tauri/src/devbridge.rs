@@ -90,13 +90,10 @@ async fn dispatch(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String>
         "simulation_clear" => ok(c::simulation_clear(st())),
         "simulation_view_cmd" => ok(c::simulation_view_cmd(st())?),
         "validation_run" => { args!(a; model: String); ok(c::validation_run(st(), model).await?) }
-        "compare_add_files" => { args!(a; paths: Vec<String>); ok(c::compare_add_files(app.clone(), st(), paths).await?) }
         "compare_state" => ok(c::compare_state(st())),
-        "compare_remove_file" => { args!(a; id: String); ok(c::compare_remove_file(st(), id)) }
-        "compare_clear" => ok(c::compare_clear(st())),
-        "compare_set_offset" => { args!(a; id: String, offset: f64); ok(c::compare_set_offset(st(), id, offset)) }
-        "compare_align_trigger" => { args!(a; signal: String, threshold: f64, rising: bool); ok(c::compare_align_trigger(st(), signal, threshold, rising)) }
-        "compare_align_clicks" => { args!(a; clicks: Vec<(String, f64)>); ok(c::compare_align_clicks(st(), clicks)) }
+        "compare_set_offset" => { args!(a; id: String, offset: f64); ok(c::compare_set_offset(app.clone(), st(), id, offset).await?) }
+        "compare_align_trigger" => { args!(a; signal: String, threshold: f64, rising: bool); ok(c::compare_align_trigger(app.clone(), st(), signal, threshold, rising).await?) }
+        "compare_align_clicks" => { args!(a; clicks: Vec<(String, f64)>); ok(c::compare_align_clicks(app.clone(), st(), clicks).await?) }
         "compare_nearest_file" => { args!(a; signal: String, t: f64, y: f64); ok(c::compare_nearest_file(st(), signal, t, y)) }
         "compare_set_mapping" => { args!(a; canonical: String, id: String, column: Option<String>); ok(c::compare_set_mapping(st(), canonical, id, column)) }
         "compare_series" => { args!(a; signals: Vec<String>, range: Option<[f64; 2]>, maxPoints: usize); ok(c::compare_series(st(), signals, range, maxPoints)) }

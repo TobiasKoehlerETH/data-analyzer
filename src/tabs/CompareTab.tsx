@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { open, message } from "@/lib/platform";
-import { FilePlus2, Link2, Star, Trash2, X } from "lucide-react";
+import { open, message, ask } from "@/lib/platform";
+import { FilePlus2, Link2, Star, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -16,8 +16,8 @@ type AlignMode = "manual" | "click" | "trigger";
 const NONE = "__none__";
 
 export function CompareTab() {
-  const { setProgress } = useApp();
-  const [state, setState] = useState<CompareState>({ files: [], mapped_signals: [], mappings: [], errors: [] });
+  const { setProgress, setDataset, dataset } = useApp();
+  const [state, setState] = useState<CompareState>({ files: [], mapped_signals: [], mappings: [], dataset: null });
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [checked, setChecked] = useState<string[]>([]);
   const [mode, setMode] = useState<AlignMode>("manual");
@@ -37,21 +37,51 @@ export function CompareTab() {
   const apply = (s: CompareState) => {
     setState(s);
     setChecked((c) => c.filter((x) => s.mapped_signals.includes(x)));
-    if (!s.mapped_signals.includes(trigSignal)) setTrigSignal(s.mapped_signals[0] ?? "");
+    setTrigSignal((t) => (s.mapped_signals.includes(t) ? t : (s.mapped_signals[0] ?? "")));
+    // A time shift rebuilds the workspace dataset; the effect below then refreshes this view.
+    if (s.dataset) setDataset(s.dataset);
   };
 
+  // Compare is a view over the workspace's files: refresh whenever the workspace changes.
+  useEffect(() => {
+    api.compareState().then(apply).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataset]);
+
+  const run = async (f: () => Promise<CompareState>) => {
+    try {
+      apply(await f());
+    } catch (e) {
+      await message(errorText(e), { title: "Compare", kind: "error" });
+    }
+  };
+
+  /** Adds files to the workspace with all their columns (named "Column · file"). */
   const addPaths = useCallback(async (paths: string[]) => {
     setProgress("compare", 5, "Loading files...");
     try {
-      const s = await api.compareAddFiles(paths);
-      apply(s);
-      for (const e of s.errors) await message(e, { title: "Load Error", kind: "warning" });
+      const v = await api.workspaceImportBatch(paths, null, null);
+      setDataset(v.dataset ?? null);
+      for (const w of v.warnings) await message(w, { title: "Import", kind: "warning" });
     } catch (e) {
-      setProgress("compare", 100, "");
       await message(errorText(e), { title: "Load Error", kind: "error" });
+    } finally {
+      setProgress("compare", 100, "");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const removeFile = async (id: string) => {
+    const f = state.files.find((x) => x.id === id);
+    if (!f || !(await ask(`Remove ${f.short_name} and its variables from the workspace?`, { title: "Remove file", kind: "warning" }))) return;
+    try {
+      const v = await api.workspaceRemoveSource(Number(id));
+      setDataset(v.dataset ?? null);
+      setSelectedFile(null);
+    } catch (e) {
+      await message(errorText(e), { title: "Compare", kind: "error" });
+    }
+  };
 
   useEffect(() => {
     const h = (e: Event) => addPaths((e as CustomEvent<string[]>).detail);
@@ -60,7 +90,7 @@ export function CompareTab() {
   }, [addPaths]);
 
   const addFiles = async () => {
-    const p = await open({ multiple: true, filters: DATA_FILE_FILTERS, title: "Add files to compare" });
+    const p = await open({ multiple: true, filters: DATA_FILE_FILTERS, title: "Add files to the workspace" });
     if (Array.isArray(p) && p.length) addPaths(p);
     else if (typeof p === "string") addPaths([p]);
   };
@@ -129,7 +159,7 @@ export function CompareTab() {
     if (!fid) return;
     const next = { ...clicks, [fid]: x };
     if (state.files.every((f) => next[f.id] !== undefined)) {
-      apply(await api.compareAlignClicks(Object.entries(next)));
+      await run(() => api.compareAlignClicks(Object.entries(next)));
       setClicks({});
     } else {
       setClicks(next);
@@ -142,7 +172,7 @@ export function CompareTab() {
     <div className="flex h-full gap-3">
       <div className="flex w-[300px] shrink-0 flex-col gap-3 overflow-y-auto">
         <Panel title="Files" bodyClassName="flex flex-col gap-2 p-2">
-          <ul className="max-h-40 min-h-16 overflow-auto border border-ap-line" title="Loaded files for comparison. First file is the reference.">
+          <ul className="max-h-40 min-h-16 overflow-auto border border-ap-line" title="The workspace's files. The first file is the reference.">
             {state.files.map((f, i) => (
               <li
                 key={f.id}
@@ -157,17 +187,14 @@ export function CompareTab() {
                 </span>
               </li>
             ))}
-            {state.files.length === 0 && <li className="p-2 text-xs text-muted-foreground">Add two or more CSV, TXT or Excel files.</li>}
+            {state.files.length < 2 && <li className="p-2 text-xs text-muted-foreground">Compare shows the workspace's files. Add two or more runs of the same test.</li>}
           </ul>
           <div className="flex gap-1.5">
-            <Button size="sm" className="flex-1" onClick={addFiles} title="Browse and add files to compare">
-              <FilePlus2 /> Add Files…
+            <Button size="sm" className="flex-1" onClick={addFiles} title="Add files to the workspace with all their columns">
+              <FilePlus2 /> Add files…
             </Button>
-            <Button size="sm" variant="outline" disabled={!selectedFile} onClick={async () => selectedFile && apply(await api.compareRemoveFile(selectedFile))} title="Remove selected file from comparison">
+            <Button size="sm" variant="outline" disabled={!selectedFile} onClick={() => selectedFile && removeFile(selectedFile)} title="Remove the selected file from the workspace">
               <X /> Remove
-            </Button>
-            <Button size="sm" variant="outline" onClick={async () => apply(await api.compareClear())} title="Remove all files">
-              <Trash2 />
             </Button>
           </div>
         </Panel>
@@ -201,12 +228,16 @@ export function CompareTab() {
               { value: "trigger", label: "Trigger" },
             ]}
           />
-          {mode === "manual" &&
-            state.files.map((f) => (
-              <Field key={f.id} label={f.short_name.slice(0, 20)}>
-                <NumberInput value={f.offset} step={0.1} suffix="s" onChange={async (v) => apply(await api.compareSetOffset(f.id, v))} />
-              </Field>
-            ))}
+          {mode === "manual" && (
+            <>
+              <p className="text-xs text-muted-foreground">Time shift per file. It is the same shift as in Workspace and applies on every page.</p>
+              {state.files.map((f) => (
+                <Field key={f.id} label={f.short_name.slice(0, 20)}>
+                  <NumberInput value={f.offset} step={0.1} suffix="s" onChange={(v) => run(() => api.compareSetOffset(f.id, v))} />
+                </Field>
+              ))}
+            </>
+          )}
           {mode === "click" && (
             <div className="text-xs text-muted-foreground">
               <p>Click on each file's trace to set its alignment point (overlay view).</p>
@@ -247,8 +278,8 @@ export function CompareTab() {
                   { value: "f", label: "Falling" },
                 ]}
               />
-              <Button size="sm" variant="outline" disabled={!trigSignal} onClick={async () => apply(await api.compareAlignTrigger(trigSignal, threshold, rising))}>
-                Apply Trigger Alignment
+              <Button size="sm" variant="outline" disabled={!trigSignal} onClick={() => run(() => api.compareAlignTrigger(trigSignal, threshold, rising))} title="Shift every file so the first crossing lines up with the reference file's">
+                Align on trigger
               </Button>
             </>
           )}
@@ -272,7 +303,7 @@ export function CompareTab() {
         <Panel className="min-h-0 flex-[4]" bodyClassName="p-1">
           {panels.length === 0 ? (
             <EmptyState title={state.files.length < 2 ? "Add at least two files" : "Select signals to compare"}>
-              Signals are matched across files automatically (fuzzy name matching); the first file ★ is the reference.
+              Compare overlays the workspace's files with their processing steps. Signals are matched by column name; the first file ★ is the reference.
             </EmptyState>
           ) : (
             <StackedChart
@@ -345,7 +376,7 @@ export function CompareTab() {
                     <TableCell key={f.id} className="py-1">
                       <Select
                         value={m.file_columns[f.id] ?? NONE}
-                        onValueChange={async (v) => apply(await api.compareSetMapping(m.canonical, f.id, v === NONE ? null : v))}
+                        onValueChange={(v) => run(() => api.compareSetMapping(m.canonical, f.id, v === NONE ? null : v))}
                       >
                         <SelectTrigger className="h-7 w-full min-w-36 text-xs">
                           <SelectValue />

@@ -58,7 +58,7 @@ const PAGES: Record<TabId, PageDef> = {
   prepare: { label: "Prepare", icon: BrushCleaning, component: PrepareTab, hint: "Clean and filter a signal. Drag a box to select, then remove or keep. The original stays in gray.", needsData: true },
   timeseries: { label: "Plots", icon: ChartLine, component: TimeSeriesTab, hint: "Tick signals on the left to plot them. Drag to zoom, double-click to reset.", needsData: true },
   statistics: { label: "Statistics", icon: ChartScatter, component: StatisticsTab, hint: "Pick a signal; drag on any chart to select rows and compare.", needsData: true },
-  compare: { label: "Compare files", icon: Scale, component: CompareTab, hint: "Add two or more files to overlay and align the same signals." },
+  compare: { label: "Compare files", icon: Scale, component: CompareTab, hint: "Overlay the workspace's files and line them up; shifts apply on every page." },
   spectrum: { label: "Spectrum", icon: AudioWaveform, component: SpectrumTab, hint: "See which frequencies a signal contains. Drag the cutoff line, then add a low-pass there.", needsData: true },
   correlation: { label: "Correlations", icon: Grid3x3, component: CorrelationTab, hint: "Find signals that move together. Click a cell or pair for details.", needsData: true },
   curvefit: { label: "Curve fit", icon: Spline, component: CurveFitTab, hint: "Pick X and Y variables, choose a model and fit.", needsData: true },

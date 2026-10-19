@@ -1,13 +1,13 @@
-//! Multi-file comparison: fuzzy signal matching, time alignment and difference statistics.
+//! Multi-file comparison over the workspace's files: fuzzy signal matching, time alignment
+//! and difference statistics. Files mirror the workspace sources (see [`CompareManager::sync`]),
+//! so they share the import settings, processing steps and per-file time shifts.
 
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 use std::sync::Arc;
 
-use super::csv_parser::parse_csv;
-use super::dataset::time_axis;
 use super::dsp::{interp, mean};
+use super::workspace::{Kind, Workspace};
 
 /// Categorical chart palette in its validated, colour-blind-safe order (see src/lib/chart.ts).
 pub const FILE_COLORS: &[&str] = &[
@@ -18,12 +18,14 @@ pub const MATCH_THRESHOLD: f64 = 0.7;
 
 #[derive(Debug, Clone)]
 pub struct CompareFile {
+    /// The workspace source id.
     pub file_id: String,
     pub path: String,
     pub short_name: String,
     pub time: Arc<Vec<f64>>,
     pub signals: HashMap<String, Arc<Vec<f64>>>,
     pub columns: Vec<String>,
+    /// Shift onto the aligned time axis (the workspace's per-file shift).
     pub offset: f64,
     pub color: String,
 }
@@ -65,8 +67,6 @@ pub struct CompareManager {
     pub files: HashMap<String, CompareFile>,
     pub file_order: Vec<String>,
     pub mappings: Vec<SignalMapping>,
-    color_idx: usize,
-    id_counter: u64,
 }
 
 /// Canonical name: column name without the trailing `[unit]`.
@@ -144,52 +144,47 @@ impl CompareManager {
         self.file_order.first().and_then(|f| self.files.get(f))
     }
 
-    fn new_id(&mut self, path: &str) -> String {
-        use std::hash::{Hash, Hasher};
-        self.id_counter += 1;
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        (path, self.id_counter, std::time::SystemTime::now()).hash(&mut h);
-        format!("{:08x}", h.finish() as u32)
-    }
-
-    pub fn add_file(&mut self, path: &str) -> Result<String, String> {
-        let parsed = parse_csv(Path::new(path))?;
-        let n_rows = parsed.n_rows;
-        let time = time_axis(parsed.time, n_rows);
-        let mut signals = HashMap::new();
-        let mut columns = Vec::new();
-        for (c, v) in parsed.columns {
-            columns.push(c.clone());
-            signals.insert(c, Arc::new(v));
-        }
-        let file_id = self.new_id(path);
-        let color = FILE_COLORS[self.color_idx % FILE_COLORS.len()].to_string();
-        self.color_idx += 1;
-        let short_name = Path::new(path).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| path.to_string());
-        self.files.insert(
-            file_id.clone(),
-            CompareFile { file_id: file_id.clone(), path: path.to_string(), short_name, time: Arc::new(time), signals, columns, offset: 0.0, color },
-        );
-        self.file_order.push(file_id.clone());
-        self.auto_match_signals();
-        Ok(file_id)
-    }
-
-    pub fn remove_file(&mut self, fid: &str) {
-        if self.files.remove(fid).is_some() {
-            self.file_order.retain(|f| f != fid);
-            for m in self.mappings.iter_mut() {
-                m.remove(fid);
-            }
-            self.mappings.retain(|m| !m.file_columns.is_empty());
-        }
-    }
-
-    pub fn clear(&mut self) {
+    /// Mirrors the workspace: one file per source holding its processed numeric variables at
+    /// their own samples, keyed by file column. Manual mapping overrides that still apply are kept.
+    pub fn sync(&mut self, ws: &Workspace) {
         self.files.clear();
         self.file_order.clear();
-        self.mappings.clear();
-        self.color_idx = 0;
+        for (i, s) in ws.sources.iter().enumerate() {
+            let fid = s.id.to_string();
+            let mut signals = HashMap::new();
+            let mut columns = Vec::new();
+            for v in &ws.vars {
+                let Kind::Imported { source, column } = &v.kind else { continue };
+                if *source != s.id || ws.is_time_var(&v.name) || signals.contains_key(column) {
+                    continue;
+                }
+                columns.push(column.clone());
+                signals.insert(column.clone(), v.data.clone());
+            }
+            let file = CompareFile {
+                file_id: fid.clone(),
+                path: s.path.clone(),
+                short_name: s.name.clone(),
+                time: s.time.clone(),
+                signals,
+                columns,
+                offset: ws.source_shift(s),
+                color: FILE_COLORS[i % FILE_COLORS.len()].to_string(),
+            };
+            self.files.insert(fid.clone(), file);
+            self.file_order.push(fid);
+        }
+        let files = &self.files;
+        for m in self.mappings.iter_mut() {
+            m.file_columns.retain(|(f, c)| files.get(f).is_some_and(|x| x.signals.contains_key(c)));
+        }
+        self.mappings.retain(|m| !m.file_columns.is_empty());
+        self.auto_match_signals();
+    }
+
+    /// Current shift of every file, in file order.
+    pub fn offsets(&self) -> Vec<(String, f64)> {
+        self.file_order.iter().map(|f| (f.clone(), self.files[f].offset)).collect()
     }
 
     pub fn set_offset(&mut self, fid: &str, offset: f64) {
@@ -394,6 +389,40 @@ mod tests {
         assert!((sequence_ratio("abcd", "bcda") - 0.75).abs() < 1e-12);
         assert_eq!(sequence_ratio("", ""), 1.0);
         assert!((sequence_ratio("t_left", "t_right") - 0.46153846153846156).abs() < 1e-12);
+    }
+
+    #[test]
+    fn files_mirror_workspace_sources() {
+        use crate::core::csv_parser::ImportOptions;
+        let dir = std::env::temp_dir().join(format!("cmp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut paths = vec![];
+        for (k, delay) in [(1, 0.0), (2, 2.0)] {
+            let rows: String = (0..200).map(|i| {
+                let t = i as f64 * 0.1;
+                format!("{t},{},{}\n", if t >= 5.0 + delay { 1.0 } else { 0.0 }, t)
+            }).collect();
+            let p = dir.join(format!("run{k}.csv"));
+            std::fs::write(&p, format!("time,Valve,Ramp [bar]\n{rows}")).unwrap();
+            paths.push(p.to_string_lossy().into_owned());
+        }
+        let mut ws = Workspace::default();
+        let cols: Vec<String> = ["time", "Valve", "Ramp [bar]"].iter().map(|s| s.to_string()).collect();
+        for p in &paths {
+            ws.import(p, None, &ImportOptions::default(), &cols, None).unwrap();
+        }
+        ws.edit("Ramp [bar] (2)", crate::core::workspace::Edit::Offset(1.0)).unwrap();
+        let mut c = CompareManager::default();
+        c.sync(&ws);
+        assert_eq!(c.file_order.len(), 2);
+        assert_eq!(c.mapped_signals(), vec!["Valve".to_string(), "Ramp".to_string()]);
+        // The second file's edit (offset +1) is what Compare sees.
+        let s = c.compute_statistics("Ramp", &c.file_order[0], &c.file_order[1]).unwrap();
+        assert!((s.mean_error - 1.0).abs() < 1e-9, "{}", s.mean_error);
+        c.align_by_trigger("Valve", 0.5, true);
+        let offs = c.offsets();
+        assert!(offs[0].1.abs() < 1e-9 && (offs[1].1 + 2.0).abs() < 0.11, "{offs:?}");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

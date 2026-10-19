@@ -10,6 +10,12 @@ Prepare cleans one workspace variable at a time. The edited signal is drawn in r
 
 Removed values become missing; rows are never deleted, so every variable stays aligned. Every edit is listed under History; **Undo** reverts the last one (up to 30 steps) and **Reset** restores the imported values. Spectra and filters bridge missing values linearly for the computation, and filtered output keeps them missing. Plots offers **Show original** to overlay the imported values behind edited signals. Open a variable from the Workspace list with **Clean in Prepare…**.
 
+## Compare files
+
+Compare overlays the workspace's files, so each run keeps its import settings and the processing steps from Prepare. Signals are matched across files by column name (units ignored, close spellings accepted); **Mapping** overrides a match. The first file ★ is the reference for the difference traces and the RMSE, max deviation, R² and mean error table. **Add files…** imports more runs into the workspace with all their columns, and **Remove** takes a file out of the workspace.
+
+Alignment sets each file's time shift, the same shift shown in Workspace, so it applies on every page. Type the shift (Manual), click the same feature on each trace (Click), or line up the first crossing of a threshold (Trigger). Aligning switches a workspace in By row mode to By time.
+
 ## Curve fitting
 
 Choose **Fit curve** on a numeric line, scatter or bar chart. Select the data and model, then **Fit**. **Fit options** contains range limits, starting coefficients, bounds, fixed coefficients, normalization and robust fitting. Click a preview point to exclude it. For large datasets, the preview is sampled; the fit uses all included observations.

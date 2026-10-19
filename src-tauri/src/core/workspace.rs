@@ -686,7 +686,8 @@ impl Workspace {
         self.sources.iter().filter_map(|s| s.origin).reduce(f64::min)
     }
 
-    fn source_shift(&self, s: &Source) -> f64 {
+    /// Shift from a source's own time to the aligned time (offset, plus the clock difference).
+    pub fn source_shift(&self, s: &Source) -> f64 {
         match self.align {
             Align::Row => 0.0,
             Align::Time => s.offset,
