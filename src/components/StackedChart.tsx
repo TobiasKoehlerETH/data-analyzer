@@ -12,6 +12,20 @@ export interface ChartSeries {
   type?: "line" | "scatter" | "bar";
 }
 
+/** Decades per tick on a log axis, so a wide range still shows about six labels. */
+function logStep(p: ChartPanel): number {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const s of p.series)
+    for (const [, y] of s.data)
+      if (y != null && y > 0) {
+        if (y < lo) lo = y;
+        if (y > hi) hi = y;
+      }
+  if (!(hi > lo)) return 1;
+  return Math.max(1, Math.ceil(Math.log10(hi / lo) / 6));
+}
+
 export interface ChartPanel {
   id: string;
   yLabel?: string;
@@ -152,7 +166,7 @@ export function StackedChart({
         anchor: `x${id}`,
         type: p.yLog ? "log" : "linear",
         exponentformat: p.yLog ? "power" : undefined,
-        dtick: p.yLog ? 1 : undefined,
+        dtick: p.yLog ? logStep(p) : undefined,
       });
       if (p.title) {
         annotations.push({

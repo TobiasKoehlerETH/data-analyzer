@@ -11,7 +11,7 @@ use tauri::{AppHandle, Listener, Manager};
 
 use crate::commands as c;
 use crate::core::csv_parser::ImportOptions;
-use crate::core::filters::{FilterChain, FilterStep};
+use crate::core::filters::FilterStep;
 use crate::state::AppState;
 
 pub const PORT: u16 = 1430;
@@ -56,6 +56,7 @@ async fn dispatch(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String>
         "project_open" => { args!(a; path: String); ok(c::project_open(app.clone(), st(), path).await?) }
         "workspace_edit" => { args!(a; name: String, action: String, edit: Option<crate::core::workspace::Edit>); ok(c::workspace_edit(app.clone(), st(), name, action, edit).await?) }
         "category_vector" => { args!(a; name: String); ok(c::category_vector(st(), name).await?) }
+        "workspace_preview" => { args!(a; name: String, edit: crate::core::workspace::Edit); ok(c::workspace_preview(st(), name, edit).await?) }
         "workspace_vectors" => { args!(a; names: Vec<String>, range: Option<[f64; 2]>, maxPoints: Option<usize>, row: Option<bool>); ok(c::workspace_vectors(st(), names, range, maxPoints, row).await?) }
         "workspace_clear" => ok(c::workspace_clear(app.clone(), st()).await?),
         "export_dataset" => { args!(a; path: String); ok(c::export_dataset(st(), path).await?) }
@@ -66,12 +67,6 @@ async fn dispatch(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String>
         "get_series" => { args!(a; columns: Vec<String>, range: Option<[f64; 2]>, maxPoints: usize, row: Option<bool>); ok(c::get_series(st(), columns, range, maxPoints, row)?) }
         "values_at" => { args!(a; columns: Vec<String>, t: f64); ok(c::values_at(st(), columns, t)?) }
         "filter_suggest" => { args!(a; column: String); ok(c::filter_suggest(st(), column).await?) }
-        "filter_preview" => { args!(a; column: String, chain: FilterChain, draft: Option<FilterStep>); ok(c::filter_preview(st(), column, chain, draft).await?) }
-        "filter_apply" => { args!(a; column: String, chain: FilterChain); ok(c::filter_apply(app.clone(), st(), column, chain).await?) }
-        "filter_clear" => { args!(a; column: String); ok(c::filter_clear(app.clone(), st(), column).await?) }
-        "filter_get_chain" => { args!(a; column: String); ok(c::filter_get_chain(column)?) }
-        "filter_save_chain" => { args!(a; path: String, chain: FilterChain); ok(c::filter_save_chain(path, chain)?) }
-        "filter_load_chain" => { args!(a; path: String); ok(c::filter_load_chain(path)?) }
         "filter_describe" => { args!(a; steps: Vec<FilterStep>); ok(c::filter_describe(steps)) }
         "spectrum" => { args!(a; column: String, nperseg: usize); ok(c::spectrum(st(), column, nperseg).await?) }
         "correlation_compute" => ok(c::correlation_compute(st()).await?),

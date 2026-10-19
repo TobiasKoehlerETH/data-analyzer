@@ -12,9 +12,9 @@ use crate::core::compare::{CompareManager, CompareStatistics};
 use crate::core::correlation::{compute_correlation_matrix, compute_cross_correlation, compute_lagged_correlations, CorrelationPair};
 use crate::core::csv_parser::{preview_file_with, ImportOptions, PreviewResult};
 use crate::core::dataset::{Dataset, DatasetInfo};
-use crate::core::downsample::{minmax, minmax_indices, stride, window_indices};
+use crate::core::downsample::{minmax, minmax_indices, window_indices};
 use crate::core::dsp::{decimate, mean, searchsorted, std};
-use crate::core::filters::{apply_chain, apply_steps, suggest_filters, FilterChain, FilterStep};
+use crate::core::filters::{suggest_filters, FilterStep};
 use crate::core::models::{ModelSummary, OutputMetrics, StateSpaceResult};
 use crate::core::report::{self, ComparisonStat, DataSummary, FilterInfo, ModelInfo, Plot, ReportContent, REPORT_PALETTE};
 use crate::core::simulation::simulate;
@@ -389,6 +389,13 @@ pub async fn workspace_variable(state: AppStateRef<'_>, name: String) -> CmdResu
     .await
 }
 
+/// A step applied to the current values without committing it (Prepare's live preview).
+#[tauri::command]
+pub async fn workspace_preview(state: AppStateRef<'_>, name: String, edit: Edit) -> CmdResult<Vec<f64>> {
+    let st = state.inner().clone();
+    blocking(move || st.workspace.lock().unwrap().preview(&name, &edit)).await
+}
+
 #[tauri::command]
 pub async fn workspace_clear(app: AppHandle, state: AppStateRef<'_>) -> CmdResult<WorkspaceView> {
     ws_change(app, state, move |ws| {
@@ -604,93 +611,6 @@ pub async fn filter_suggest(state: AppStateRef<'_>, column: String) -> CmdResult
             .collect())
     })
     .await
-}
-
-#[derive(Serialize)]
-pub struct FilterPreview {
-    x: Vec<f64>,
-    original: Vec<f64>,
-    filtered: Option<Vec<f64>>,
-    draft: Option<Vec<f64>>,
-    error: Option<String>,
-}
-
-#[tauri::command]
-pub async fn filter_preview(state: AppStateRef<'_>, column: String, chain: FilterChain, draft: Option<FilterStep>) -> CmdResult<FilterPreview> {
-    let st = state.inner().clone();
-    blocking(move || {
-        let (raw, time, fs) = with_data(&st, |d| Ok((d.get_signal(&column).ok_or("Unknown signal")?, d.time.clone(), d.sample_rate)))?;
-        let step = stride(raw.len(), 5000);
-        let x: Vec<f64> = time.iter().step_by(step).copied().collect();
-        let original: Vec<f64> = raw.iter().step_by(step).copied().collect();
-        let fs_preview = fs / step as f64;
-        let mut error = None;
-        let filtered = if chain.has_enabled() {
-            match apply_chain(&original, &chain, fs_preview) {
-                Ok(v) => Some(v),
-                Err(e) => {
-                    error = Some(e);
-                    None
-                }
-            }
-        } else {
-            None
-        };
-        let draft = match draft {
-            Some(dstep) => {
-                let steps = chain.enabled_steps().chain(std::iter::once(&dstep));
-                match apply_steps(&original, steps, fs_preview) {
-                    Ok(v) => Some(v),
-                    Err(e) => {
-                        error.get_or_insert(e);
-                        None
-                    }
-                }
-            }
-            None => None,
-        };
-        Ok(FilterPreview { x, original, filtered, draft, error })
-    })
-    .await
-}
-
-/// Adds the enabled steps of `chain` to the signal's processing pipeline.
-#[tauri::command]
-pub async fn filter_apply(app: AppHandle, state: AppStateRef<'_>, column: String, chain: FilterChain) -> CmdResult<DatasetInfo> {
-    if !chain.has_enabled() {
-        return Err("The filter chain has no enabled steps.".into());
-    }
-    let view = ws_change(app, state, move |ws| {
-        for step in chain.enabled_steps() {
-            ws.edit(&column, Edit::Filter(step.clone()))?;
-        }
-        Ok(Default::default())
-    })
-    .await?;
-    view.dataset.ok_or_else(|| "No data loaded.".into())
-}
-
-/// Removes every filter step from the signal's pipeline (other edits stay).
-#[tauri::command]
-pub async fn filter_clear(app: AppHandle, state: AppStateRef<'_>, column: String) -> CmdResult<DatasetInfo> {
-    let view = ws_change(app, state, move |ws| ws.remove_filters(&column).map(|_| Default::default())).await?;
-    view.dataset.ok_or_else(|| "No data loaded.".into())
-}
-
-/// Applied filters live in the signal's pipeline (see Prepare); the Filter page starts empty.
-#[tauri::command]
-pub fn filter_get_chain(_column: String) -> CmdResult<Option<FilterChain>> {
-    Ok(None)
-}
-
-#[tauri::command]
-pub fn filter_save_chain(path: String, chain: FilterChain) -> CmdResult<()> {
-    chain.save_json(Path::new(&path))
-}
-
-#[tauri::command]
-pub fn filter_load_chain(path: String) -> CmdResult<FilterChain> {
-    FilterChain::load_json(Path::new(&path))
 }
 
 #[tauri::command]

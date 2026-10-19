@@ -6,6 +6,8 @@ Data Plots opens with the first numeric column plotted against row positions **1
 
 Prepare cleans one workspace variable at a time. The edited signal is drawn in red over the imported values in gray; **Show change** adds an edited − original panel. Drag a box on the plot, then choose **Remove points in box** (outliers), **Remove range** or **Keep only range**. **Remove spikes** applies a Hampel filter (11-sample window, threshold in robust standard deviations, floored at the noise level of first differences). **Fill gaps** interpolates linearly between valid neighbours. Offset, scale, remove mean, start at zero, normalize, z-score and invert are also available.
 
+**Filter** designs a digital filter for the same signal. **Suggest** proposes filters from the spectrum (notches for periodic interference, high-pass for drift, low-pass for noise); click one to load it. **Preview on the plot** draws the result in blue without changing anything; **Add filter** appends it to the signal's steps like any other edit. On Spectrum, drag the cutoff line and use **Add low-pass at cutoff** to add a fourth-order low-pass there.
+
 Removed values become missing; rows are never deleted, so every variable stays aligned. Every edit is listed under History; **Undo** reverts the last one (up to 30 steps) and **Reset** restores the imported values. Spectra and filters bridge missing values linearly for the computation, and filtered output keeps them missing. Plots offers **Show original** to overlay the imported values behind edited signals. Open a variable from the Workspace list with **Clean in Prepare…**.
 
 ## Curve fitting

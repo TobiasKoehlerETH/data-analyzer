@@ -8,7 +8,6 @@ export type TabId =
   | "timeseries"
   | "statistics"
   | "compare"
-  | "filter"
   | "spectrum"
   | "correlation"
   | "curvefit"
@@ -24,7 +23,6 @@ export const DEFAULT_TAB_ORDER: TabId[] = [
   "timeseries",
   "statistics",
   "compare",
-  "filter",
   "spectrum",
   "correlation",
   "curvefit",
@@ -44,7 +42,7 @@ interface ProgressState {
 
 interface AppStore {
   dataset: DatasetInfo | null;
-  /** Bumped whenever a filter is applied/cleared so plots refetch. */
+  /** Bumped whenever the data changes (imports, edits, filters) so pages refetch. */
   dataVersion: number;
   activeTab: TabId;
   tabOrder: TabId[];

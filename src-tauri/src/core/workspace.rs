@@ -851,6 +851,13 @@ impl Workspace {
         Ok(())
     }
 
+    /// The values `edit` would produce, without adding it (live previews).
+    pub fn preview(&self, name: &str, edit: &Edit) -> Result<Vec<f64>, String> {
+        let v = self.get(name).ok_or("Variable not found.")?;
+        let edit = edit.shifted(-self.shift_of(v));
+        Ok(edit.apply(&v.data, &self.local_time(v))?.0)
+    }
+
     /// Reverts the most recent step.
     pub fn undo(&mut self, name: &str) -> Result<(), String> {
         let v = self.get_mut(name)?;

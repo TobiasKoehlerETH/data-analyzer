@@ -11,7 +11,7 @@ A local desktop workspace for exploring numeric datasets, comparing measurements
 - Plot columns against row positions, time or another numeric column.
 - Fit curves from numeric charts using built-in or custom equations, coefficient bounds, exclusions, residuals and uncertainty estimates.
 - Explore linked scatter plots, distributions, row plots and summary statistics.
-- Compare files, apply filters, inspect spectra and correlations, identify state-space models, simulate and validate them.
+- Clean and filter signals in Prepare (edited vs original), compare files, inspect spectra and correlations, identify state-space models, simulate and validate them.
 - Export reports, fit results and statistics.
 
 Every chart navigates the same way: drag to zoom (a horizontal drag zooms X only), scroll to zoom, double-click to reset. The toolbar above each chart adds Pan, **Previous view**, Reset, a data-table view with CSV export, and PNG export. Stacked plots share their X axis.

@@ -187,23 +187,11 @@ export interface FilterStep {
   enabled: boolean;
 }
 
-export interface FilterChain {
-  steps: FilterStep[];
-}
-
 export interface Suggestion {
   step: FilterStep;
   reason: string;
   estimated_improvement: number;
   description: string;
-}
-
-export interface FilterPreview {
-  x: (number | null)[];
-  original: (number | null)[];
-  filtered: (number | null)[] | null;
-  draft: (number | null)[] | null;
-  error: string | null;
 }
 
 export interface PeakInfo {
@@ -393,6 +381,8 @@ export const api = {
   workspaceAddDerived: (name: string, formula: string) => invoke<WorkspaceView>("workspace_add_derived", { name, formula }),
   workspaceSetFormula: (name: string, formula: string) => invoke<WorkspaceView>("workspace_set_formula", { name, formula }),
   workspaceVariable: (name: string) => invoke<VariableSamples>("workspace_variable", { name }),
+  /** Values a step would produce, without adding it (times on the aligned axis). */
+  workspacePreview: (name: string, edit: VariableEdit) => invoke<number[]>("workspace_preview", { name, edit }),
   recipeSave: (path: string, name: string, names: string[] | null) => invoke<Recipe>("recipe_save", { path, name, names }),
   recipeLoad: (path: string) => invoke<Recipe>("recipe_load", { path }),
   recipeApply: (recipe: Recipe, source: number | null) => invoke<WorkspaceView>("recipe_apply", { recipe, source }),
@@ -413,13 +403,6 @@ export const api = {
   valuesAt: (columns: string[], t: number) => invoke<{ t: number; values: (number | null)[] }>("values_at", { columns, t }),
 
   filterSuggest: (column: string) => invoke<Suggestion[]>("filter_suggest", { column }),
-  filterPreview: (column: string, chain: FilterChain, draft: FilterStep | null) =>
-    invoke<FilterPreview>("filter_preview", { column, chain, draft }),
-  filterApply: (column: string, chain: FilterChain) => invoke<DatasetInfo>("filter_apply", { column, chain }),
-  filterClear: (column: string) => invoke<DatasetInfo>("filter_clear", { column }),
-  filterGetChain: (column: string) => invoke<FilterChain | null>("filter_get_chain", { column }),
-  filterSaveChain: (path: string, chain: FilterChain) => invoke<void>("filter_save_chain", { path, chain }),
-  filterLoadChain: (path: string) => invoke<FilterChain>("filter_load_chain", { path }),
 
   spectrum: (column: string, nperseg: number) => invoke<SpectrumView>("spectrum", { column, nperseg }),
 

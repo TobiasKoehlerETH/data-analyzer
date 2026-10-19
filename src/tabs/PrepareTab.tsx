@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, Crop, Eraser, RotateCcw, Spline, Trash2, Undo2, Zap } from "lucide-react";
+import { ArrowRight, AudioWaveform, Crop, Eraser, RotateCcw, Sparkles, Spline, Trash2, Undo2, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CheckField, EmptyState, Field, NumberInput, Panel, Radios, StatusText } from "@/components/common";
+import { FilterParams } from "@/components/FilterParams";
 import { SignalSelect } from "@/components/SignalSelect";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { StackedChart, type ChartPanel } from "@/components/StackedChart";
-import { api, errorText, type VariableEdit, type VariableSamples } from "@/lib/api";
+import { api, errorText, type FilterStep, type FilterType, type Suggestion, type VariableEdit, type VariableSamples } from "@/lib/api";
+import { defaultStep, describeStep, FILTER_TYPES, filterTitle } from "@/lib/filters";
 import { INK, fmtG, seriesColor } from "@/lib/chart";
 import { useApp } from "@/lib/store";
 
@@ -27,6 +30,11 @@ export function PrepareTab() {
   const [scale, setScale] = useState(1);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<{ text: string; error?: boolean }>({ text: "" });
+  /** Filter being designed: previewed on the plot, added as a step. */
+  const [filter, setFilter] = useState<FilterStep>(defaultStep("lowpass"));
+  const [previewOn, setPreviewOn] = useState(false);
+  const [preview, setPreview] = useState<number[] | null>(null);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
 
   useEffect(() => {
     if (!dataset) return;
@@ -51,6 +59,26 @@ export function PrepareTab() {
       cancelled = true;
     };
   }, [column, dataVersion, activeTab]);
+
+  useEffect(() => setSuggestions([]), [column]);
+  // Live preview of the filter on the current values (not committed).
+  useEffect(() => {
+    if (!previewOn || !column || !vec) {
+      setPreview(null);
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(() => {
+      api
+        .workspacePreview(column, { op: "filter", value: filter })
+        .then((v) => !cancelled && setPreview(v))
+        .catch((e) => !cancelled && setStatus({ text: errorText(e), error: true }));
+    }, 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [previewOn, filter, column, vec]);
 
   const clearSelection = () => {
     setBox(null);
@@ -115,12 +143,15 @@ export function PrepareTab() {
     const main: ChartPanel = {
       id: "values",
       yLabel: label,
-      series: edited
-        ? [
-            { name: "Original", color: INK.muted, data: pairs(vec.original) },
-            { name: "Edited", color: seriesColor(0), data: pairs(vec.edited) },
-          ]
-        : [{ name: label, color: seriesColor(0), data: pairs(vec.edited) }],
+      series: [
+        ...(edited
+          ? [
+              { name: "Original", color: INK.muted, data: pairs(vec.original) },
+              { name: "Edited", color: seriesColor(0), data: pairs(vec.edited) },
+            ]
+          : [{ name: label, color: seriesColor(0), data: pairs(vec.edited) }]),
+        ...(preview ? [{ name: `Preview: ${describeStep(filter)}`, color: seriesColor(1), data: pairs(preview) }] : []),
+      ],
     };
     if (!edited || !showChange) return [main];
     const diff = vec.edited.map((b, i) => {
@@ -129,7 +160,12 @@ export function PrepareTab() {
     });
     if (!diff.some((d) => d !== null && d !== 0)) return [main];
     return [main, { id: "change", yLabel: "Edited − original", hLines: [{ y: 0 }], series: [{ name: "Change", color: seriesColor(1), data: pairs(diff) }] }];
-  }, [vec, x, label, edited, showChange]);
+  }, [vec, x, label, edited, showChange, preview, filter]);
+
+  const nyquist = useMemo(() => {
+    const dts = time.slice(1, 2001).map((t, i) => t - time[i]).filter((d) => d > 0).sort((a, b) => a - b);
+    return dts.length ? 0.5 / dts[Math.floor(dts.length / 2)] : 1;
+  }, [time]);
 
   const run = async (action: "edit" | "undo" | "reset", edit?: VariableEdit) => {
     if (!column) return;
@@ -198,7 +234,7 @@ export function PrepareTab() {
           )}
         </Panel>
 
-        <div className="flex w-[300px] shrink-0 flex-col gap-3 overflow-y-auto">
+        <div className="flex w-[300px] shrink-0 flex-col gap-3 overflow-y-auto [&>*]:shrink-0">
           <Panel title="Selection" bodyClassName="flex flex-col gap-2">
             <p className="text-xs text-muted-foreground">
               {selection
@@ -225,6 +261,75 @@ export function PrepareTab() {
             </div>
             <Button size="sm" variant="outline" disabled={busy || !stats?.gaps} onClick={() => run("edit", { op: "fill_gaps" })} title="Linearly interpolate missing values between valid neighbours">
               <Spline /> Fill gaps{stats?.gaps ? ` (${stats.gaps.toLocaleString()})` : ""}
+            </Button>
+          </Panel>
+
+          <Panel
+            title="Filter"
+            bodyClassName="flex flex-col gap-2"
+            actions={
+              <Button
+                size="xs"
+                variant="ghost"
+                disabled={busy || !column}
+                title="Analyse the spectrum and suggest filters"
+                onClick={async () => {
+                  try {
+                    const s = await api.filterSuggest(column!);
+                    setSuggestions(s);
+                    setStatus({ text: s.length ? `${s.length} suggestion(s). Click one to preview it.` : "No filter suggestions for this signal." });
+                  } catch (e) {
+                    setStatus({ text: errorText(e), error: true });
+                  }
+                }}
+              >
+                <Sparkles /> Suggest
+              </Button>
+            }
+          >
+            {suggestions.length > 0 && (
+              <ul className="max-h-36 overflow-y-auto border border-ap-line">
+                {suggestions.map((sg, i) => (
+                  <li key={i}>
+                    <button
+                      className="w-full border-b border-ap-line px-2 py-1.5 text-left text-[12px] leading-snug last:border-0 hover:bg-ap-bluegray-15"
+                      title={sg.description}
+                      onClick={() => {
+                        setFilter(sg.step);
+                        setPreviewOn(true);
+                      }}
+                    >
+                      {sg.reason}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <Select value={filter.filter_type} onValueChange={(v) => setFilter(defaultStep(v as FilterType))}>
+              <SelectTrigger className="h-8 w-full" title="Filter type">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {FILTER_TYPES.map((t) => (
+                  <SelectItem key={t} value={t}>
+                    {filterTitle(t)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <FilterParams step={filter} onChange={setFilter} nyquist={nyquist} />
+            <CheckField checked={previewOn} onChange={setPreviewOn} label="Preview on the plot" />
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={async () => {
+                await run("edit", { op: "filter", value: filter });
+                setPreviewOn(false);
+              }}
+              title="Add the filter as a step (undo or reset any time)"
+            >
+              <AudioWaveform /> Add filter
             </Button>
           </Panel>
 
