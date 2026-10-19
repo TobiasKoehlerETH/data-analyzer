@@ -47,7 +47,7 @@ fn sample_pipeline() {
     let corr = compute_correlation_matrix(&signals, Some(&cache));
     assert_eq!(corr.top_pairs.len(), 15);
 
-    let torque = ds.get_raw("Motor_Torque [Nm]").unwrap();
+    let torque = ds.get_signal("Motor_Torque [Nm]").unwrap();
     let sugg = suggest_filters(&torque, ds.sample_rate, Some(&cache), "Motor_Torque [Nm]");
     println!("suggestions: {:#?}", sugg.iter().map(|s| &s.reason).collect::<Vec<_>>());
     let mut chain = FilterChain::default();

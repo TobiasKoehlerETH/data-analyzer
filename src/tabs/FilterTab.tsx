@@ -83,7 +83,7 @@ export function FilterTab() {
     if (!preview) return [];
     // The original recedes to gray so the edited signal carries the emphasis.
     const edited = !!(preview.filtered || preview.draft);
-    const series: ChartSeries[] = [{ name: "Original", color: edited ? INK.muted : seriesColor(0), data: zip(preview.x, preview.original) }];
+    const series: ChartSeries[] = [{ name: "Current", color: edited ? INK.muted : seriesColor(0), data: zip(preview.x, preview.original) }];
     if (preview.filtered) series.push({ name: "Filtered", color: seriesColor(0), data: zip(preview.x, preview.filtered) });
     if (preview.draft) series.push({ name: "With new filter", color: seriesColor(1), data: zip(preview.x, preview.draft) });
     return [{ id: "p", yLabel: dataset?.signals.find((s) => s.column === column)?.label ?? "Value", legend: true, series }];
@@ -119,8 +119,11 @@ export function FilterTab() {
     try {
       const info = await api.filterApply(column, chain);
       bumpData(info);
+      // The filters are now steps of the signal (see Prepare → History); start a fresh chain.
+      setChain({ steps: [] });
+      setSelected(null);
       showStatus(`Filter applied to ${column}`);
-      setStatus({ text: `Filter applied to ${column} (full data).`, tone: "ok" });
+      setStatus({ text: `Filter added to ${column}'s processing steps. Undo or reset it in Prepare.`, tone: "ok" });
     } catch (e) {
       setStatus({ text: errorText(e), tone: "error" });
     } finally {
@@ -133,7 +136,7 @@ export function FilterTab() {
   return (
     <div className="flex h-full flex-col gap-3">
       <Field label="Signal" className="max-w-xl">
-        <SignalSelect signals={dataset.signals} value={column} onChange={setColumn} filtered={dataset.filtered} title="Select the signal to apply filters to" />
+        <SignalSelect signals={dataset.signals} value={column} onChange={setColumn} edited={dataset.edited} title="Select the signal to apply filters to" />
       </Field>
       <div className="flex min-h-0 flex-1 gap-3">
         <div className="flex w-[300px] shrink-0 flex-col gap-3">
@@ -266,12 +269,16 @@ export function FilterTab() {
           <Button onClick={applyFull} disabled={busy || !chain.steps.some((s) => s.enabled)} className="h-10">
             <Wand2 /> Apply to Full Data
           </Button>
-          <Button variant="outline" disabled={!column || !dataset.filtered.includes(column)} onClick={async () => {
+          <Button variant="outline" disabled={!column || !dataset.edited.includes(column)} title="Remove the filter steps from this signal (other edits stay)" onClick={async () => {
             if (!column) return;
-            bumpData(await api.filterClear(column));
-            setStatus({ text: `Filtered data cleared for ${column}.` });
+            try {
+              bumpData(await api.filterClear(column));
+              setStatus({ text: `Filters removed from ${column}.` });
+            } catch (e) {
+              setStatus({ text: errorText(e), tone: "error" });
+            }
           }}>
-            <Eraser /> Clear Filtered Data
+            <Eraser /> Remove Filters
           </Button>
         </div>
 

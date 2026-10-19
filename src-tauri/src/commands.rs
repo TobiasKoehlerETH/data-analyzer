@@ -86,63 +86,121 @@ pub async fn preview_file(path: String, sheet: Option<String>, options: Option<I
     blocking(move || preview_file_with(Path::new(&path), sheet.as_deref(), &options.unwrap_or_default())).await
 }
 
-/// Makes `ds` the active dataset, resets dependent results and pre-computes stats/correlations.
+/// Makes `ds` the active dataset and resets results that depended on the previous data.
 fn install_dataset(app: &AppHandle, st: &AppState, ds: Dataset) -> CmdResult<DatasetInfo> {
     if ds.signals.is_empty() {
         return Err("No numeric signals found in file.".into());
     }
     st.cache.invalidate_all();
-    let signals = ds.all_signals();
     let info = ds.info();
     *st.data.write().unwrap() = Some(ds);
     *st.correlation.lock().unwrap() = None;
     st.simulations.lock().unwrap().clear();
     *st.validation.lock().unwrap() = None;
     st.sysid_results.lock().unwrap().clear();
-    emit_progress(app, "load", 80, "Pre-computing statistics...");
-    compute_descriptive_stats(&signals, Some(&st.cache));
-    emit_progress(app, "load", 90, "Pre-computing correlations...");
-    compute_correlation_matrix(&signals, Some(&st.cache));
+    // Statistics and correlations are computed (and cached) when a page first asks for them,
+    // so edits on large datasets stay fast.
     emit_progress(app, "load", 100, "Done.");
     Ok(info)
 }
 
 // ---------------------------------------------------------------------------
-// Workspace (variables imported from any number of files)
+// Workspace (variables from any number of files, aligned on a common time grid)
 // ---------------------------------------------------------------------------
+
+use crate::core::workspace::{Align, Edit, Project, Recipe, SourceInfo, VariableInfo, Workspace};
 
 #[derive(Serialize)]
 pub struct WorkspaceView {
-    variables: Vec<crate::core::workspace::VariableInfo>,
-    time_var: Option<String>,
+    variables: Vec<VariableInfo>,
+    sources: Vec<SourceInfo>,
+    align: Align,
+    grid_step: Option<f64>,
+    /// Name of the recipe applied to every new import.
+    auto_recipe: Option<String>,
     dataset: Option<DatasetInfo>,
     added: Vec<String>,
+    /// Steps or files that could not be applied (recipes, batch imports, projects).
+    warnings: Vec<String>,
+}
+
+fn view_of(ws: &Workspace, dataset: Option<DatasetInfo>, added: Vec<String>, warnings: Vec<String>) -> WorkspaceView {
+    WorkspaceView {
+        variables: ws.info(),
+        sources: ws.source_info(),
+        align: ws.align,
+        grid_step: ws.grid_step,
+        auto_recipe: ws.auto_recipe.as_ref().map(|r| r.name.clone()),
+        dataset,
+        added,
+        warnings,
+    }
 }
 
 /// Rebuilds the analysis dataset from the workspace after every change.
-fn sync_workspace(app: &AppHandle, st: &AppState, added: Vec<String>) -> CmdResult<WorkspaceView> {
-    let (parse, variables, time_var) = {
-        let ws = st.workspace.lock().unwrap();
-        (ws.to_parse(), ws.info(), ws.time_var.clone())
+fn sync_workspace(app: &AppHandle, st: &AppState, added: Vec<String>, warnings: Vec<String>) -> CmdResult<WorkspaceView> {
+    let (parse, edited) = {
+        let mut ws = st.workspace.lock().unwrap();
+        (ws.to_parse(), ws.edited_names())
     };
     let dataset = match parse {
-        Some(p) => Some(install_dataset(app, st, Dataset::from_parse("Workspace", p))?),
+        Some(p) => {
+            let mut ds = Dataset::from_parse("Workspace", p);
+            ds.edited = edited;
+            Some(install_dataset(app, st, ds)?)
+        }
         None => {
             *st.data.write().unwrap() = None;
             st.cache.invalidate_all();
             None
         }
     };
-    Ok(WorkspaceView { variables, time_var, dataset, added })
+    let ws = st.workspace.lock().unwrap();
+    Ok(view_of(&ws, dataset, added, warnings))
+}
+
+/// Runs a workspace change on a worker thread, then rebuilds the dataset.
+async fn ws_change(
+    app: AppHandle,
+    state: AppStateRef<'_>,
+    f: impl FnOnce(&mut Workspace) -> CmdResult<(Vec<String>, Vec<String>)> + Send + 'static,
+) -> CmdResult<WorkspaceView> {
+    let st = state.inner().clone();
+    blocking(move || {
+        let (added, warnings) = f(&mut st.workspace.lock().unwrap())?;
+        sync_workspace(&app, &st, added, warnings)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn workspace_import(app: AppHandle, state: AppStateRef<'_>, path: String, sheet: Option<String>, options: Option<ImportOptions>, columns: Vec<String>) -> CmdResult<WorkspaceView> {
-    let st = state.inner().clone();
-    blocking(move || {
-        emit_progress(&app, "load", 20, "Reading file...");
-        let added = st.workspace.lock().unwrap().import(&path, sheet.as_deref(), &options.unwrap_or_default(), &columns)?;
-        sync_workspace(&app, &st, added)
+    emit_progress(&app, "load", 20, "Reading file...");
+    ws_change(app, state, move |ws| ws.import(&path, sheet.as_deref(), &options.unwrap_or_default(), &columns, None)).await
+}
+
+/// Data files the batch import picks up from a folder.
+pub const DATA_EXTENSIONS: &[&str] = &["csv", "txt", "tsv", "dat", "xlsx", "xlsm", "xlsb", "xls", "ods", "parquet", "mat", "h5", "hdf5", "tdms"];
+
+/// Imports several files (or every data file in `folder`) as separate runs.
+#[tauri::command]
+pub async fn workspace_import_batch(app: AppHandle, state: AppStateRef<'_>, paths: Vec<String>, folder: Option<String>, columns: Option<Vec<String>>) -> CmdResult<WorkspaceView> {
+    ws_change(app, state, move |ws| {
+        let mut paths = paths;
+        if let Some(dir) = folder {
+            let mut found: Vec<String> = std::fs::read_dir(&dir)
+                .map_err(|e| format!("Cannot read {dir}: {e}"))?
+                .filter_map(|e| e.ok().map(|e| e.path()))
+                .filter(|p| p.extension().is_some_and(|x| DATA_EXTENSIONS.contains(&x.to_string_lossy().to_lowercase().as_str())))
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect();
+            found.sort();
+            paths.extend(found);
+        }
+        if paths.is_empty() {
+            return Err("No data files found.".into());
+        }
+        Ok(ws.import_batch(&paths, columns.as_deref()))
     })
     .await
 }
@@ -150,58 +208,76 @@ pub async fn workspace_import(app: AppHandle, state: AppStateRef<'_>, path: Stri
 #[tauri::command]
 pub fn workspace_view(state: AppStateRef<'_>) -> WorkspaceView {
     let ws = state.workspace.lock().unwrap();
-    WorkspaceView { variables: ws.info(), time_var: ws.time_var.clone(), dataset: state.data.read().ok().and_then(|d| d.as_ref().map(|d| d.info())), added: vec![] }
+    view_of(&ws, state.data.read().ok().and_then(|d| d.as_ref().map(|d| d.info())), vec![], vec![])
 }
 
 #[tauri::command]
 pub async fn workspace_remove(app: AppHandle, state: AppStateRef<'_>, names: Vec<String>) -> CmdResult<WorkspaceView> {
-    let st = state.inner().clone();
-    blocking(move || {
-        st.workspace.lock().unwrap().remove(&names);
-        sync_workspace(&app, &st, vec![])
+    ws_change(app, state, move |ws| {
+        ws.remove(&names);
+        Ok(Default::default())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn workspace_remove_source(app: AppHandle, state: AppStateRef<'_>, id: u32) -> CmdResult<WorkspaceView> {
+    ws_change(app, state, move |ws| {
+        ws.remove_source(id);
+        Ok(Default::default())
     })
     .await
 }
 
 #[tauri::command]
 pub async fn workspace_rename(app: AppHandle, state: AppStateRef<'_>, old: String, new: String) -> CmdResult<WorkspaceView> {
-    let st = state.inner().clone();
-    blocking(move || {
-        st.workspace.lock().unwrap().rename(&old, &new)?;
-        sync_workspace(&app, &st, vec![])
-    })
-    .await
+    ws_change(app, state, move |ws| ws.rename(&old, &new).map(|_| Default::default())).await
+}
+
+/// Makes `name` its source's time axis (`time = true`) or reverts that source to row numbers.
+#[tauri::command]
+pub async fn workspace_set_time(app: AppHandle, state: AppStateRef<'_>, name: String, time: bool) -> CmdResult<WorkspaceView> {
+    ws_change(app, state, move |ws| ws.set_time(&name, time).map(|_| Default::default())).await
 }
 
 #[tauri::command]
-pub async fn workspace_set_time(app: AppHandle, state: AppStateRef<'_>, name: Option<String>) -> CmdResult<WorkspaceView> {
-    let st = state.inner().clone();
-    blocking(move || {
-        st.workspace.lock().unwrap().set_time(name)?;
-        sync_workspace(&app, &st, vec![])
-    })
-    .await
+pub async fn workspace_set_offset(app: AppHandle, state: AppStateRef<'_>, id: u32, offset: f64) -> CmdResult<WorkspaceView> {
+    ws_change(app, state, move |ws| ws.set_offset(id, offset).map(|_| Default::default())).await
 }
 
-/// Edit, undo, reset or duplicate one variable: `action` is "edit" (with `edit`), "undo", "reset" or "duplicate".
 #[tauri::command]
-pub async fn workspace_edit(app: AppHandle, state: AppStateRef<'_>, name: String, action: String, edit: Option<crate::core::workspace::Edit>) -> CmdResult<WorkspaceView> {
-    let st = state.inner().clone();
-    blocking(move || {
+pub async fn workspace_set_align(app: AppHandle, state: AppStateRef<'_>, align: Align, grid_step: Option<f64>) -> CmdResult<WorkspaceView> {
+    ws_change(app, state, move |ws| ws.set_align(align, grid_step).map(|_| Default::default())).await
+}
+
+/// Edit, undo, reset, remove filters or duplicate one variable: `action` is "edit" (with
+/// `edit`, times on the aligned axis), "undo", "reset", "remove_filters" or "duplicate".
+#[tauri::command]
+pub async fn workspace_edit(app: AppHandle, state: AppStateRef<'_>, name: String, action: String, edit: Option<Edit>) -> CmdResult<WorkspaceView> {
+    ws_change(app, state, move |ws| {
         let mut added = vec![];
-        {
-            let mut ws = st.workspace.lock().unwrap();
-            match action.as_str() {
-                "edit" => ws.edit(&name, edit.ok_or("No edit given.")?)?,
-                "undo" => ws.undo(&name)?,
-                "reset" => ws.reset(&name)?,
-                "duplicate" => added.push(ws.duplicate(&name)?),
-                other => return Err(format!("Unknown action '{other}'")),
-            }
+        match action.as_str() {
+            "edit" => ws.edit(&name, edit.ok_or("No edit given.")?)?,
+            "undo" => ws.undo(&name)?,
+            "reset" => ws.reset(&name)?,
+            "remove_filters" => ws.remove_filters(&name)?,
+            "duplicate" => added.push(ws.duplicate(&name)?),
+            other => return Err(format!("Unknown action '{other}'")),
         }
-        sync_workspace(&app, &st, added)
+        Ok((added, vec![]))
     })
     .await
+}
+
+/// Adds a variable computed from a formula such as `"Voltage [V]" * Current`.
+#[tauri::command]
+pub async fn workspace_add_derived(app: AppHandle, state: AppStateRef<'_>, name: String, formula: String) -> CmdResult<WorkspaceView> {
+    ws_change(app, state, move |ws| Ok((vec![ws.add_derived(&name, &formula)?], vec![]))).await
+}
+
+#[tauri::command]
+pub async fn workspace_set_formula(app: AppHandle, state: AppStateRef<'_>, name: String, formula: String) -> CmdResult<WorkspaceView> {
+    ws_change(app, state, move |ws| ws.set_formula(&name, &formula).map(|_| Default::default())).await
 }
 
 #[derive(Serialize)]
@@ -214,48 +290,135 @@ pub struct VariableVectors {
 
 #[derive(Serialize)]
 pub struct WorkspaceVectors {
-    /// Dataset time axis; vectors are padded/truncated to its length so rows line up.
+    /// Dataset time axis; vectors are aligned to it.
     time: Vec<f64>,
     variables: std::collections::BTreeMap<String, VariableVectors>,
 }
 
-/// Imported and edited values of workspace variables, row-aligned with the dataset.
+/// Imported and processed values of variables on the common grid.
 #[tauri::command]
 pub async fn workspace_vectors(state: AppStateRef<'_>, names: Vec<String>) -> CmdResult<WorkspaceVectors> {
     let st = state.inner().clone();
     blocking(move || {
-        let time = with_data(&st, |d| Ok(d.time.to_vec()))?;
-        let n = time.len();
-        let fit = |v: &[f64]| {
-            let mut v = v[..v.len().min(n)].to_vec();
-            v.resize(n, f64::NAN);
-            v
-        };
         let ws = st.workspace.lock().unwrap();
         let mut variables = std::collections::BTreeMap::new();
         for name in names {
             let v = ws.get(&name).ok_or_else(|| format!("Variable not found: {name}"))?;
             variables.insert(
                 name,
-                VariableVectors { original: fit(&v.original), edited: fit(&v.data), edits: v.edits.clone(), can_undo: !v.history.is_empty() },
+                VariableVectors { original: ws.aligned(v, true), edited: ws.aligned(v, false), edits: v.edits.clone(), can_undo: !v.steps.is_empty() },
             );
         }
-        Ok(WorkspaceVectors { time, variables })
+        Ok(WorkspaceVectors { time: ws.grid.to_vec(), variables })
+    })
+    .await
+}
+
+#[derive(Serialize)]
+pub struct VariableSamples {
+    /// The variable's own sample times on the aligned axis (no interpolation).
+    time: Vec<f64>,
+    original: Vec<f64>,
+    edited: Vec<f64>,
+    edits: Vec<String>,
+    can_undo: bool,
+    time_origin: Option<f64>,
+}
+
+/// One variable at its own samples, for the Prepare page.
+#[tauri::command]
+pub async fn workspace_variable(state: AppStateRef<'_>, name: String) -> CmdResult<VariableSamples> {
+    let st = state.inner().clone();
+    blocking(move || {
+        let origin = st.data.read().ok().and_then(|d| d.as_ref().and_then(|d| d.time_origin));
+        let ws = st.workspace.lock().unwrap();
+        let v = ws.get(&name).ok_or_else(|| format!("Variable not found: {name}"))?;
+        let shift = ws.shift_of(v);
+        Ok(VariableSamples {
+            time: ws.local_time(v).iter().map(|t| t + shift).collect(),
+            original: v.original.to_vec(),
+            edited: v.data.to_vec(),
+            edits: v.edits.clone(),
+            can_undo: !v.steps.is_empty(),
+            time_origin: origin,
+        })
     })
     .await
 }
 
 #[tauri::command]
 pub async fn workspace_clear(app: AppHandle, state: AppStateRef<'_>) -> CmdResult<WorkspaceView> {
-    let st = state.inner().clone();
-    blocking(move || {
-        *st.workspace.lock().unwrap() = Default::default();
-        sync_workspace(&app, &st, vec![])
+    ws_change(app, state, move |ws| {
+        *ws = Default::default();
+        Ok(Default::default())
     })
     .await
 }
 
-/// Writes the active dataset (time + every signal, filtered where applied) as CSV.
+// -- Recipes ------------------------------------------------------------------
+
+/// Saves the processing of `names` (or every variable) as a recipe file.
+#[tauri::command]
+pub fn recipe_save(state: AppStateRef<'_>, path: String, name: String, names: Option<Vec<String>>) -> CmdResult<Recipe> {
+    let recipe = state.workspace.lock().unwrap().make_recipe(&name, names.as_deref());
+    if recipe.columns.is_empty() && recipe.derived.is_empty() {
+        return Err("Nothing to save: no edited or derived variables.".into());
+    }
+    let json = serde_json::to_string_pretty(&recipe).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| format!("Cannot write {path}: {e}"))?;
+    Ok(recipe)
+}
+
+#[tauri::command]
+pub fn recipe_load(path: String) -> CmdResult<Recipe> {
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("Cannot read {path}: {e}"))?;
+    serde_json::from_str(&text).map_err(|e| format!("Not a recipe file: {e}"))
+}
+
+/// Applies a recipe to every source (or one).
+#[tauri::command]
+pub async fn recipe_apply(app: AppHandle, state: AppStateRef<'_>, recipe: Recipe, source: Option<u32>) -> CmdResult<WorkspaceView> {
+    ws_change(app, state, move |ws| Ok((vec![], ws.apply_recipe(&recipe, source)))).await
+}
+
+/// Sets (or clears) the recipe applied to every new import.
+#[tauri::command]
+pub fn recipe_set_auto(state: AppStateRef<'_>, recipe: Option<Recipe>) -> WorkspaceView {
+    let mut ws = state.workspace.lock().unwrap();
+    ws.auto_recipe = recipe;
+    view_of(&ws, state.data.read().ok().and_then(|d| d.as_ref().map(|d| d.info())), vec![], vec![])
+}
+
+// -- Projects -----------------------------------------------------------------
+
+#[tauri::command]
+pub fn project_save(state: AppStateRef<'_>, path: String) -> CmdResult<()> {
+    let project = state.workspace.lock().unwrap().to_project();
+    if project.sources.is_empty() {
+        return Err("The workspace is empty.".into());
+    }
+    let json = serde_json::to_string_pretty(&project).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| format!("Cannot write {path}: {e}"))
+}
+
+/// Replaces the workspace with a saved project (files are re-read and steps replayed).
+#[tauri::command]
+pub async fn project_open(app: AppHandle, state: AppStateRef<'_>, path: String) -> CmdResult<WorkspaceView> {
+    emit_progress(&app, "load", 20, "Opening project...");
+    ws_change(app, state, move |ws| {
+        let text = std::fs::read_to_string(&path).map_err(|e| format!("Cannot read {path}: {e}"))?;
+        let project: Project = serde_json::from_str(&text).map_err(|e| format!("Not a project file: {e}"))?;
+        let (opened, warnings) = Workspace::from_project(&project, Path::new(&path).parent());
+        if opened.sources.is_empty() {
+            return Err(format!("None of the project's files could be read.\n{}", warnings.join("\n")));
+        }
+        *ws = opened;
+        Ok((vec![], warnings))
+    })
+    .await
+}
+
+/// Writes the active dataset (time + every signal) as CSV.
 #[tauri::command]
 pub async fn export_dataset(state: AppStateRef<'_>, path: String) -> CmdResult<usize> {
     let st = state.inner().clone();
@@ -371,7 +534,7 @@ pub struct SuggestionDto {
 pub async fn filter_suggest(state: AppStateRef<'_>, column: String) -> CmdResult<Vec<SuggestionDto>> {
     let st = state.inner().clone();
     blocking(move || {
-        let (raw, fs) = with_data(&st, |d| Ok((d.get_raw(&column).ok_or("Unknown signal")?, d.sample_rate)))?;
+        let (raw, fs) = with_data(&st, |d| Ok((d.get_signal(&column).ok_or("Unknown signal")?, d.sample_rate)))?;
         Ok(suggest_filters(&raw, fs, Some(&st.cache), &column)
             .into_iter()
             .map(|s| {
@@ -396,7 +559,7 @@ pub struct FilterPreview {
 pub async fn filter_preview(state: AppStateRef<'_>, column: String, chain: FilterChain, draft: Option<FilterStep>) -> CmdResult<FilterPreview> {
     let st = state.inner().clone();
     blocking(move || {
-        let (raw, time, fs) = with_data(&st, |d| Ok((d.get_raw(&column).ok_or("Unknown signal")?, d.time.clone(), d.sample_rate)))?;
+        let (raw, time, fs) = with_data(&st, |d| Ok((d.get_signal(&column).ok_or("Unknown signal")?, d.time.clone(), d.sample_rate)))?;
         let step = stride(raw.len(), 5000);
         let x: Vec<f64> = time.iter().step_by(step).copied().collect();
         let original: Vec<f64> = raw.iter().step_by(step).copied().collect();
@@ -431,34 +594,33 @@ pub async fn filter_preview(state: AppStateRef<'_>, column: String, chain: Filte
     .await
 }
 
+/// Adds the enabled steps of `chain` to the signal's processing pipeline.
 #[tauri::command]
-pub async fn filter_apply(state: AppStateRef<'_>, column: String, chain: FilterChain) -> CmdResult<DatasetInfo> {
-    let st = state.inner().clone();
-    blocking(move || {
-        if !chain.has_enabled() {
-            return Err("The filter chain has no enabled steps.".into());
+pub async fn filter_apply(app: AppHandle, state: AppStateRef<'_>, column: String, chain: FilterChain) -> CmdResult<DatasetInfo> {
+    if !chain.has_enabled() {
+        return Err("The filter chain has no enabled steps.".into());
+    }
+    let view = ws_change(app, state, move |ws| {
+        for step in chain.enabled_steps() {
+            ws.edit(&column, Edit::Filter(step.clone()))?;
         }
-        let (raw, fs) = with_data(&st, |d| Ok((d.get_raw(&column).ok_or("Unknown signal")?, d.sample_rate)))?;
-        let filtered = apply_chain(&raw, &chain, fs)?;
-        let mut guard = st.data.write().unwrap();
-        let d = guard.as_mut().ok_or("No data loaded.")?;
-        d.set_filtered(&column, filtered, chain, &st.cache);
-        Ok(d.info())
+        Ok(Default::default())
     })
-    .await
+    .await?;
+    view.dataset.ok_or_else(|| "No data loaded.".into())
 }
 
+/// Removes every filter step from the signal's pipeline (other edits stay).
 #[tauri::command]
-pub fn filter_clear(state: AppStateRef<'_>, column: String) -> CmdResult<DatasetInfo> {
-    let mut guard = state.data.write().unwrap();
-    let d = guard.as_mut().ok_or("No data loaded.")?;
-    d.clear_filtered(&column, &state.cache);
-    Ok(d.info())
+pub async fn filter_clear(app: AppHandle, state: AppStateRef<'_>, column: String) -> CmdResult<DatasetInfo> {
+    let view = ws_change(app, state, move |ws| ws.remove_filters(&column).map(|_| Default::default())).await?;
+    view.dataset.ok_or_else(|| "No data loaded.".into())
 }
 
+/// Applied filters live in the signal's pipeline (see Prepare); the Filter page starts empty.
 #[tauri::command]
-pub fn filter_get_chain(state: AppStateRef<'_>, column: String) -> CmdResult<Option<FilterChain>> {
-    with_data(&state, |d| Ok(d.filter_chain(&column).cloned()))
+pub fn filter_get_chain(_column: String) -> CmdResult<Option<FilterChain>> {
+    Ok(None)
 }
 
 #[tauri::command]
@@ -484,7 +646,8 @@ pub fn filter_describe(steps: Vec<FilterStep>) -> Vec<String> {
 pub struct SpectrumView {
     fft: Xy,
     psd: Xy,
-    psd_filtered: Option<Xy>,
+    /// PSD of the imported values when the signal has processing steps.
+    psd_original: Option<Xy>,
     peaks: Vec<PeakInfo>,
     n_peaks: usize,
     nyquist: f64,
@@ -503,22 +666,22 @@ fn skip_dc(f: &[f64], v: &[f64], max_points: usize) -> Xy {
 pub async fn spectrum(state: AppStateRef<'_>, column: String, nperseg: usize) -> CmdResult<SpectrumView> {
     let st = state.inner().clone();
     blocking(move || {
-        let (raw, filtered, fs) = with_data(&st, |d| {
-            let raw = d.get_raw(&column).ok_or("Unknown signal")?;
-            let filt = if d.has_filtered(&column) { d.get_signal(&column) } else { None };
-            Ok((raw, filt, d.sample_rate))
-        })?;
+        let (raw, fs) = with_data(&st, |d| Ok((d.get_signal(&column).ok_or("Unknown signal")?, d.sample_rate)))?;
+        let original = {
+            let ws = st.workspace.lock().unwrap();
+            ws.get(&column).filter(|v| !v.steps.is_empty()).map(|v| ws.aligned(v, true))
+        };
         let fft = compute_fft(&raw, fs, Some(&st.cache), &column);
         let psd = compute_psd(&raw, fs, Some(nperseg), Some(&st.cache), &column);
-        let psd_filtered = filtered.map(|f| {
-            let p = compute_psd(&f, fs, Some(nperseg), None, "");
+        let psd_original = original.map(|o| {
+            let p = compute_psd(&o, fs, Some(nperseg), None, "");
             skip_dc(&p.freqs, &p.psd, 6000)
         });
         let peaks = detect_peaks(&psd, 8.0, 0.0);
         Ok(SpectrumView {
             fft: skip_dc(&fft.freqs, &fft.magnitude, 6000),
             psd: skip_dc(&psd.freqs, &psd.psd, 6000),
-            psd_filtered,
+            psd_original,
             n_peaks: peaks.len(),
             peaks: peaks.into_iter().take(5).collect(),
             nyquist: fs / 2.0,
@@ -1309,14 +1472,11 @@ fn build_report(st: &AppState, sections: &[String], app: &AppHandle) -> CmdResul
                 }
             }
             if inc("Filters Applied") {
+                // Every processing step of each signal (filters and Prepare edits), in order.
+                let ws = st.workspace.lock().unwrap();
                 for s in &d.signals {
-                    if let Some(chain) = d.filter_chain(&s.column) {
-                        if chain.has_enabled() {
-                            c.filters.push(FilterInfo {
-                                signal: s.label.clone(),
-                                description: chain.enabled_steps().map(|st| st.describe()).collect::<Vec<_>>().join(" → "),
-                            });
-                        }
+                    if let Some(v) = ws.get(&s.column).filter(|v| !v.edits.is_empty()) {
+                        c.filters.push(FilterInfo { signal: s.label.clone(), description: v.edits.join(" → ") });
                     }
                 }
             }

@@ -47,6 +47,10 @@ pub struct ParseResult {
     pub time_column: Option<String>,
     /// Time in seconds (relative to the first timestamp for datetimes, raw for numeric time columns).
     pub time: Option<Vec<f64>>,
+    /// Absolute start of a datetime time column (Unix seconds, naive times read as UTC).
+    pub time_origin: Option<f64>,
+    /// Non-numeric columns (labels, states, IDs); missing cells are empty strings.
+    pub text_columns: Vec<(String, Vec<String>)>,
     pub metadata: Map<String, Value>,
     pub header_row: usize,
     pub delimiter: char,
@@ -82,6 +86,8 @@ pub struct PreviewResult {
     pub skipped_columns: Vec<usize>,
     /// Indices into `headers` that are numeric signals.
     pub numeric_columns: Vec<usize>,
+    /// Indices into `headers` that hold text (imported as categories).
+    pub text_columns: Vec<usize>,
 }
 
 // ---------------------------------------------------------------------------
@@ -693,6 +699,13 @@ fn classify(table: &RawTable, decimal_comma: bool, opts: &ImportOptions) -> (Vec
     (cols, numeric, ts_col)
 }
 
+/// A non-numeric column whose values are mostly not numbers (labels, states, IDs).
+fn is_text_column(table: &RawTable, c: usize, decimal_comma: bool) -> bool {
+    let values: Vec<&str> = table.rows.iter().map(|r| r[c].trim()).filter(|s| !is_na(s)).collect();
+    let num_ok = values.iter().filter(|s| parse_number(s, decimal_comma).is_some()).count();
+    !values.is_empty() && (num_ok as f64) / (table.rows.len().max(1) as f64) < 0.5
+}
+
 /// Reads the first 100 rows for the File tab preview (with the effective import settings).
 pub fn preview_file_with(path: &Path, sheet: Option<&str>, opts: &ImportOptions) -> Result<PreviewResult, String> {
     let det = detect(path, sheet, opts)?;
@@ -702,6 +715,7 @@ pub fn preview_file_with(path: &Path, sheet: Option<&str>, opts: &ImportOptions)
     let skipped: Vec<usize> = (0..table.headers.len()).filter(|c| !cols.contains(c)).collect();
     let mut numeric_cols: Vec<usize> = numeric.keys().copied().filter(|c| Some(*c) != ts).collect();
     numeric_cols.sort();
+    let text_cols: Vec<usize> = cols.iter().copied().filter(|c| Some(*c) != ts && !numeric.contains_key(c) && is_text_column(&table, *c, det.delimiter != ',')).collect();
     let raw = raw_grid(&det.text, det.delimiter, det.quoting, RAW_PREVIEW_LINES);
     Ok(PreviewResult {
         encoding: det.encoding,
@@ -722,6 +736,7 @@ pub fn preview_file_with(path: &Path, sheet: Option<&str>, opts: &ImportOptions)
         time_column: ts.map(|c| table.headers[c].clone()),
         skipped_columns: skipped,
         numeric_columns: numeric_cols,
+        text_columns: text_cols,
     })
 }
 
@@ -755,6 +770,7 @@ pub fn parse_file_with(path: &Path, sheet: Option<&str>, opts: &ImportOptions) -
     let (cols, mut numeric, mut ts_col) = classify(&table, decimal_comma, opts);
     let _ = ncol;
     let mut time: Option<Vec<f64>> = None;
+    let mut time_origin: Option<f64> = None;
     if let Some(c) = ts_col {
         if let Some(vals) = numeric.get(&c) {
             // Numeric time column (seconds) is used as the time axis directly.
@@ -766,6 +782,8 @@ pub fn parse_file_with(path: &Path, sheet: Option<&str>, opts: &ImportOptions) -
                 let epoch = parsed.iter().flatten().next().copied();
                 // Template semantics: relative to the first row's timestamp.
                 let epoch = parsed.first().copied().flatten().or(epoch).unwrap();
+                let utc = epoch.and_utc();
+                time_origin = Some(utc.timestamp() as f64 + utc.timestamp_subsec_nanos() as f64 * 1e-9);
                 time = Some(parsed.iter().map(|p| p.map(|t| seconds_since(&t, &epoch)).unwrap_or(f64::NAN)).collect());
             } else {
                 ts_col = None;
@@ -773,7 +791,8 @@ pub fn parse_file_with(path: &Path, sheet: Option<&str>, opts: &ImportOptions) -
         }
     }
 
-    // Non-numeric columns with < 50 % numeric content are stashed in metadata.
+    // Non-numeric columns with < 50 % numeric content become text columns (and are listed in metadata).
+    let mut text_columns = Vec::new();
     for &c in &cols {
         if Some(c) == ts_col || numeric.contains_key(&c) {
             continue;
@@ -791,6 +810,10 @@ pub fn parse_file_with(path: &Path, sheet: Option<&str>, opts: &ImportOptions) -
                 }
             }
             if !uniq.is_empty() {
+                text_columns.push((
+                    table.headers[c].clone(),
+                    table.rows.iter().map(|r| { let v = r[c].trim(); if is_na(v) { String::new() } else { v.to_string() } }).collect(),
+                ));
                 metadata.insert(
                     format!("column_{}", table.headers[c]),
                     Value::Array(uniq.into_iter().map(Value::String).collect()),
@@ -809,6 +832,8 @@ pub fn parse_file_with(path: &Path, sheet: Option<&str>, opts: &ImportOptions) -
         columns,
         time_column: ts_col.map(|c| table.headers[c].clone()),
         time,
+        time_origin,
+        text_columns,
         metadata,
         header_row: det.header_row,
         delimiter: det.delimiter,

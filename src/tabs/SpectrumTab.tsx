@@ -3,7 +3,7 @@ import { EmptyState, Field, NumberInput, Panel, StatusText } from "@/components/
 import { SignalSelect } from "@/components/SignalSelect";
 import { StackedChart, type ChartPanel, type ChartSeries } from "@/components/StackedChart";
 import { api, errorText, type SpectrumView, type Xy } from "@/lib/api";
-import { seriesColor } from "@/lib/chart";
+import { INK, seriesColor } from "@/lib/chart";
 import { useApp } from "@/lib/store";
 
 function positive(xy: Xy): [number | null, number | null][] {
@@ -64,8 +64,13 @@ export function SpectrumTab() {
 
   const psdPanels: ChartPanel[] = useMemo(() => {
     if (!view) return [];
-    const series: ChartSeries[] = [{ name: "Original", color: seriesColor(0), data: positive(view.psd) }];
-    if (view.psd_filtered) series.push({ name: "Filtered", color: seriesColor(1), data: positive(view.psd_filtered) });
+    // With processing steps, the imported signal's PSD recedes to gray behind the current one.
+    const series: ChartSeries[] = view.psd_original
+      ? [
+          { name: "Original", color: INK.muted, data: positive(view.psd_original) },
+          { name: "Edited", color: seriesColor(0), data: positive(view.psd) },
+        ]
+      : [{ name: "PSD", color: seriesColor(0), data: positive(view.psd) }];
     return [
       {
         id: "psd",
@@ -84,7 +89,7 @@ export function SpectrumTab() {
     <div className="flex h-full flex-col gap-3">
       <div className="flex items-center gap-4">
         <Field label="Signal" className="w-[460px]">
-          <SignalSelect signals={dataset.signals} value={column} onChange={setColumn} filtered={dataset.filtered} title="Select the signal to compute the frequency spectrum for" />
+          <SignalSelect signals={dataset.signals} value={column} onChange={setColumn} edited={dataset.edited} title="Select the signal to compute the frequency spectrum for" />
         </Field>
         <Field label="PSD nperseg" className="w-56" hint="Number of samples per Welch segment. Higher = smoother PSD, lower = more detail">
           <NumberInput value={nperseg} min={64} max={65536} step={256} integer onChange={setNperseg} />

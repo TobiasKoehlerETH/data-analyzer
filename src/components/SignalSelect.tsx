@@ -9,7 +9,7 @@ export function SignalSelect({
   className,
   placeholder = "Select signal",
   title,
-  filtered = [],
+  edited = [],
 }: {
   signals: SignalInfo[];
   value: string | null;
@@ -17,7 +17,8 @@ export function SignalSelect({
   className?: string;
   placeholder?: string;
   title?: string;
-  filtered?: string[];
+  /** Signals with processing steps, tagged in the list. */
+  edited?: string[];
 }) {
   return (
     <Select value={value ?? undefined} onValueChange={onChange}>
@@ -28,7 +29,7 @@ export function SignalSelect({
         {signals.map((s) => (
           <SelectItem key={s.column} value={s.column}>
             {s.label}
-            {filtered.includes(s.column) && <span className="ml-1 text-[10px] text-ap-red">filtered</span>}
+            {edited.includes(s.column) && <span className="ml-1 text-[10px] text-muted-foreground">edited</span>}
           </SelectItem>
         ))}
       </SelectContent>

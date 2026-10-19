@@ -1,21 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
-import { BrushCleaning, ChartLine, Clock, Copy, Download, FileSpreadsheet, FolderOpen, Info, Loader2, MoreHorizontal, Pencil, Plus, RotateCcw, SlidersHorizontal, Trash2, X } from "lucide-react";
+import { Clock, FileSpreadsheet, FolderOpen, Info, Loader2, Plus, SlidersHorizontal, Type, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { NumberInput } from "@/components/common";
-import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ImportSettings } from "@/components/ImportSettings";
-import { api, DATA_FILE_FILTERS, errorText, type ImportOptions, type Json, type PreviewResult, type VariableEdit, type WorkspaceView } from "@/lib/api";
-import { ask, message, open, save } from "@/lib/platform";
+import { WorkspacePanel } from "@/components/WorkspacePanel";
+import { api, DATA_FILE_FILTERS, errorText, type ImportOptions, type Json, type PreviewResult, type WorkspaceView } from "@/lib/api";
+import { message, open, save } from "@/lib/platform";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
-const fmtRange = (lo: number | null, hi: number | null) => (lo === null || hi === null ? "" : `${Number(lo.toPrecision(4))} … ${Number(hi.toPrecision(4))}`);
 
 function metaText(v: Json): string {
   if (Array.isArray(v)) return v.map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(", ");
@@ -31,14 +30,15 @@ function Chip({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** Columns that can become variables: the time column first, then numeric signals. */
+/** Columns that can become variables: the time column first, then numeric and text columns. */
 function importable(p: PreviewResult): number[] {
-  return [...(p.time_column_index !== null ? [p.time_column_index] : []), ...p.numeric_columns];
+  const rest = [...p.numeric_columns, ...p.text_columns].sort((a, b) => a - b);
+  return [...(p.time_column_index !== null ? [p.time_column_index] : []), ...rest];
 }
 
 export function FileTab() {
-  const { setDataset, setActiveTab, setProgress, showStatus, dataVersion, setPrepareVariable } = useApp();
-  const [ws, setWs] = useState<WorkspaceView>({ variables: [], time_var: null, dataset: null, added: [] });
+  const { setDataset, setProgress, showStatus, dataVersion } = useApp();
+  const [ws, setWs] = useState<WorkspaceView>({ variables: [], sources: [], align: "time", grid_step: null, auto_recipe: null, dataset: null, added: [], warnings: [] });
   const [queue, setQueue] = useState<string[]>([]);
   const [path, setPath] = useState("");
   const [preview, setPreview] = useState<PreviewResult | null>(null);
@@ -48,9 +48,8 @@ export function FileTab() {
   const [adjust, setAdjust] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [renaming, setRenaming] = useState<{ name: string; value: string } | null>(null);
   const [fresh, setFresh] = useState<string[]>([]);
-  const [valueEdit, setValueEdit] = useState<{ name: string; op: "offset" | "scale" | "downsample"; value: number; all: boolean } | null>(null);
+  const [valueEdit, setValueEdit] = useState<{ name: string; op: "offset" | "scale"; value: number; all: boolean } | null>(null);
 
   const applyWs = (v: WorkspaceView) => {
     setWs(v);
@@ -121,6 +120,7 @@ export function FileTab() {
       applyWs(v);
       setFresh(v.added);
       showStatus(`Added ${v.added.length} variable${v.added.length === 1 ? "" : "s"} from ${fileName(path)}`);
+      if (v.warnings.length) await message(v.warnings.join("\n"), { title: "Recipe", kind: "warning" });
       closeFile();
     } catch (e) {
       setProgress("load", 100, "");
@@ -162,131 +162,14 @@ export function FileTab() {
 
   return (
     <div className="flex h-full gap-4">
-      {/* Workspace variables */}
-      <section className="flex w-[330px] shrink-0 flex-col border border-ap-line bg-white">
-        <header className="flex h-11 items-center gap-1 border-b border-ap-line pr-2 pl-4">
-          <h2 className="flex-1 text-[14px]">
-            Workspace <span className="text-muted-foreground tabular-nums">{ws.variables.length || ""}</span>
-          </h2>
-          <Button size="icon-sm" variant="ghost" disabled={!ws.variables.length} onClick={exportCsv} title="Export as CSV (Ctrl+E)">
-            <Download />
-          </Button>
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            disabled={!ws.variables.length}
-            title="Clear workspace"
-            onClick={async () => {
-              if (await ask("Remove all variables?", { title: "Clear workspace", kind: "warning" })) run(api.workspaceClear);
-            }}
-          >
-            <Trash2 />
-          </Button>
-        </header>
-        <ul className="min-h-0 flex-1 overflow-y-auto py-1">
-          {ws.variables.map((v) => (
-            <li key={v.name} className={cn("group flex items-center gap-2 px-2 py-1.5 hover:bg-[#f7f8f8]", fresh.includes(v.name) && "bg-[#fff4f1]")}>
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                onClick={() => run(() => api.workspaceSetTime(v.is_time ? null : v.name))}
-                title={v.is_time ? "Time axis (click to unset)" : "Use as time axis"}
-                className={v.is_time ? "text-ap-red" : "text-ap-bluegray-60 opacity-0 group-hover:opacity-100"}
-              >
-                <Clock />
-              </Button>
-              <div className="min-w-0 flex-1">
-                {renaming?.name === v.name ? (
-                  <Input
-                    autoFocus
-                    className="h-7 text-[13px]"
-                    value={renaming.value}
-                    onChange={(e) => setRenaming({ name: v.name, value: e.target.value })}
-                    onBlur={() => setRenaming(null)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Escape") setRenaming(null);
-                      if (e.key === "Enter") {
-                        const value = renaming.value;
-                        setRenaming(null);
-                        if (value.trim() && value !== v.name) run(() => api.workspaceRename(v.name, value));
-                      }
-                    }}
-                  />
-                ) : (
-                  <p className="truncate text-[13px]" onDoubleClick={() => setRenaming({ name: v.name, value: v.name })} title={`${v.source}\nDouble-click to rename`}>
-                    {v.name}
-                  </p>
-                )}
-                <p className="truncate text-[11px] text-muted-foreground tabular-nums" title={[v.source, ...v.edits].join("\n")}>
-                  {v.edits.length > 0 && <span className="mr-1 text-ap-red">edited ·</span>}
-                  {v.len.toLocaleString("en-US")} · {fmtRange(v.min, v.max)}
-                </p>
-              </div>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button size="icon-xs" variant="ghost" className="opacity-0 group-hover:opacity-100 data-[state=open]:opacity-100" title="Edit">
-                    <MoreHorizontal />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-48 rounded-none">
-                  {!v.is_time && (
-                    <>
-                      <DropdownMenuItem
-                        onSelect={() => {
-                          setPrepareVariable(v.name);
-                          setActiveTab("prepare");
-                        }}
-                      >
-                        <BrushCleaning /> Clean in Prepare…
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                    </>
-                  )}
-                  <DropdownMenuItem onSelect={() => setValueEdit({ name: v.name, op: "offset", value: 0, all: false })}>Add offset…</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => setValueEdit({ name: v.name, op: "scale", value: 1, all: false })}>Multiply by…</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => setValueEdit({ name: v.name, op: "downsample", value: 10, all: true })}>Downsample…</DropdownMenuItem>
-                  {(
-                    [
-                      ["normalize", "Normalize 0–1"],
-                      ["zscore", "Standardize (z-score)"],
-                      ["demean", "Remove mean"],
-                      ["zero_start", "Start at zero"],
-                      ["invert", "Invert sign"],
-                    ] as const
-                  ).map(([op, label]) => (
-                    <DropdownMenuItem key={op} onSelect={() => run(() => api.workspaceEdit(v.name, "edit", { op } as VariableEdit))}>
-                      {label}
-                    </DropdownMenuItem>
-                  ))}
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onSelect={() => setRenaming({ name: v.name, value: v.name })}>
-                    <Pencil /> Rename
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => run(() => api.workspaceEdit(v.name, "duplicate"))}>
-                    <Copy /> Duplicate
-                  </DropdownMenuItem>
-                  {v.edits.length > 0 && (
-                    <DropdownMenuItem onSelect={() => run(() => api.workspaceEdit(v.name, "reset"))}>
-                      <RotateCcw /> Reset to original
-                    </DropdownMenuItem>
-                  )}
-                  <DropdownMenuItem variant="destructive" onSelect={() => run(() => api.workspaceRemove([v.name]))}>
-                    <Trash2 /> Remove
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </li>
-          ))}
-        </ul>
-        <footer className="flex gap-2 border-t border-ap-line p-3">
-          <Button variant="outline" className="flex-1" onClick={browse}>
-            <Plus /> Add data
-          </Button>
-          <Button className="flex-1" disabled={!ws.dataset} onClick={() => setActiveTab("timeseries")}>
-            <ChartLine /> Plot
-          </Button>
-        </footer>
-      </section>
+      <WorkspacePanel
+        ws={ws}
+        fresh={fresh}
+        run={run}
+        onAddFiles={browse}
+        onExport={exportCsv}
+        onValueEdit={(name, op) => setValueEdit({ name, op, value: op === "offset" ? 0 : 1, all: false })}
+      />
 
       {/* Import from a file */}
       <div className="flex min-w-0 flex-1 flex-col gap-3">
@@ -298,7 +181,7 @@ export function FileTab() {
             >
               <FolderOpen className="size-12 text-ap-red" strokeWidth={1.2} />
               <span className="text-[22px] text-black">Add data</span>
-              <span className="text-[12.5px] text-muted-foreground">CSV · TXT · Excel</span>
+              <span className="text-[12.5px] text-muted-foreground">CSV · TXT · Excel · Parquet · MAT · HDF5 · TDMS</span>
             </button>
             {error && <p className="text-xs text-destructive">{error}</p>}
           </div>
@@ -393,9 +276,10 @@ export function FileTab() {
                                   <Checkbox checked={on} onCheckedChange={(v) => setPicked(v ? [...picked, h] : picked.filter((x) => x !== h))} />
                                   {h}
                                   {preview.time_column_index === i && <Clock className="size-3 text-ap-red" />}
+                                  {preview.text_columns.includes(i) && <Type className="size-3 text-muted-foreground" aria-label="Text column" />}
                                 </label>
                               ) : (
-                                <span className="text-muted-foreground/70" title="Not numeric">
+                                <span className="text-muted-foreground/70" title="Empty or not importable">
                                   {h}
                                 </span>
                               )}
@@ -430,7 +314,7 @@ export function FileTab() {
         <DialogContent className="rounded-none sm:max-w-sm">
           <DialogHeader>
             <DialogTitle className="font-normal">
-              {valueEdit?.op === "offset" ? "Add offset" : valueEdit?.op === "scale" ? "Multiply by" : "Keep every n-th point"}
+              {valueEdit?.op === "offset" ? "Add offset" : "Multiply by"}
               {!valueEdit?.all && (
                 <>
                   {" "}
@@ -445,7 +329,7 @@ export function FileTab() {
                 e.preventDefault();
                 const { name, op, value, all } = valueEdit;
                 setValueEdit(null);
-                const names = all ? ws.variables.map((x) => x.name) : [name];
+                const names = all ? ws.variables.filter((x) => x.kind !== "text" && !x.is_time).map((x) => x.name) : [name];
                 run(async () => {
                   let last = ws;
                   for (const n of names) last = await api.workspaceEdit(n, "edit", { op, value });
@@ -453,13 +337,7 @@ export function FileTab() {
                 });
               }}
             >
-              <NumberInput
-                value={valueEdit.value}
-                step={valueEdit.op === "downsample" ? 1 : 0.1}
-                integer={valueEdit.op === "downsample"}
-                min={valueEdit.op === "downsample" ? 2 : undefined}
-                onChange={(value) => setValueEdit({ ...valueEdit, value })}
-              />
+              <NumberInput value={valueEdit.value} step={0.1} onChange={(value) => setValueEdit({ ...valueEdit, value })} />
               <label className="mt-3 flex cursor-pointer items-center gap-2 text-[12.5px]">
                 <Checkbox checked={valueEdit.all} onCheckedChange={(c) => setValueEdit({ ...valueEdit, all: !!c })} />
                 All variables

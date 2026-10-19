@@ -25,7 +25,12 @@ export interface DatasetInfo {
   is_raser_format: boolean;
   file_type: string;
   sheet: string | null;
-  filtered: string[];
+  /** Signals with processing steps (Prepare edits or filters). */
+  edited: string[];
+  /** Unix seconds at t = 0 when the time axis comes from timestamps (enables date axes). */
+  time_origin: number | null;
+  /** Text variables available for grouping. */
+  texts: string[];
 }
 
 export interface PreviewResult {
@@ -47,6 +52,8 @@ export interface PreviewResult {
   time_column: string | null;
   skipped_columns: number[];
   numeric_columns: number[];
+  /** Columns holding text (imported as categories). */
+  text_columns: number[];
 }
 
 /** Manual overrides of the automatic format detection (0-based lines / columns). */
@@ -65,22 +72,60 @@ export interface VariableInfo {
   name: string;
   len: number;
   source: string;
+  source_id: number | null;
+  kind: "imported" | "derived" | "text";
+  formula: string | null;
   min: number | null;
   max: number | null;
   is_time: boolean;
   edits: string[];
   can_undo: boolean;
+  error: string | null;
+}
+
+export interface SourceInfo {
+  id: number;
+  name: string;
+  path: string;
+  rows: number;
+  time_var: string | null;
+  origin: number | null;
+  /** Shift added to this file's time when aligning (seconds). */
+  offset: number;
+  start: number | null;
+  duration: number;
+  sample_rate: number;
+}
+
+export type Align = "time" | "clock" | "row";
+
+/** Reusable processing: steps per column name plus derived variables. */
+export interface Recipe {
+  name: string;
+  columns: { column: string; steps: VariableEdit[] }[];
+  derived: { name: string; formula: string; steps: VariableEdit[] }[];
 }
 
 export type VariableEdit =
   | { op: "offset"; value: number }
   | { op: "scale"; value: number }
-  | { op: "downsample"; value: number }
   | { op: "despike"; value: number }
-  /** Half-open row ranges [start, end). */
+  /** Time ranges on the aligned axis (inclusive). */
   | { op: "clear_range" | "keep_range"; value: [number, number] }
+  /** Sample times on the aligned axis. */
   | { op: "clear_points"; value: number[] }
+  | { op: "filter"; value: FilterStep }
   | { op: "normalize" | "zscore" | "demean" | "zero_start" | "invert" | "fill_gaps" };
+
+/** One variable at its own samples (no interpolation), times on the aligned axis. */
+export interface VariableSamples {
+  time: number[];
+  original: (number | null)[];
+  edited: (number | null)[];
+  edits: string[];
+  can_undo: boolean;
+  time_origin: number | null;
+}
 
 /** Imported and edited values of a workspace variable, row-aligned with the dataset time axis. */
 export interface WorkspaceVectors {
@@ -90,9 +135,15 @@ export interface WorkspaceVectors {
 
 export interface WorkspaceView {
   variables: VariableInfo[];
-  time_var: string | null;
+  sources: SourceInfo[];
+  align: Align;
+  grid_step: number | null;
+  /** Recipe applied to every new import. */
+  auto_recipe: string | null;
   dataset: DatasetInfo | null;
   added: string[];
+  /** Steps or files that could not be applied. */
+  warnings: string[];
 }
 
 export interface StatRow {
@@ -165,7 +216,8 @@ export interface PeakInfo {
 export interface SpectrumView {
   fft: Xy;
   psd: Xy;
-  psd_filtered: Xy | null;
+  /** PSD of the imported values when the signal has processing steps. */
+  psd_original: Xy | null;
   peaks: PeakInfo[];
   n_peaks: number;
   nyquist: number;
@@ -333,9 +385,23 @@ export const api = {
   workspaceView: () => invoke<WorkspaceView>("workspace_view"),
   workspaceRemove: (names: string[]) => invoke<WorkspaceView>("workspace_remove", { names }),
   workspaceRename: (old: string, newName: string) => invoke<WorkspaceView>("workspace_rename", { old, new: newName }),
-  workspaceSetTime: (name: string | null) => invoke<WorkspaceView>("workspace_set_time", { name }),
+  workspaceSetTime: (name: string, time: boolean) => invoke<WorkspaceView>("workspace_set_time", { name, time }),
+  workspaceImportBatch: (paths: string[], folder: string | null, columns: string[] | null) =>
+    invoke<WorkspaceView>("workspace_import_batch", { paths, folder, columns }),
+  workspaceRemoveSource: (id: number) => invoke<WorkspaceView>("workspace_remove_source", { id }),
+  workspaceSetOffset: (id: number, offset: number) => invoke<WorkspaceView>("workspace_set_offset", { id, offset }),
+  workspaceSetAlign: (align: Align, gridStep: number | null) => invoke<WorkspaceView>("workspace_set_align", { align, gridStep }),
+  workspaceAddDerived: (name: string, formula: string) => invoke<WorkspaceView>("workspace_add_derived", { name, formula }),
+  workspaceSetFormula: (name: string, formula: string) => invoke<WorkspaceView>("workspace_set_formula", { name, formula }),
+  workspaceVariable: (name: string) => invoke<VariableSamples>("workspace_variable", { name }),
+  recipeSave: (path: string, name: string, names: string[] | null) => invoke<Recipe>("recipe_save", { path, name, names }),
+  recipeLoad: (path: string) => invoke<Recipe>("recipe_load", { path }),
+  recipeApply: (recipe: Recipe, source: number | null) => invoke<WorkspaceView>("recipe_apply", { recipe, source }),
+  recipeSetAuto: (recipe: Recipe | null) => invoke<WorkspaceView>("recipe_set_auto", { recipe }),
+  projectSave: (path: string) => invoke<void>("project_save", { path }),
+  projectOpen: (path: string) => invoke<WorkspaceView>("project_open", { path }),
   workspaceClear: () => invoke<WorkspaceView>("workspace_clear"),
-  workspaceEdit: (name: string, action: "edit" | "undo" | "reset" | "duplicate", edit?: VariableEdit) =>
+  workspaceEdit: (name: string, action: "edit" | "undo" | "reset" | "remove_filters" | "duplicate", edit?: VariableEdit) =>
     invoke<WorkspaceView>("workspace_edit", { name, action, edit: edit ?? null }),
   workspaceVectors: (names: string[]) => invoke<WorkspaceVectors>("workspace_vectors", { names }),
   exportDataset: (path: string) => invoke<number>("export_dataset", { path }),

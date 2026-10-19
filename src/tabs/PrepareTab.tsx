@@ -4,12 +4,11 @@ import { Button } from "@/components/ui/button";
 import { CheckField, EmptyState, Field, NumberInput, Panel, Radios, StatusText } from "@/components/common";
 import { SignalSelect } from "@/components/SignalSelect";
 import { StackedChart, type ChartPanel } from "@/components/StackedChart";
-import { api, errorText, type VariableEdit, type WorkspaceVectors } from "@/lib/api";
+import { api, errorText, type VariableEdit, type VariableSamples } from "@/lib/api";
 import { INK, fmtG, seriesColor } from "@/lib/chart";
 import { useApp } from "@/lib/store";
 
 type Box = { panel: number; x: [number, number]; y: [number, number] };
-type Vectors = WorkspaceVectors["variables"][string];
 
 const finite = (v: number | null | undefined): v is number => typeof v === "number" && Number.isFinite(v);
 
@@ -19,8 +18,7 @@ export function PrepareTab() {
   const [column, setColumn] = useState<string | null>(null);
   const [xMode, setXMode] = useState<"time" | "row">("time");
   const [showChange, setShowChange] = useState(true);
-  const [time, setTime] = useState<number[]>([]);
-  const [vec, setVec] = useState<Vectors | null>(null);
+  const [vec, setVec] = useState<VariableSamples | null>(null);
   const [loading, setLoading] = useState(false);
   const [box, setBox] = useState<Box | null>(null);
   const [selectionKey, setSelectionKey] = useState(0);
@@ -45,12 +43,8 @@ export function PrepareTab() {
     let cancelled = false;
     setLoading(true);
     api
-      .workspaceVectors([column])
-      .then((v) => {
-        if (cancelled) return;
-        setTime(v.time);
-        setVec(v.variables[column] ?? null);
-      })
+      .workspaceVariable(column)
+      .then((v) => !cancelled && setVec(v))
       .catch((e) => !cancelled && setStatus({ text: errorText(e), error: true }))
       .finally(() => !cancelled && setLoading(false));
     return () => {
@@ -65,6 +59,8 @@ export function PrepareTab() {
   useEffect(clearSelection, [column, xMode]);
 
   const label = dataset?.signals.find((s) => s.column === column)?.label ?? column ?? "";
+  // The variable's own samples: no interpolation, times on the aligned axis.
+  const time = useMemo(() => vec?.time ?? [], [vec]);
   const x = useMemo(() => (xMode === "time" ? time : time.map((_, i) => i + 1)), [time, xMode]);
   const edited = !!vec && vec.edits.length > 0;
 
@@ -104,8 +100,9 @@ export function PrepareTab() {
       const y = vec.edited[i];
       if (box.panel === 0 && finite(y) && y >= box.y[0] && y <= box.y[1]) points.push(i);
     }
-    return first < 0 ? null : { range: [first, last + 1] as [number, number], points };
-  }, [box, vec, x]);
+    // Edits are stored as times, so they replay correctly in recipes and projects.
+    return first < 0 ? null : { range: [time[first], time[last]] as [number, number], rows: last - first + 1, points: points.map((i) => time[i]) };
+  }, [box, vec, x, time]);
 
   const panels: ChartPanel[] = useMemo(() => {
     if (!vec) return [];
@@ -149,7 +146,7 @@ export function PrepareTab() {
   if (!dataset) return <EmptyState title="No data loaded">Add variables in Workspace to prepare them.</EmptyState>;
 
   const xLabel = xMode === "time" ? "Time [s]" : "Row";
-  const rows = selection ? selection.range[1] - selection.range[0] : 0;
+  const rows = selection?.rows ?? 0;
 
   return (
     <div className="flex h-full flex-col gap-3">

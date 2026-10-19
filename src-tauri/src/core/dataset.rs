@@ -1,14 +1,12 @@
-//! Central data store for loaded signals, filtered views, filter chains and metadata.
+//! Central data store for the aligned signals the analysis pages work on.
 
 use serde::Serialize;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::cache::CacheManager;
 use super::csv_parser::ParseResult;
 use super::dsp::median;
-use super::filters::FilterChain;
 
 pub const SIGNAL_GROUPS: &[(&str, &[&str])] = &[
     ("Motor", &["motor", "shaft_rpm", "shaft_speed"]),
@@ -80,7 +78,12 @@ pub struct DatasetInfo {
     pub is_raser_format: bool,
     pub file_type: String,
     pub sheet: Option<String>,
-    pub filtered: Vec<String>,
+    /// Signals with processing steps (Prepare edits or filters).
+    pub edited: Vec<String>,
+    /// Unix seconds at t = 0 when the time axis comes from timestamps.
+    pub time_origin: Option<f64>,
+    /// Text variables available for grouping.
+    pub texts: Vec<String>,
 }
 
 pub struct Dataset {
@@ -88,8 +91,9 @@ pub struct Dataset {
     pub time: Arc<Vec<f64>>,
     pub signals: Vec<SignalInfo>,
     raw: HashMap<String, Arc<Vec<f64>>>,
-    filtered: HashMap<String, Arc<Vec<f64>>>,
-    chains: HashMap<String, FilterChain>,
+    texts: Vec<(String, Arc<Vec<String>>)>,
+    pub edited: Vec<String>,
+    pub time_origin: Option<f64>,
     pub metadata: Map<String, Value>,
     pub sample_rate: f64,
     encoding: String,
@@ -134,8 +138,9 @@ impl Dataset {
             time: Arc::new(time),
             signals,
             raw,
-            filtered: HashMap::new(),
-            chains: HashMap::new(),
+            texts: parse.text_columns.into_iter().map(|(n, v)| (n, Arc::new(v))).collect(),
+            edited: vec![],
+            time_origin: parse.time_origin,
             metadata: parse.metadata,
             sample_rate,
             encoding: parse.encoding,
@@ -156,8 +161,6 @@ impl Dataset {
             (Some(a), Some(b)) => b - a,
             _ => 0.0,
         };
-        let mut filtered: Vec<String> = self.filtered.keys().cloned().collect();
-        filtered.sort();
         DatasetInfo {
             path: self.path.clone(),
             n_samples: self.n_samples(),
@@ -172,7 +175,9 @@ impl Dataset {
             is_raser_format: self.is_raser,
             file_type: self.file_type.clone(),
             sheet: self.sheet.clone(),
-            filtered,
+            edited: self.edited.clone(),
+            time_origin: self.time_origin,
+            texts: self.texts.iter().map(|(n, _)| n.clone()).collect(),
         }
     }
 
@@ -192,36 +197,15 @@ impl Dataset {
         self.signals.iter().map(|s| s.column.clone()).collect()
     }
 
-    /// Filtered view if one exists, raw data otherwise.
     pub fn get_signal(&self, col: &str) -> Option<Arc<Vec<f64>>> {
-        self.filtered.get(col).or_else(|| self.raw.get(col)).cloned()
-    }
-
-    pub fn get_raw(&self, col: &str) -> Option<Arc<Vec<f64>>> {
         self.raw.get(col).cloned()
     }
 
-    pub fn has_filtered(&self, col: &str) -> bool {
-        self.filtered.contains_key(col)
+    pub fn get_text(&self, name: &str) -> Option<Arc<Vec<String>>> {
+        self.texts.iter().find(|(n, _)| n == name).map(|(_, v)| v.clone())
     }
 
-    pub fn set_filtered(&mut self, col: &str, data: Vec<f64>, chain: FilterChain, cache: &CacheManager) {
-        self.filtered.insert(col.to_string(), Arc::new(data));
-        self.chains.insert(col.to_string(), chain);
-        cache.invalidate_signal(col);
-    }
-
-    pub fn clear_filtered(&mut self, col: &str, cache: &CacheManager) {
-        self.filtered.remove(col);
-        self.chains.remove(col);
-        cache.invalidate_signal(col);
-    }
-
-    pub fn filter_chain(&self, col: &str) -> Option<&FilterChain> {
-        self.chains.get(col)
-    }
-
-    /// All signals (filtered where applicable), in column order.
+    /// All signals in column order.
     pub fn all_signals(&self) -> Vec<(String, Arc<Vec<f64>>)> {
         self.signals.iter().filter_map(|s| self.get_signal(&s.column).map(|d| (s.column.clone(), d))).collect()
     }
