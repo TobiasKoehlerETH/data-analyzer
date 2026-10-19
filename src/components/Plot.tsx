@@ -125,7 +125,9 @@ export function Plot({ data, layout, config, uirevision, table, events, classNam
     const node = el.current;
     const fullLayout = { ...baseLayout(), ...layout, uirevision: uirevision ?? "static" };
     let cancelled = false;
-    Plotly.react(node, data as any, fullLayout as any, fullConfig).then((gd) => {
+    // No hover tooltips: hover events still fire (cursor readouts, click-to-exclude), but nothing pops up.
+    const quiet = data.map((t) => ({ ...t, hoverinfo: "none", hovertemplate: undefined }));
+    Plotly.react(node, quiet as any, fullLayout as any, fullConfig).then((gd) => {
       if (cancelled) return;
       const plot = gd as PlotElement;
       gdRef.current = plot;
