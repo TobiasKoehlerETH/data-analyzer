@@ -5,9 +5,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { EmptyState, NumberInput, Panel } from "@/components/common";
-import { EChart } from "@/components/EChart";
+import { Plot } from "@/components/Plot";
 import { analysisVectors, curveFit, downloadText, finitePairs, FIT_MODELS, type FitRequest, type FitResult, type Parameter, type Point } from "@/lib/analysis";
-import { fmtG, tooltipStyle, valueAxis } from "@/lib/chart";
+import { INK, LINE_WIDTH, MARKER_SIZE, axis, baseLayout, esc, fmtG, seriesColor, wash } from "@/lib/chart";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -131,58 +131,74 @@ export function CurveFitTab() {
   const preview = useMemo(() => {
     const plotted = points.filter((_, i) => i % step === 0);
     const split = residuals && current;
+    const data = seriesColor(0);
+    const fit = seriesColor(1);
+    const colors = plotted.map((p, k) => {
+      const i = k * step;
+      const out = excluded.has(i) || (range[0] !== "" && p[0] < Number(range[0])) || (range[1] !== "" && p[0] > Number(range[1]));
+      return out ? INK.faded : data;
+    });
+    const xName = esc(label(xCol));
+    const yName = esc(label(yCol));
+    const traces: any[] = [
+      {
+        type: "scatter",
+        mode: "markers",
+        name: yName,
+        x: plotted.map((p) => p[0]),
+        y: plotted.map((p) => p[1]),
+        marker: { color: colors, size: MARKER_SIZE, opacity: plotted.length > 2000 ? 0.55 : 0.85, line: { color: INK.surface, width: 1 } },
+        hovertemplate: `<b>%{y:.6~g}</b>  ${yName}<br><span style="color:${INK.muted}">${xName} %{x:.6~g} · click to exclude</span><extra></extra>`,
+      },
+    ];
+    if (current && bands) {
+      const [lo, hi] = [current.result.lower, current.result.upper];
+      traces.push(
+        { type: "scatter", mode: "lines", name: "95% band", x: lo.map((p) => p[0]), y: lo.map((p) => p[1]), line: { width: 0, color: fit }, hoverinfo: "skip", showlegend: false },
+        { type: "scatter", mode: "lines", name: "95% band", x: hi.map((p) => p[0]), y: hi.map((p) => p[1]), line: { width: 0, color: fit }, fill: "tonexty", fillcolor: wash(fit, 0.12), hoverinfo: "skip" },
+      );
+    }
+    if (current) {
+      traces.push({
+        type: "scatter",
+        mode: "lines",
+        name: "Fit",
+        x: current.result.curve.map((p) => p[0]),
+        y: current.result.curve.map((p) => p[1]),
+        line: { color: fit, width: LINE_WIDTH },
+        hovertemplate: `<b>%{y:.6~g}</b>  fit<extra></extra>`,
+      });
+    }
+    if (split) {
+      const res = current.result.residuals.filter((_, i) => i % step === 0);
+      traces.push({
+        type: "scatter",
+        mode: "markers",
+        name: "Residual",
+        xaxis: "x2",
+        yaxis: "y2",
+        x: res.map((p) => p[0]),
+        y: res.map((p) => p[1]),
+        showlegend: false,
+        marker: { color: data, size: MARKER_SIZE - 2, opacity: 0.7, line: { color: INK.surface, width: 1 } },
+        hovertemplate: `<b>%{y:.4~g}</b>  residual<extra></extra>`,
+      });
+    }
     return {
-      animation: false,
-      tooltip: { ...tooltipStyle, trigger: "item" },
-      grid: split
-        ? [
-            { left: 65, right: 25, top: 20, bottom: "36%" },
-            { left: 65, right: 25, top: "72%", bottom: 40 },
-          ]
-        : { left: 65, right: 25, top: 20, bottom: 45 },
-      xAxis: split
-        ? [valueAxis({ scale: true }), valueAxis({ gridIndex: 1, scale: true, name: label(xCol), nameLocation: "middle", nameGap: 26 })]
-        : valueAxis({ scale: true, name: label(xCol), nameLocation: "middle", nameGap: 26 }),
-      yAxis: split
-        ? [valueAxis({ scale: true, name: label(yCol), nameLocation: "middle", nameGap: 48 }), valueAxis({ gridIndex: 1, name: "Residual", nameLocation: "middle", nameGap: 48, scale: true })]
-        : valueAxis({ scale: true, name: label(yCol), nameLocation: "middle", nameGap: 48 }),
-      series: [
-        {
-          name: label(yCol),
-          type: "scatter",
-          symbolSize: 4,
-          data: plotted.map((p, k) => {
-            const i = k * step;
-            const out = excluded.has(i) || (range[0] !== "" && p[0] < Number(range[0])) || (range[1] !== "" && p[0] > Number(range[1]));
-            return { value: p, itemStyle: { color: out ? "#d1d1d1" : "#6b7b84" } };
-          }),
-        },
-        ...(current ? [{ name: "Fit", type: "line", silent: true, showSymbol: false, data: current.result.curve, lineStyle: { color: "#ff2400", width: 2 } }] : []),
-        ...(current && bands
-          ? [current.result.lower, current.result.upper].map((data, i) => ({
-              name: `95% ${i ? "upper" : "lower"}`,
-              type: "line",
-              silent: true,
-              showSymbol: false,
-              data,
-              lineStyle: { color: "#ff2400", type: "dashed", width: 1 },
-            }))
-          : []),
+      data: traces,
+      layout: baseLayout({
+        hovermode: "closest",
+        showlegend: !!current,
+        margin: { l: 64, r: 12, t: 28, b: 44 },
+        xaxis: axis(split ? undefined : label(xCol), { anchor: "y", showticklabels: !split }),
+        yaxis: axis(label(yCol), { domain: split ? [0.34, 1] : [0, 1] }),
         ...(split
-          ? [
-              {
-                name: "Residuals",
-                type: "scatter",
-                symbolSize: 3,
-                xAxisIndex: 1,
-                yAxisIndex: 1,
-                data: current.result.residuals.filter((_, i) => i % step === 0),
-                itemStyle: { color: "#274259" },
-                markLine: { silent: true, symbol: "none", data: [{ yAxis: 0 }] },
-              },
-            ]
-          : []),
-      ],
+          ? {
+              xaxis2: axis(label(xCol), { anchor: "y2", matches: "x" }),
+              yaxis2: axis("Residual", { domain: [0, 0.24], zeroline: true, zerolinecolor: INK.axis, zerolinewidth: 1 }),
+            }
+          : {}),
+      }),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [points, current, bands, residuals, excluded, range, xCol, yCol, step]);
@@ -441,13 +457,16 @@ export function CurveFitTab() {
           }
           title={points.length > 10000 ? "Click points to exclude · preview sampled" : "Click points to exclude"}
         >
-          <EChart
-            option={preview}
-            onEvents={{
-              click: (p: { seriesIndex: number; dataIndex: number }) => {
-                if (p.seriesIndex !== 0) return;
+          <Plot
+            data={preview.data}
+            layout={preview.layout}
+            uirevision={`${xCol}|${yCol}|${dataVersion}`}
+            events={{
+              click: (e: { points?: { curveNumber: number; pointNumber: number }[] }) => {
+                const p = e.points?.[0];
+                if (!p || p.curveNumber !== 0) return;
                 invalidate();
-                const i = p.dataIndex * step;
+                const i = p.pointNumber * step;
                 setExcluded((v) => {
                   const next = new Set(v);
                   if (next.has(i)) next.delete(i);

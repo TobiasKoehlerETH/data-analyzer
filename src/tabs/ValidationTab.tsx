@@ -6,11 +6,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState, Field, Panel, StatusText } from "@/components/common";
-import { EChart } from "@/components/EChart";
+import { Plot } from "@/components/Plot";
 import { ModelSelect } from "@/components/ModelSelect";
 import { StackedChart, type ChartPanel } from "@/components/StackedChart";
 import { api, errorText, type ValidationView } from "@/lib/api";
-import { FONT, PALETTE, tooltipStyle, valueAxis, zip } from "@/lib/chart";
+import { INK, LINE_WIDTH, axis, baseLayout, esc, seriesColor, zip } from "@/lib/chart";
 import { useApp } from "@/lib/store";
 
 export function ValidationTab() {
@@ -43,7 +43,7 @@ export function ValidationTab() {
   const a = view?.outputs.find((o) => o.name === output) ?? null;
 
   const residualPanels: ChartPanel[] = useMemo(
-    () => (a ? [{ id: "r", yLabel: "Residual", hLines: [{ y: 0, color: "#a5a5a5", dashed: true }], series: [{ name: "Residual", color: "#274259", data: zip(a.residuals.x, a.residuals.y), width: 1 }] }] : []),
+    () => (a ? [{ id: "r", yLabel: "Residual", hLines: [{ y: 0 }], series: [{ name: "Residual", color: seriesColor(0), data: zip(a.residuals.x, a.residuals.y) }] }] : []),
     [a],
   );
   const acfPanels: ChartPanel[] = useMemo(
@@ -54,11 +54,11 @@ export function ValidationTab() {
               id: "acf",
               yLabel: "ACF",
               hLines: [
-                { y: a.acf_confidence, color: "#ff2400", dashed: true, label: "95%" },
-                { y: -a.acf_confidence, color: "#ff2400", dashed: true },
-                { y: 0, color: "#000" },
+                { y: a.acf_confidence, label: "95% bound" },
+                { y: -a.acf_confidence },
+                { y: 0 },
               ],
-              series: [{ name: "ACF", color: "#274259", type: "bar", data: a.acf_lags.slice(1).map((l, i) => [l, a.acf[i + 1]] as [number, number | null]) }],
+              series: [{ name: "ACF", color: seriesColor(0), type: "bar", data: a.acf_lags.slice(1).map((l, i) => [l, a.acf[i + 1]] as [number, number | null]) }],
             },
           ]
         : [],
@@ -71,48 +71,71 @@ export function ValidationTab() {
             {
               id: "x",
               yLabel: "Cross-corr",
-              legend: true,
-              hLines: [{ y: 0, color: "#a5a5a5", dashed: true }],
-              series: a.xcorr.map((x, i) => ({ name: x.label, color: PALETTE[i % PALETTE.length], data: zip(x.lags, x.values), width: 1.4 })),
+              hLines: [{ y: 0 }],
+              series: a.xcorr.map((x, i) => ({ name: x.label, color: seriesColor(i), data: zip(x.lags, x.values) })),
             },
           ]
         : [],
     [a],
   );
-  const histOption = useMemo(() => {
+  const histogram = useMemo(() => {
     if (!a) return null;
+    const binWidth = a.hist_centers.length > 1 ? a.hist_centers[1] - a.hist_centers[0] : 1;
     return {
-      animation: false,
-      textStyle: { fontFamily: FONT },
-      grid: { left: 70, right: 24, top: 30, bottom: 40 },
-      tooltip: { trigger: "axis", ...tooltipStyle },
-      legend: { top: 4, right: 24, textStyle: { fontFamily: FONT, fontSize: 11 } },
-      xAxis: valueAxis({ name: "Residual", nameLocation: "middle", nameGap: 26 }),
-      yAxis: valueAxis({ name: "Density", nameLocation: "middle", nameGap: 52, scale: false }),
-      series: [
-        { type: "bar", name: "Residuals", data: a.hist_centers.map((c, i) => [c, a.hist_density[i]]), barWidth: "98%", itemStyle: { color: "#6b7b84", opacity: 0.8 }, barCategoryGap: 0 },
-        { type: "line", name: `Normal (p=${a.shapiro_p.toFixed(4)})`, data: zip(a.normal.x, a.normal.y), showSymbol: false, lineStyle: { color: "#ff2400", width: 2 }, itemStyle: { color: "#ff2400" } },
-      ],
-    };
-  }, [a]);
-  const vafOption = useMemo(() => {
-    if (!view) return null;
-    const names = view.outputs.map((o) => o.label.slice(0, 15));
-    return {
-      animation: false,
-      grid: { left: 60, right: 20, top: 24, bottom: 70 },
-      tooltip: { trigger: "axis", ...tooltipStyle },
-      xAxis: { type: "category", data: names, axisLabel: { rotate: 30, fontFamily: FONT, fontSize: 10.5, color: "#000" }, axisLine: { lineStyle: { color: "#000" } } },
-      yAxis: valueAxis({ name: "VAF [%]", nameLocation: "middle", nameGap: 40, min: 0, max: 105, scale: false }),
-      series: [
+      data: [
         {
           type: "bar",
-          data: view.outputs.map((o) => Number(o.metrics.vaf.toFixed(2))),
-          itemStyle: { color: "#ff2400" },
-          barMaxWidth: 60,
-          label: { show: true, position: "top", formatter: (p: { value: number }) => `${p.value.toFixed(1)}%`, fontSize: 10.5, fontFamily: FONT },
+          name: "Residuals",
+          x: a.hist_centers,
+          y: a.hist_density,
+          width: binWidth,
+          marker: { color: seriesColor(0), cornerradius: 4, line: { color: INK.surface, width: 1 } },
+          hovertemplate: "<b>%{y:.4~g}</b>  density<br>residual %{x:.4~g}<extra></extra>",
+        },
+        {
+          type: "scatter",
+          mode: "lines",
+          name: esc(`Normal fit (Shapiro–Wilk p = ${a.shapiro_p.toFixed(4)})`),
+          x: a.normal.x,
+          y: a.normal.y,
+          line: { color: seriesColor(1), width: LINE_WIDTH },
+          hovertemplate: "<b>%{y:.4~g}</b>  normal<extra></extra>",
         },
       ],
+      layout: baseLayout({
+        showlegend: true,
+        bargap: 0,
+        hovermode: "closest",
+        xaxis: axis("Residual"),
+        yaxis: axis("Density", { rangemode: "tozero" }),
+      }),
+    };
+  }, [a]);
+  const vaf = useMemo(() => {
+    if (!view) return null;
+    const names = view.outputs.map((o) => esc(o.label.length > 18 ? o.label.slice(0, 17) + "…" : o.label));
+    const values = view.outputs.map((o) => o.metrics.vaf);
+    return {
+      data: [
+        {
+          type: "bar",
+          name: "VAF",
+          x: names,
+          y: values,
+          marker: { color: seriesColor(0), cornerradius: 4 },
+          text: values.map((v) => `${v.toFixed(1)}%`),
+          textposition: "outside",
+          textfont: { color: INK.primary, size: 12 },
+          cliponaxis: false,
+          constraintext: "none",
+          hovertemplate: "<b>%{y:.2f}%</b>  %{x}<extra></extra>",
+        },
+      ],
+      layout: baseLayout({
+        hovermode: "closest",
+        xaxis: axis(undefined, { type: "category", showgrid: false, tickfont: { size: 11, color: INK.secondary } }),
+        yaxis: axis("VAF [%]", { range: [0, 110] }),
+      }),
     };
   }, [view]);
 
@@ -163,17 +186,17 @@ export function ValidationTab() {
           </TabsContent>
           <TabsContent value="histogram" className="min-h-0">
             <Panel title="Residual distribution with fitted normal" className="h-full" bodyClassName="p-1">
-              {histOption && <EChart option={histOption} />}
+              {histogram && <Plot data={histogram.data} layout={histogram.layout} uirevision={output ?? ""} />}
             </Panel>
           </TabsContent>
           <TabsContent value="acf" className="min-h-0">
             <Panel title="Residual autocorrelation (white residuals stay inside the bounds)" className="h-full" bodyClassName="p-1">
-              <StackedChart panels={acfPanels} xLabel="Lag" showSlider={false} />
+              <StackedChart panels={acfPanels} xLabel="Lag" />
             </Panel>
           </TabsContent>
           <TabsContent value="xcorr" className="min-h-0">
             <Panel title="Input-residual cross-correlation (should be near zero)" className="h-full" bodyClassName="p-1">
-              {xcorrPanels.length ? <StackedChart panels={xcorrPanels} xLabel="Lag" showSlider={false} /> : <EmptyState title="No inputs" />}
+              {xcorrPanels.length ? <StackedChart panels={xcorrPanels} xLabel="Lag" /> : <EmptyState title="No inputs" />}
             </Panel>
           </TabsContent>
           <TabsContent value="metrics" className="flex min-h-0 flex-col gap-3">
@@ -203,7 +226,7 @@ export function ValidationTab() {
               </Table>
             </Panel>
             <Panel title="Fit (VAF) per output" className="min-h-0 flex-1" bodyClassName="p-1">
-              {vafOption && <EChart option={vafOption} />}
+              {vaf && <Plot data={vaf.data} layout={vaf.layout} uirevision={model ?? ""} />}
             </Panel>
           </TabsContent>
         </Tabs>

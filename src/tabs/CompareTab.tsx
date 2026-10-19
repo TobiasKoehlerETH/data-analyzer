@@ -115,8 +115,8 @@ export function CompareTab() {
         id: s.signal,
         yLabel: `Δ ${s.signal}`,
         legend: true,
-        hLines: [{ y: 0, color: "#a5a5a5", dashed: true }],
-        series: s.traces.map((t) => ({ name: t.name, color: t.color, data: zip(t.x, t.y), width: 1.1 })),
+        hLines: [{ y: 0 }],
+        series: s.traces.map((t) => ({ name: t.name, color: t.color, data: zip(t.x, t.y) })),
       })),
     [diffs],
   );
@@ -152,7 +152,7 @@ export function CompareTab() {
               >
                 {i === 0 ? <Star className="size-3.5 fill-ap-red text-ap-red" /> : <span className="w-3.5" />}
                 <span className="h-2.5 w-2.5 shrink-0" style={{ background: f.color }} />
-                <span className="truncate" style={{ color: f.color }}>
+                <span className="truncate">
                   {f.short_name}
                 </span>
               </li>
@@ -212,7 +212,8 @@ export function CompareTab() {
               <p>Click on each file's trace to set its alignment point (overlay view).</p>
               <ul className="mt-1">
                 {state.files.map((f) => (
-                  <li key={f.id} style={{ color: f.color }}>
+                  <li key={f.id} className="flex items-center gap-1.5">
+                    <span className="size-2 shrink-0 rounded-full" style={{ background: f.color }} />
                     {f.short_name}: {clicks[f.id] !== undefined ? `t = ${clicks[f.id].toFixed(3)} s` : "—"}
                   </li>
                 ))}
@@ -287,7 +288,7 @@ export function CompareTab() {
         </Panel>
         {showDiff && diffPanels.length > 0 && (
           <Panel className="min-h-32 flex-[2]" bodyClassName="p-1">
-            <StackedChart panels={diffPanels} xLabel="Time [s]" showSlider={false} />
+            <StackedChart panels={diffPanels} xLabel="Time [s]" />
           </Panel>
         )}
         {showStats && (
@@ -329,7 +330,8 @@ export function CompareTab() {
               <TableRow>
                 <TableHead className="text-black">Signal</TableHead>
                 {state.files.map((f) => (
-                  <TableHead key={f.id} style={{ color: f.color }}>
+                  <TableHead key={f.id} className="text-black">
+                    <span className="mr-1.5 inline-block size-2 rounded-full" style={{ background: f.color }} />
                     {f.short_name}
                   </TableHead>
                 ))}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Download, RotateCcw } from "lucide-react";
-import { EChart } from "@/components/EChart";
+import { Plot } from "@/components/Plot";
 import { EmptyState, Panel } from "@/components/common";
 import { Button } from "@/components/ui/button";
 import { useApp } from "@/lib/store";
@@ -13,7 +13,7 @@ import {
   type PlotSelection,
   type Vectors,
 } from "@/lib/analysis";
-import { tooltipStyle, valueAxis, fmtG } from "@/lib/chart";
+import { INK, MARKER_SIZE, axis, baseLayout, esc, fmtG, seriesColor, wash } from "@/lib/chart";
 
 type Selection = PlotSelection | null;
 const finite = (v: unknown): v is number =>
@@ -52,8 +52,12 @@ export function StatisticsTab() {
   const [selection, setSelection] = useState<Selection>(null);
   const [error, setError] = useState("");
   const [bins, setBins] = useState(30);
+  const [loading, setLoading] = useState(false);
+  /** Bumping a chart's epoch clears its drawn selection box (another chart now owns the selection). */
+  const [epoch, setEpoch] = useState({ scatter: 0, row: 0, histogram: 0 });
   useEffect(() => {
-    setXColumn("__row");
+    // Default to a signal-vs-signal scatter; "by row" already shows the row view.
+    setXColumn(dataset?.signals[1]?.column ?? "__row");
     setYColumn(dataset?.signals[0]?.column ?? "");
     setSelection(null);
     setData(null);
@@ -64,7 +68,7 @@ export function StatisticsTab() {
     if (loadedRequest.current === requestKey && data) return;
     let cancelled = false;
     setError("");
-    setData(null);
+    setLoading(true);
     setSelection(null);
     analysisVectors([
       ...new Set([yColumn, ...(xColumn === "__row" ? [] : [xColumn])]),
@@ -74,6 +78,9 @@ export function StatisticsTab() {
       })
       .catch((e) => {
         if (!cancelled) setError(String(e));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
       });
     return () => {
       cancelled = true;
@@ -129,145 +136,109 @@ export function StatisticsTab() {
     selectedRows,
   ]);
   const charts = useMemo(() => {
-    const common = {
-      animation: false,
-      tooltip: { ...tooltipStyle, trigger: "item" },
-      grid: { left: 62, right: 22, top: 35, bottom: 42 },
-      xAxis: valueAxis({ scale: true }),
-      yAxis: valueAxis({ scale: true }),
-      brush: {
-        toolbox: ["rect", "lineX", "clear"],
-        xAxisIndex: "all",
-        brushMode: "single",
-        throttleType: "debounce",
-        throttleDelay: 150,
-      },
-      toolbox: { right: 70, top: 0 },
-    };
+    const accent = seriesColor(0);
     const step = Math.max(1, Math.ceil(y.length / 8000));
-    const scatter: any[] = [];
-    const rows: any[] = [];
+    const sx: number[] = [], sy: number[] = [], sc: string[] = [];
+    const rx: number[] = [], ry: number[] = [], rc: string[] = [];
     for (let i = 0; i < y.length; i += step) {
-      const color = selectedRows
-        ? selectedRows.has(i)
-          ? "#ff2400"
-          : "#d1d1d1"
-        : "#274259";
-      if (finite(y[i])) {
-        rows.push({ value: [i + 1, y[i]], itemStyle: { color } });
-        if (finite(x[i]))
-          scatter.push({ value: [x[i], y[i]], itemStyle: { color } });
-      }
+      const color = selectedRows && !selectedRows.has(i) ? INK.faded : accent;
+      if (!finite(y[i])) continue;
+      rx.push(i + 1); ry.push(y[i] as number); rc.push(color);
+      if (finite(x[i])) { sx.push(x[i] as number); sy.push(y[i] as number); sc.push(color); }
     }
+    const dense = (n: number) => (n > 3000 ? 0.45 : n > 800 ? 0.7 : 0.9);
+    const marker = (colors: string[]) => ({
+      color: colors,
+      size: MARKER_SIZE,
+      opacity: dense(colors.length),
+      line: { color: INK.surface, width: 1 },
+    });
+    const keep = { selected: { marker: { opacity: 1 } }, unselected: { marker: { opacity: 1 } } } as const;
+    const points = (xs: number[], ys: number[], colors: string[], xName: string) => ({
+      type: "scatter",
+      mode: "markers",
+      name: esc(yLabel),
+      x: xs,
+      y: ys,
+      marker: marker(colors),
+      ...keep,
+      hovertemplate: `<b>%{y:.6~g}</b>  ${esc(yLabel)}<br><span style="color:${INK.muted}">${esc(xName)} %{x:.6~g}</span><extra></extra>`,
+    });
     const allBins = histogram(y, bins);
     const yStats = summarize(y);
-    const selectedBins =
-      selectedRows && yStats.min !== null
-        ? histogram(selectedY, bins, [yStats.min, yStats.max!])
-        : [];
+    const selectedBins = selectedRows && yStats.min !== null ? histogram(selectedY, bins, [yStats.min, yStats.max!]) : [];
+    const binWidth = allBins.length > 1 ? allBins[1][0] - allBins[0][0] : 1;
+    const bar = (name: string, bins: [number, number][], color: string) => ({
+      type: "bar",
+      name,
+      x: bins.map((b) => b[0]),
+      y: bins.map((b) => b[1]),
+      width: binWidth,
+      marker: { color, cornerradius: 3, line: { color: INK.surface, width: 1 } },
+      ...keep,
+      hovertemplate: `<b>%{y}</b>  ${name.toLowerCase()} rows<br><span style="color:${INK.muted}">${esc(yLabel)} ≈ %{x:.4~g}</span><extra></extra>`,
+    });
     const boxRows = [
-      { name: "All", stats: yStats },
-      ...(selectedRows
-        ? [{ name: "Selected", stats: summarize(selectedY) }]
-        : []),
+      { name: "All", stats: yStats, color: selectedRows ? INK.muted : accent },
+      ...(selectedRows ? [{ name: "Selected", stats: summarize(selectedY), color: accent }] : []),
     ].filter((r) => r.stats.count > 0);
+    const selectLayout = (xTitle: string, yTitle: string | undefined, direction: "any" | "h") =>
+      baseLayout({
+        dragmode: "select",
+        selectdirection: direction,
+        hovermode: "closest",
+        newselection: { line: { color: INK.secondary, width: 1, dash: "solid" } },
+        activeselection: { fillcolor: accent, opacity: 0.08 },
+        margin: { l: 56, r: 12, t: 12, b: 44 },
+        xaxis: axis(xTitle),
+        yaxis: axis(yTitle),
+      });
     return {
-      scatter: {
-        ...common,
-        xAxis: valueAxis({
-          name: xLabel,
-          nameLocation: "middle",
-          nameGap: 26,
-          scale: true,
-        }),
-        yAxis: valueAxis({ scale: true }),
-        series: [
-          { type: "scatter", name: yLabel, symbolSize: 4, data: scatter },
-        ],
-      },
-      row: {
-        ...common,
-        xAxis: valueAxis({
-          name: "Row position",
-          nameLocation: "middle",
-          nameGap: 26,
-        }),
-        series: [{ type: "scatter", name: yLabel, symbolSize: 3, data: rows }],
-      },
+      scatter: { data: [points(sx, sy, sc, xLabel)], layout: selectLayout(xLabel, yLabel, "any") },
+      row: { data: [points(rx, ry, rc, "Row")], layout: selectLayout("Row position", yLabel, "h") },
       histogram: {
-        ...common,
-        brush: { ...common.brush, toolbox: ["lineX", "clear"] },
-        xAxis: valueAxis({
-          name: yLabel,
-          nameLocation: "middle",
-          nameGap: 26,
-          scale: true,
-        }),
-        yAxis: valueAxis({ name: "Count" }),
-        series: [
-          {
-            name: "All",
-            type: "bar",
-            data: allBins,
-            itemStyle: { color: "#a6b0b5" },
-            barGap: "-100%",
-          },
-          ...(selectedRows
-            ? [
-                {
-                  name: "Selected",
-                  type: "bar",
-                  data: selectedBins,
-                  itemStyle: { color: "#ff2400" },
-                },
-              ]
-            : []),
-        ],
+        data: [bar("All", allBins, selectedRows ? INK.faded : accent), ...(selectedRows ? [bar("Selected", selectedBins, accent)] : [])],
+        layout: { ...selectLayout(yLabel, "Count", "h"), barmode: "overlay", bargap: 0, showlegend: !!selectedRows },
       },
       box: {
-        animation: false,
-        tooltip: { ...tooltipStyle, trigger: "item" },
-        grid: { left: 62, right: 22, top: 20, bottom: 35 },
-        xAxis: { type: "category", data: boxRows.map((r) => r.name) },
-        yAxis: valueAxis({ scale: true }),
-        series: [
-          {
-            name: yLabel,
-            type: "boxplot",
-            data: boxRows.map(({ stats: s }) => [
-              s.min,
-              s.q1,
-              s.median,
-              s.q3,
-              s.max,
-            ]),
-            itemStyle: { color: "#ebedee", borderColor: "#274259" },
-          },
-        ],
+        data: boxRows.map((r) => ({
+          type: "box",
+          name: r.name,
+          x: [r.name],
+          q1: [r.stats.q1],
+          median: [r.stats.median],
+          q3: [r.stats.q3],
+          lowerfence: [r.stats.min],
+          upperfence: [r.stats.max],
+          width: 0.18,
+          line: { color: r.color, width: 2 },
+          fillcolor: wash(r.color),
+          hoverinfo: "y",
+        })),
+        layout: baseLayout({
+          hovermode: "closest",
+          margin: { l: 56, r: 12, t: 12, b: 32 },
+          xaxis: axis(undefined, { type: "category", showgrid: false, range: [-0.9, boxRows.length - 0.1], tickfont: { size: 12, color: INK.secondary } }),
+          yaxis: axis(yLabel),
+        }),
       },
     };
   }, [x, y, xLabel, yLabel, bins, selectedRows, selectedY]);
-  const brush = (kind: NonNullable<Selection>["kind"]) => (event: any) => {
-    const area = event.areas?.[0];
-    if (!area) {
-      setSelection(null);
-      return;
-    }
-    const range = area.coordRange;
-    if (!Array.isArray(range)) return;
-    const sorted = (v: number[]): [number, number] => [
-      Math.min(...v),
-      Math.max(...v),
-    ];
-    if (area.brushType === "rect")
-      setSelection({
-        kind,
-        x: sorted(range[0]),
-        ...(kind === "scatter" ? { y: sorted(range[1]) } : {}),
-      });
-    else if (area.brushType === "lineX")
-      setSelection({ kind, x: sorted(range) });
+  const select = (kind: NonNullable<Selection>["kind"]) => ({
+    selected: (event: { range?: { x?: number[]; y?: number[] } } | undefined) => {
+      const range = event?.range;
+      if (!range?.x) return;
+      const sorted = (v: number[]): [number, number] => [Math.min(...v), Math.max(...v)];
+      setEpoch((e) => Object.fromEntries(Object.entries(e).map(([k, v]) => [k, k === kind ? v : v + 1])) as typeof e);
+      setSelection({ kind, x: sorted(range.x), ...(kind === "scatter" && range.y ? { y: sorted(range.y) } : {}) });
+    },
+    deselect: () => setSelection((s) => (s?.kind === kind ? null : s)),
+  });
+  const clear = () => {
+    setSelection(null);
+    setEpoch((e) => ({ scatter: e.scatter + 1, row: e.row + 1, histogram: e.histogram + 1 }));
   };
+  const revision = `${dataset?.path}|${xColumn}|${yColumn}|${dataVersion}`;
   if (!dataset)
     return (
       <EmptyState title="No data loaded">
@@ -302,11 +273,11 @@ export function StatisticsTab() {
           size="sm"
           variant="outline"
           disabled={!selection}
-          onClick={() => setSelection(null)}
+          onClick={clear}
           title="Clear the linked selection"
         >
           <RotateCcw className="size-3.5" />
-          Reset
+          Clear selection
         </Button>
         <span className="pb-2 text-xs text-muted-foreground">
           {selectedRows
@@ -328,20 +299,12 @@ export function StatisticsTab() {
         <EmptyState title="Loading…" />
       ) : (
         <>
-          <div className="grid min-h-[420px] flex-1 grid-cols-2 grid-rows-2 gap-3">
-            <Panel title="Scatter" bodyClassName="p-1">
-              <EChart
-                option={charts.scatter}
-                onEvents={{ brushEnd: brush("scatter") }}
-                brushType="rect"
-              />
+          <div className={`grid min-h-[480px] flex-1 grid-cols-2 grid-rows-2 gap-3 transition-opacity ${loading ? "opacity-50" : ""}`}>
+            <Panel title={`${yLabel} vs ${xLabel}`} bodyClassName="p-1">
+              <Plot {...charts.scatter} select uirevision={`${revision}|${epoch.scatter}`} events={select("scatter")} />
             </Panel>
-            <Panel title="By row" bodyClassName="p-1">
-              <EChart
-                option={charts.row}
-                onEvents={{ brushEnd: brush("row") }}
-                brushType="lineX"
-              />
+            <Panel title={`${yLabel} by row`} bodyClassName="p-1">
+              <Plot {...charts.row} select uirevision={`${revision}|${epoch.row}`} events={select("row")} />
             </Panel>
             <Panel
               title="Distribution"
@@ -365,11 +328,7 @@ export function StatisticsTab() {
               }
               bodyClassName="p-1"
             >
-              <EChart
-                option={charts.histogram}
-                onEvents={{ brushEnd: brush("histogram") }}
-                brushType="lineX"
-              />
+              <Plot {...charts.histogram} select uirevision={`${revision}|${epoch.histogram}`} events={select("histogram")} />
             </Panel>
             <Panel
               title="Quartiles"
@@ -380,7 +339,11 @@ export function StatisticsTab() {
               }
               bodyClassName="p-1"
             >
-              <EChart option={charts.box} />
+              <Plot
+                {...charts.box}
+                uirevision={revision}
+                table={() => ({ columns: ["Scope", ...labels], rows: summary.filter((r) => r.name === yLabel).map((r) => [r.scope, ...fields.map((f) => r[f])]) })}
+              />
             </Panel>
           </div>
           <Panel

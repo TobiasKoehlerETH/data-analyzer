@@ -1,10 +1,10 @@
 # Data Analyzer
 
-A local desktop workspace for exploring numeric datasets, comparing measurements and fitting models. Built with Tauri, Rust, React and ECharts.
+A local desktop workspace for exploring numeric datasets, comparing measurements and fitting models. Built with Tauri, Rust, React and Plotly.
 
-![Data Analyzer statistics workspace showing column-to-column scatter, row plots, distributions and summary statistics](docs/images/data-analyzer.png)
+![Data Analyzer statistics workspace showing a column-to-column scatter with a box selection, row plot, distribution and quartiles linked to the selection, and summary statistics](docs/images/data-analyzer.png)
 
-*Statistics workspace with synthetic example data.*
+*Statistics workspace with the bundled bench-log sample (`samples/sample_run3.txt`) and a linked selection.*
 
 - Import CSV, delimited text and Excel files, with preview and format overrides.
 - Plot columns against row positions, time or another numeric column.
@@ -12,6 +12,8 @@ A local desktop workspace for exploring numeric datasets, comparing measurements
 - Explore linked scatter plots, distributions, row plots and summary statistics.
 - Compare files, apply filters, inspect spectra and correlations, identify state-space models, simulate and validate them.
 - Export reports, fit results and statistics.
+
+Every chart navigates the same way: drag to zoom (a horizontal drag zooms X only), scroll to zoom, double-click to reset. The toolbar above each chart adds Pan, **Previous view**, Reset, a data-table view with CSV export, and PNG export. Stacked plots share their X axis.
 
 See [the analysis guide](docs/analysis-workspaces.md) for fitting and linked selections.
 

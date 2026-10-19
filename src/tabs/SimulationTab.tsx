@@ -6,10 +6,8 @@ import { CheckField, EmptyState, Field, NumberInput, Panel, StatusText } from "@
 import { ModelSelect } from "@/components/ModelSelect";
 import { StackedChart, type ChartPanel } from "@/components/StackedChart";
 import { api, errorText, type SimulationView } from "@/lib/api";
-import { zip } from "@/lib/chart";
+import { seriesColor, zip } from "@/lib/chart";
 import { useApp } from "@/lib/store";
-
-const SIM_COLORS = ["#ff2400", "#6b7b84", "#4f7fa3", "#ff7a59", "#5c5c5c", "#b31a00"];
 
 export function SimulationTab() {
   const { dataset } = useApp();
@@ -47,8 +45,8 @@ export function SimulationTab() {
         yLabel: p.label,
         legend: true,
         series: [
-          { name: "Measured", color: "#274259", data: zip(p.measured.x, p.measured.y), width: 1.1 },
-          ...p.simulated.map((s, i) => ({ name: `Sim: ${s.model}`, color: SIM_COLORS[i % SIM_COLORS.length], data: zip(s.x, s.y), width: 1.5, dashed: true })),
+          { name: "Measured", color: seriesColor(0), data: zip(p.measured.x, p.measured.y) },
+          ...p.simulated.map((s, i) => ({ name: `Sim: ${s.model}`, color: seriesColor(i + 1), data: zip(s.x, s.y) })),
         ],
       })),
     [view],
@@ -79,7 +77,7 @@ export function SimulationTab() {
           <Eraser /> Clear
         </Button>
       </div>
-      <Panel className="min-h-0 flex-1" bodyClassName="p-1" title={view ? `Measured (solid) vs simulated (dashed) · ${view.models.join(", ")}` : "Measured vs simulated"}>
+      <Panel className="min-h-0 flex-1" bodyClassName="p-1" title={view ? `Measured vs simulated · ${view.models.join(", ")}` : "Measured vs simulated"}>
         {panels.length ? (
           <StackedChart panels={panels} xLabel="Time [s]" resetKey={view?.models.join("|")} />
         ) : (

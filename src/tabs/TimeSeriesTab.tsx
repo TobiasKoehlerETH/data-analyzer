@@ -8,10 +8,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { EmptyState, NumberInput, Panel } from "@/components/common";
 import { StackedChart, type ChartPanel } from "@/components/StackedChart";
 import { analysisVectors, type Vectors } from "@/lib/analysis";
-import { PALETTE, zip } from "@/lib/chart";
+import { PALETTE, seriesColor, zip } from "@/lib/chart";
 import { useApp } from "@/lib/store";
 
-const MAX_PLOTS = 8;
+/** One palette slot per signal, so colours never repeat. */
+const MAX_PLOTS = PALETTE.length;
 
 export function TimeSeriesTab() {
   const { dataset, dataVersion, activeTab } = useApp();
@@ -19,15 +20,19 @@ export function TimeSeriesTab() {
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [groups, setGroups] = useState<Record<string, number>>({});
+  /** Colour slot per signal, kept while it stays selected so other plots never repaint. */
+  const [slots, setSlots] = useState<Record<string, number>>({});
   const [data, setData] = useState<Vectors | null>(null);
   const [xColumn, setXColumn] = useState("__row");
   const [coord, setCoord] = useState("");
+  const [loading, setLoading] = useState(false);
   const xSignal = xColumn.startsWith("column:") ? xColumn.slice(7) : null;
 
   useEffect(() => {
     const initial = dataset?.signals.slice(0, 1).map((s) => s.column) ?? [];
     setSelected(initial);
     setGroups(Object.fromEntries(initial.map((c, i) => [c, i + 1])));
+    setSlots(Object.fromEntries(initial.map((c, i) => [c, i])));
     setXColumn("__row");
     setCoord("");
   }, [dataset?.path, dataset?.sheet]);
@@ -43,6 +48,18 @@ export function TimeSeriesTab() {
     const g: Record<string, number> = {};
     let next = Math.max(0, ...Object.values(groups)) + 1;
     for (const col of c) g[col] = groups[col] ?? Math.min(MAX_PLOTS, next++);
+    const used = new Set(c.filter((col) => slots[col] !== undefined).map((col) => slots[col]));
+    const s: Record<string, number> = {};
+    for (const col of c) {
+      if (slots[col] !== undefined) s[col] = slots[col];
+      else {
+        let k = 0;
+        while (used.has(k)) k++;
+        used.add(k);
+        s[col] = k;
+      }
+    }
+    setSlots(s);
     setGroups(g);
     setSelected(c);
   };
@@ -56,7 +73,8 @@ export function TimeSeriesTab() {
     const requestKey = JSON.stringify([dataset.path, dataset.sheet, dataVersion, selected, xSignal]);
     if (loadedRequest.current === requestKey && data) return;
     let cancelled = false;
-    setData(null);
+    // Keep the previous plot on screen (dimmed) while the new vectors load.
+    setLoading(true);
     const columns = [
       ...new Set([...selected, ...(xSignal !== null ? [xSignal] : [])]),
     ];
@@ -66,6 +84,9 @@ export function TimeSeriesTab() {
       })
       .catch((e) => {
         if (!cancelled) toast.error(String(e));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
       });
     return () => {
       cancelled = true;
@@ -101,25 +122,23 @@ export function TimeSeriesTab() {
 
   const panels: ChartPanel[] = useMemo(() => {
     if (!data || !dataset) return [];
-    let ci = 0;
-    return byGroup.map(([g, cols]) => ({
+    return byGroup.filter(([, cols]) => cols.some((c) => data.columns[c])).map(([g, cols]) => ({
       id: String(g),
       yLabel:
         cols.length === 1
           ? dataset.signals.find((s) => s.column === cols[0])?.label
           : undefined,
-      legend: cols.length > 1,
       series: cols.map((c) => {
         const y = data.columns[c];
         return {
           name: dataset.signals.find((s) => s.column === c)?.label ?? c,
-          color: PALETTE[ci++ % PALETTE.length],
+          color: seriesColor(slots[c] ?? 0),
           data: y ? zip(x, y) : [],
           type: xSignal === null ? ("line" as const) : ("scatter" as const),
         };
       }),
     }));
-  }, [data, byGroup, dataset, x, xSignal]);
+  }, [data, byGroup, dataset, x, xSignal, slots]);
 
   const grouped = useMemo(() => {
     const m = new Map<
@@ -227,6 +246,9 @@ export function TimeSeriesTab() {
                       }
                     />
                     <span className="flex-1 truncate">{s.name}</span>
+                    {selected.includes(s.column) && (
+                      <span className="h-0.5 w-3 shrink-0 rounded-full" style={{ background: seriesColor(slots[s.column] ?? 0) }} aria-hidden />
+                    )}
                     <span className="text-[11px] text-muted-foreground">
                       {s.unit}
                     </span>
@@ -299,7 +321,7 @@ export function TimeSeriesTab() {
             ))}
           </div>
         )}
-        <Panel className="min-h-0 flex-1" bodyClassName="p-1">
+        <Panel className={`min-h-0 flex-1 transition-opacity ${loading ? "opacity-60" : ""}`} bodyClassName="p-1">
           {selected.length === 0 ? (
             <EmptyState title="Select signals from the panel on the left to plot." />
           ) : (

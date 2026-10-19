@@ -8,7 +8,7 @@ import { EmptyState, Field, NumberInput, Panel, StatusText } from "@/components/
 import { SignalSelect } from "@/components/SignalSelect";
 import { StackedChart, type ChartPanel, type ChartSeries } from "@/components/StackedChart";
 import { api, errorText, JSON_FILTERS, type FilterChain, type FilterPreview, type FilterStep, type FilterType, type Suggestion } from "@/lib/api";
-import { zip } from "@/lib/chart";
+import { INK, seriesColor, zip } from "@/lib/chart";
 import { defaultStep, describeStep, FILTER_TYPES, filterTitle, paramDefs } from "@/lib/filters";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -81,9 +81,11 @@ export function FilterTab() {
 
   const panels: ChartPanel[] = useMemo(() => {
     if (!preview) return [];
-    const series: ChartSeries[] = [{ name: "Original", color: "#6b7b84", data: zip(preview.x, preview.original), width: 1 }];
-    if (preview.filtered) series.push({ name: "Filtered", color: "#ff2400", data: zip(preview.x, preview.filtered), width: 1.6 });
-    if (preview.draft) series.push({ name: "With new filter", color: "#274259", data: zip(preview.x, preview.draft), width: 1.3, dashed: true });
+    // The original recedes to gray so the edited signal carries the emphasis.
+    const edited = !!(preview.filtered || preview.draft);
+    const series: ChartSeries[] = [{ name: "Original", color: edited ? INK.muted : seriesColor(0), data: zip(preview.x, preview.original) }];
+    if (preview.filtered) series.push({ name: "Filtered", color: seriesColor(0), data: zip(preview.x, preview.filtered) });
+    if (preview.draft) series.push({ name: "With new filter", color: seriesColor(1), data: zip(preview.x, preview.draft) });
     return [{ id: "p", yLabel: dataset?.signals.find((s) => s.column === column)?.label ?? "Value", legend: true, series }];
   }, [preview, dataset, column]);
 

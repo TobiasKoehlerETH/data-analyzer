@@ -18,11 +18,15 @@ Fits remain available for comparison while the toolbox is open. **Add to plot** 
 
 ## Statistics
 
-Choose X and Y, then drag a rectangle in Scatter or an X interval in By row or Distribution. All views highlight matching rows; the summary compares the selection with the full data. **Reset** clears it. Scatter previews are limited to approximately 8,000 points; selection and statistics use complete vectors, including rows that are not rendered.
+Choose X and Y, then drag a rectangle in the scatter plot or an X interval in By row or Distribution. All views highlight matching rows and fade the rest; the summary compares the selection with the full data. **Clear selection** removes it. Switch a chart's toolbar to Zoom or Pan to navigate instead of selecting. Scatter previews are limited to approximately 8,000 points; selection and statistics use complete vectors, including rows that are not rendered.
 
 Summary statistics include count, missing values, mean, sample standard deviation, minimum, quartiles, maximum and IQR. Quartiles use linear interpolation. Boxplot whiskers show the actual minimum and maximum. Use the download button to export the summary as CSV.
 
 ## Navigation
+
+Charts share one set of controls. Drag to zoom: a rectangle zooms both axes, while a mostly horizontal drag zooms X only. Scroll to zoom around the pointer and double-click to reset. The toolbar offers Zoom, Pan, **Previous view** (steps back through earlier zooms), Reset, **Show data as table** (with CSV download) and PNG export. Stacked panels keep a common X axis. Long signals are decimated per pixel column (minimum and maximum kept), and are re-decimated after each zoom, so peaks remain visible.
+
+Charts follow one visual system: a validated categorical palette led by A+P red, a blue-to-red diverging scale with a neutral midpoint for correlations, 2px lines, ringed markers, hairline grids and a legend whenever a chart shows two or more series. Report figures use the same palette and styling.
 
 Use **Ctrl+PageUp** and **Ctrl+PageDown** to switch workspaces. Workspaces load on first use and retain their controls and results. Hidden charts pause rendering; returning to Data Plots or Statistics reuses loaded vectors until the data or selected columns change. Transitions respect the system's reduced-motion preference.
 

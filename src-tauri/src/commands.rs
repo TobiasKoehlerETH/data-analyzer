@@ -1161,7 +1161,6 @@ pub fn compare_series(state: AppStateRef<'_>, signals: Vec<String>, range: Optio
 #[tauri::command]
 pub fn compare_differences(state: AppStateRef<'_>, signals: Vec<String>, max_points: usize) -> Vec<CompareSignalSeries> {
     let c = state.compare.lock().unwrap();
-    let diff_colors = ["#ff2400", "#274259", "#6b7b84", "#5c5c5c", "#ff7a59"];
     let Some(ref_id) = c.file_order.first().cloned() else { return vec![] };
     signals
         .iter()
@@ -1171,11 +1170,11 @@ pub fn compare_differences(state: AppStateRef<'_>, signals: Vec<String>, max_poi
                 .file_order
                 .iter()
                 .skip(1)
-                .enumerate()
-                .filter_map(|(i, fid)| {
+                .filter_map(|fid| {
                     let (t, d) = c.compute_difference(sig, &ref_id, fid)?;
                     let (x, y) = minmax(&t, &d, 0, t.len(), max_points.max(100));
-                    Some(CompareTrace { file_id: fid.clone(), name: c.files[fid].short_name.clone(), color: diff_colors[i % diff_colors.len()].into(), x, y })
+                    // Each difference keeps its file's colour so identity never changes between views.
+                    Some(CompareTrace { file_id: fid.clone(), name: c.files[fid].short_name.clone(), color: c.files[fid].color.clone(), x, y })
                 })
                 .collect(),
         })
@@ -1229,10 +1228,9 @@ fn build_report(st: &AppState, sections: &[String], app: &AppHandle) -> CmdResul
                     .columns()
                     .iter()
                     .take(3)
-                    .enumerate()
-                    .filter_map(|(k, col)| {
+                    .filter_map(|col| {
                         let y = d.get_signal(col)?;
-                        Some(Panel { series: vec![Series { width: 0.9, ..Series::line(d.label(col), REPORT_PALETTE[k % REPORT_PALETTE.len()], d.time.to_vec(), y.to_vec()) }], ylabel: d.short_name(col), ..Default::default() })
+                        Some(Panel { series: vec![Series::line(d.label(col), REPORT_PALETTE[0], d.time.to_vec(), y.to_vec())], ylabel: d.short_name(col), ..Default::default() })
                     })
                     .collect();
                 if !panels.is_empty() {
@@ -1251,11 +1249,10 @@ fn build_report(st: &AppState, sections: &[String], app: &AppHandle) -> CmdResul
                     let start = gi * 4;
                     let panels: Vec<Panel> = batch
                         .iter()
-                        .enumerate()
-                        .filter_map(|(k, col)| {
+                        .filter_map(|col| {
                             let y = d.get_signal(col)?;
                             Some(Panel {
-                                series: vec![Series { width: 0.8, ..Series::line(d.label(col), REPORT_PALETTE[(start + k) % REPORT_PALETTE.len()], d.time.to_vec(), y.to_vec()) }],
+                                series: vec![Series::line(d.label(col), REPORT_PALETTE[0], d.time.to_vec(), y.to_vec())],
                                 ylabel: d.label(col),
                                 ..Default::default()
                             })
@@ -1296,8 +1293,8 @@ fn build_report(st: &AppState, sections: &[String], app: &AppHandle) -> CmdResul
                         let label = d.short_name(out);
                         let panel = Panel {
                             series: vec![
-                                Series::line("Measured", "#111419", r.time.clone(), meas.clone()),
-                                Series::line("Simulated", "#c41230", r.time.clone(), sim.clone()).dashed(),
+                                Series::line("Measured", REPORT_PALETTE[0], r.time.clone(), meas.clone()),
+                                Series::line("Simulated", REPORT_PALETTE[1], r.time.clone(), sim.clone()),
                             ],
                             ylabel: label.clone(),
                             legend: true,
@@ -1317,9 +1314,9 @@ fn build_report(st: &AppState, sections: &[String], app: &AppHandle) -> CmdResul
                         let m = &a.metrics;
                         let xs: Vec<f64> = (0..a.residuals.len()).map(|i| i as f64).collect();
                         let panel = Panel {
-                            series: vec![Series { width: 0.7, ..Series::line("Residual", "#111419", xs, a.residuals.clone()) }],
+                            series: vec![Series::line("Residual", REPORT_PALETTE[0], xs, a.residuals.clone())],
                             ylabel: "Residual".into(),
-                            hlines: vec![(0.0, "#a5a5a5".into(), true)],
+                            hlines: vec![0.0],
                             title: Some(format!("Residuals: {label}")),
                             ..Default::default()
                         };

@@ -1,17 +1,14 @@
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { WorkspaceActive } from "@/lib/workspace";
-import type * as echarts from "echarts";
-import { EChart, type EChartsInstance } from "./EChart";
-import { AXIS_COLOR, FONT, MUTED, baseTextStyle, tooltipStyle, valueAxis } from "@/lib/chart";
+import { Plot, type PlotElement, type PlotTable } from "./Plot";
+import { INK, LINE_WIDTH, MARKER_SIZE, axis, baseLayout, decimate, esc, hoverValue, type Figure } from "@/lib/chart";
 
 export interface ChartSeries {
   name: string;
   color: string;
   data: [number | null, number | null][];
   dashed?: boolean;
-  width?: number;
   type?: "line" | "scatter" | "bar";
-  symbolSize?: number;
 }
 
 export interface ChartPanel {
@@ -19,11 +16,14 @@ export interface ChartPanel {
   yLabel?: string;
   title?: string;
   series: ChartSeries[];
+  /** Defaults to on for two or more series; a single series is named by the panel instead. */
   legend?: boolean;
-  /** Horizontal reference lines */
-  hLines?: { y: number; color: string; dashed?: boolean; label?: string }[];
-  /** Vertical marker lines */
-  vLines?: { x: number; color: string; dashed?: boolean; label?: string }[];
+  /** Horizontal reference lines (zero lines, confidence bounds). */
+  hLines?: { y: number; label?: string }[];
+  /** Vertical marker lines; at most one may be draggable. */
+  vLines?: { x: number; label?: string; draggable?: boolean }[];
+  /** Highlighted points (e.g. peaks), most important first; labels are thinned so they never collide. */
+  points?: { x: number; y: number; label: string }[];
   yLog?: boolean;
 }
 
@@ -37,20 +37,19 @@ export interface StackedChartProps {
   onZoom?: (range: [number, number] | null) => void;
   onCursor?: (x: number) => void;
   onClick?: (panelIndex: number, x: number, y: number) => void;
+  /** Called while the draggable vertical line moves. */
+  onDragLine?: (x: number) => void;
   /** Changing this key resets the zoom. */
   resetKey?: string | number;
-  showSlider?: boolean;
   tooltip?: boolean;
-  /** Pan with mouse drag (disable when the chart has draggable elements). */
-  panOnDrag?: boolean;
   className?: string;
-  onReady?: (chart: EChartsInstance) => void;
 }
 
-const LEFT = 78;
-const RIGHT = 18;
-const TOP = 30;
-const GAP = 18;
+const GAP = 26;
+const HEADER = 20;
+const MAX_POINTS = 4000;
+
+const axisId = (i: number) => (i === 0 ? "" : String(i + 1));
 
 export function StackedChart({
   panels,
@@ -60,26 +59,20 @@ export function StackedChart({
   onZoom,
   onCursor,
   onClick,
+  onDragLine,
   resetKey,
-  showSlider = true,
   tooltip = true,
-  panOnDrag = true,
   className,
-  onReady,
 }: StackedChartProps) {
   const active = useContext(WorkspaceActive);
   const host = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 800, h: 400 });
-  const zoom = useRef<{ start: number; end: number }>({ start: 0, end: 100 });
+  const [view, setView] = useState<[number, number] | null>(null);
   const zoomTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const cursorTimer = useRef(0);
-  const cbs = useRef({ onZoom, onCursor, onClick });
-  cbs.current = { onZoom, onCursor, onClick };
-  const chartRef = useRef<EChartsInstance | null>(null);
+  const cbs = useRef({ onZoom, onCursor, onClick, onDragLine });
+  cbs.current = { onZoom, onCursor, onClick, onDragLine };
 
-  useEffect(() => {
-    zoom.current = { start: 0, end: 100 };
-  }, [resetKey]);
+  useEffect(() => setView(null), [resetKey]);
 
   useEffect(() => {
     if (!host.current || !active) return;
@@ -92,222 +85,261 @@ export function StackedChart({
 
   const n = panels.length;
   const rows = Math.max(1, Math.ceil(n / columns));
-  const bottom = showSlider ? 66 : 40;
-  const panelH = Math.max(40, (size.h - TOP - bottom - GAP * (rows - 1)) / rows);
-  const colW = (size.w - GAP * (columns - 1)) / columns;
+  const scatterOnly = panels.some((p) => p.series.some((s) => s.type === "scatter"));
+  const draggable = panels.some((p) => p.vLines?.some((v) => v.draggable));
+  const target = Math.max(600, Math.round((size.w / columns) * 2));
+  const config = useMemo(() => (draggable ? { edits: { shapePosition: true } } : undefined), [draggable]);
 
-  const option = useMemo<echarts.EChartsCoreOption>(() => {
-    const grids: object[] = [];
-    const xAxes: object[] = [];
-    const yAxes: object[] = [];
-    const series: object[] = [];
-    const legends: object[] = [];
-    const titles: object[] = [];
+  const figure = useMemo(() => {
+    const data: Figure[] = [];
+    const shapes: Figure[] = [];
+    const annotations: Figure[] = [];
+    const layout: Figure = {};
+    const legends: Figure = {};
+    const top = 8;
+    const bottom = 44;
+    const usable = Math.max(60, size.h - top - bottom);
+    const rowHeaders: number[] = Array.from({ length: rows }, (_, r) =>
+      panels.slice(r * columns, r * columns + columns).some((p) => p.title || legendOn(p)) ? HEADER : 0,
+    );
+    const plotH = (usable - GAP * (rows - 1) - rowHeaders.reduce((a, b) => a + b, 0)) / rows;
+    const colGap = columns > 1 ? 0.04 : 0;
+    const colW = (1 - colGap * (columns - 1)) / columns;
+
     panels.forEach((p, i) => {
       const row = Math.floor(i / columns);
       const col = i % columns;
-      const top = TOP + row * (panelH + GAP);
-      const left = col * (colW + GAP) + LEFT;
-      const width = colW - LEFT - RIGHT;
+      const id = axisId(i);
+      const above = rowHeaders.slice(0, row + 1).reduce((a, b) => a + b, 0) + row * (plotH + GAP);
+      const y1 = 1 - above / usable;
+      const y0 = Math.max(0, y1 - plotH / usable);
+      const x0 = col * (colW + colGap);
       const lastRow = row === rows - 1 || i + columns >= n;
-      grids.push({ left, top, width: Math.max(40, width), height: panelH, containLabel: false });
-      xAxes.push(
-        valueAxis({
-          gridIndex: i,
-          scale: false,
-          min: xRange ? xRange[0] : "dataMin",
-          max: xRange ? xRange[1] : "dataMax",
-          axisLabel: { show: lastRow, color: MUTED, fontSize: 10.5, fontFamily: FONT, hideOverlap: true },
-          name: lastRow ? xLabel : undefined,
-          nameLocation: "middle",
-          nameGap: 24,
-        }),
-      );
-      const yl = p.yLabel ? (p.yLabel.length > 30 ? p.yLabel.slice(0, 29) + "…" : p.yLabel) : undefined;
-      yAxes.push(
-        valueAxis({
-          gridIndex: i,
-          type: p.yLog ? "log" : "value",
-          scale: !p.yLog,
-          name: yl,
-          nameLocation: "middle",
-          nameGap: 56,
-          nameRotate: 90,
-          axisLabel: {
-            color: MUTED,
-            fontSize: 10.5,
-            fontFamily: FONT,
-            formatter: (v: number) => {
-              const a = Math.abs(v);
-              return a !== 0 && (a >= 1e5 || a < 1e-3) ? v.toExponential(1) : String(Number(v.toPrecision(6)));
-            },
-          },
-        }),
-      );
-      if (p.title) {
-        titles.push({ text: p.title, left: left + width, top: top - 16, textAlign: "right", textStyle: { fontSize: 11, fontWeight: 400, color: "#000", fontFamily: FONT } });
-      }
-      p.series.forEach((s, si) => {
-        const markLine =
-          si === 0 && ((p.hLines?.length ?? 0) > 0 || (p.vLines?.length ?? 0) > 0)
-            ? {
-                silent: true,
-                symbol: "none",
-                animation: false,
-                data: [
-                  ...(p.hLines ?? []).map((h) => ({
-                    yAxis: h.y,
-                    lineStyle: { color: h.color, type: h.dashed ? "dashed" : "solid", width: 1 },
-                    label: { show: !!h.label, formatter: h.label ?? "", color: h.color, fontSize: 10, position: "insideEndTop" },
-                  })),
-                  ...(p.vLines ?? []).map((v) => ({
-                    xAxis: v.x,
-                    lineStyle: { color: v.color, type: v.dashed ? "dotted" : "solid", width: 1 },
-                    label: { show: !!v.label, formatter: v.label ?? "", color: v.color, fontSize: 10, position: "insideEndTop" },
-                  })),
-                ],
-              }
-            : undefined;
-        const type = s.type ?? "line";
-        series.push({
-          type,
-          name: s.name,
-          xAxisIndex: i,
-          yAxisIndex: i,
-          data: s.data,
-          showSymbol: type === "scatter",
-          symbolSize: s.symbolSize ?? 3,
-          animation: false,
-          connectNulls: false,
-          sampling: type === "line" ? "lttb" : undefined,
-          large: type === "scatter",
-          barWidth: type === "bar" ? "70%" : undefined,
-          itemStyle: { color: s.color },
-          lineStyle: { color: s.color, width: s.width ?? 1.3, type: s.dashed ? "dashed" : "solid" },
-          emphasis: { disabled: true },
-          markLine,
-        });
+      layout[`xaxis${id}`] = axis(lastRow ? xLabel : undefined, {
+        domain: [x0, x0 + colW],
+        anchor: `y${id}`,
+        matches: i === 0 ? undefined : "x",
+        showticklabels: lastRow,
+        range: xRange ?? undefined,
+        autorange: xRange ? undefined : true,
+        showspikes: tooltip && !scatterOnly,
+        spikemode: "across",
+        spikesnap: "cursor",
+        spikecolor: INK.muted,
+        spikethickness: 1,
+        spikedash: "solid",
       });
-      if (p.legend && p.series.length > 0) {
-        legends.push({
-          data: p.series.map((s) => s.name),
-          top: top + 4,
-          left: left + 10,
-          itemWidth: 16,
-          itemHeight: 6,
-          textStyle: { fontSize: 10.5, fontFamily: FONT },
-          backgroundColor: "rgba(255,255,255,0.8)",
+      const yl = p.yLabel ? (p.yLabel.length > 32 ? p.yLabel.slice(0, 31) + "…" : p.yLabel) : undefined;
+      layout[`yaxis${id}`] = axis(yl, {
+        domain: [y0, y1],
+        anchor: `x${id}`,
+        type: p.yLog ? "log" : "linear",
+        exponentformat: p.yLog ? "power" : undefined,
+        dtick: p.yLog ? 1 : undefined,
+      });
+      if (p.title) {
+        annotations.push({
+          text: esc(p.title),
+          xref: "paper",
+          yref: "paper",
+          x: x0 + colW,
+          y: y1,
+          xanchor: "right",
+          yanchor: "bottom",
+          showarrow: false,
+          font: { size: 12, color: INK.secondary },
         });
       }
-    });
-    const allX = panels.map((_, i) => i);
-    return {
-      animation: false,
-      textStyle: baseTextStyle,
-      grid: grids,
-      xAxis: xAxes,
-      yAxis: yAxes,
-      series,
-      legend: legends,
-      title: titles,
-      axisPointer: { link: [{ xAxisIndex: "all" }], lineStyle: { color: "#a5a5a5", type: "dashed" }, label: { backgroundColor: "#274259", fontFamily: FONT } },
-      tooltip: tooltip
-        ? {
-            trigger: "axis",
-            confine: true,
-            ...tooltipStyle,
-            axisPointer: { type: "line", animation: false },
-            valueFormatter: (v: unknown) => (typeof v === "number" ? (Math.abs(v) >= 1e5 || (Math.abs(v) < 1e-3 && v !== 0) ? v.toExponential(3) : v.toFixed(4)) : String(v)),
-          }
-        : undefined,
-      toolbox: {
-        right: 12,
-        top: 2,
-        itemSize: 13,
-        iconStyle: { borderColor: "#5c5c5c" },
-        emphasis: { iconStyle: { borderColor: "#ff2400" } },
-        feature: {
-          dataZoom: { xAxisIndex: allX, yAxisIndex: false, title: { zoom: "Box zoom", back: "Undo zoom" } },
-          restore: { title: "Reset view" },
-          saveAsImage: { title: "Save image", pixelRatio: 2, backgroundColor: "#fff", name: "plot" },
-        },
-      },
-      dataZoom: [
-        { type: "inside", xAxisIndex: allX, filterMode: "none", moveOnMouseMove: panOnDrag, start: zoom.current.start, end: zoom.current.end },
-        ...(showSlider
-          ? [
-              {
-                type: "slider",
-                xAxisIndex: allX,
-                filterMode: "none",
-                height: 16,
-                bottom: 6,
-                start: zoom.current.start,
-                end: zoom.current.end,
-                borderColor: "#d9dcde",
-                fillerColor: "rgba(255,36,0,0.08)",
-                handleStyle: { color: "#fff", borderColor: "#ff2400" },
-                moveHandleStyle: { color: "#ff2400" },
-                dataBackground: { lineStyle: { color: "#a6b0b5" }, areaStyle: { color: "#ebedee" } },
-                textStyle: { fontSize: 10, fontFamily: FONT, color: MUTED },
-                labelFormatter: (v: number) => Number(v.toPrecision(5)).toString(),
-              },
-            ]
-          : []),
-      ],
-      color: [AXIS_COLOR],
-    };
-  }, [panels, columns, xLabel, xRange, panelH, colW, rows, n, showSlider, tooltip, panOnDrag]);
-
-  const events = useMemo(
-    () => ({
-      datazoom: (_: unknown, chart: EChartsInstance) => {
-        const dz = (chart.getOption() as { dataZoom?: { start: number; end: number }[] }).dataZoom?.[0];
-        if (!dz) return;
-        zoom.current = { start: dz.start, end: dz.end };
-        if (!cbs.current.onZoom) return;
-        clearTimeout(zoomTimer.current);
-        zoomTimer.current = setTimeout(() => {
-          const full = dz.start <= 0.001 && dz.end >= 99.999;
-          if (full) {
-            cbs.current.onZoom?.(null);
-          } else if (xRange) {
-            const span = xRange[1] - xRange[0];
-            cbs.current.onZoom?.([xRange[0] + (span * dz.start) / 100, xRange[0] + (span * dz.end) / 100]);
-          }
-        }, 140);
-      },
-      updateAxisPointer: (p: { axesInfo?: { axisDim: string; value: number }[] }) => {
-        const xInfo = p.axesInfo?.find((a) => a.axisDim === "x");
-        if (!xInfo || !cbs.current.onCursor) return;
-        const now = performance.now();
-        if (now - cursorTimer.current < 40) return;
-        cursorTimer.current = now;
-        cbs.current.onCursor(xInfo.value);
-      },
-    }),
-    [xRange],
-  );
-
-  const handleReady = (chart: EChartsInstance) => {
-    chartRef.current = chart;
-    chart.getZr().on("click", (e: { offsetX: number; offsetY: number }) => {
-      if (!cbs.current.onClick) return;
-      const count = (chart.getOption() as { grid?: unknown[] }).grid?.length ?? 0;
-      for (let i = 0; i < count; i++) {
-        if (chart.containPixel({ gridIndex: i }, [e.offsetX, e.offsetY])) {
-          const [x, y] = chart.convertFromPixel({ gridIndex: i }, [e.offsetX, e.offsetY]) as number[];
-          cbs.current.onClick(i, x, y);
-          return;
-        }
+      const legendKey = i === 0 ? "legend" : `legend${i + 1}`;
+      if (legendOn(p)) {
+        legends[legendKey] = {
+          ...baseLayout().legend,
+          x: x0,
+          y: y1,
+          yanchor: "bottom",
+          xref: "paper",
+          yref: "paper",
+        };
       }
+      for (const h of p.hLines ?? []) {
+        shapes.push({ type: "line", xref: `x${id} domain`, x0: 0, x1: 1, yref: `y${id}`, y0: h.y, y1: h.y, line: { color: INK.axis, width: 1 }, layer: "below" });
+        if (h.label) annotations.push({ text: esc(h.label), xref: `x${id} domain`, yref: `y${id}`, x: 1, y: h.y, xanchor: "right", yanchor: "bottom", showarrow: false, font: { size: 11, color: INK.secondary } });
+      }
+      for (const v of p.vLines ?? []) {
+        shapes.push({
+          type: "line",
+          xref: `x${id}`,
+          x0: v.x,
+          x1: v.x,
+          yref: `y${id} domain`,
+          y0: 0,
+          y1: 1,
+          line: { color: v.draggable ? INK.primary : INK.muted, width: v.draggable ? 2 : 1 },
+          layer: v.draggable ? "above" : "below",
+        });
+        if (v.label)
+          annotations.push({
+            text: esc(v.label),
+            xref: `x${id}`,
+            yref: `y${id} domain`,
+            x: v.x,
+            y: 1,
+            xanchor: "left",
+            yanchor: "top",
+            xshift: 3,
+            showarrow: false,
+            bgcolor: "rgba(255,255,255,0.85)",
+            font: { size: 11, color: INK.secondary },
+          });
+      }
+      if (p.points?.length) {
+        const xs = p.series.flatMap((s) => s.data.map((d) => d[0])).filter((v): v is number => v !== null);
+        const span = xs.length ? Math.max(...xs) - Math.min(...xs) || 1 : 1;
+        const labelled: number[] = [];
+        for (const pt of p.points) {
+          if (labelled.length >= 5 || labelled.some((x) => Math.abs(x - pt.x) < span * 0.06)) continue;
+          labelled.push(pt.x);
+          annotations.push({
+            text: esc(pt.label),
+            xref: `x${id}`,
+            yref: `y${id}`,
+            x: pt.x,
+            y: p.yLog ? Math.log10(pt.y) : pt.y,
+            yanchor: "bottom",
+            yshift: 6,
+            showarrow: false,
+            font: { size: 11, color: INK.secondary },
+          });
+        }
+        data.push({
+          type: "scatter",
+          mode: "markers",
+          name: "Peaks",
+          xaxis: `x${id}`,
+          yaxis: `y${id}`,
+          x: p.points.map((pt) => pt.x),
+          y: p.points.map((pt) => pt.y),
+          showlegend: false,
+          marker: { color: INK.primary, size: MARKER_SIZE, line: { color: INK.surface, width: 2 } },
+          hovertemplate: tooltip ? `<b>%{x:.4~g}</b>  peak<extra></extra>` : undefined,
+        });
+      }
+      p.series.forEach((s) => {
+        const type = s.type ?? "line";
+        const xs = s.data.map((d) => d[0]);
+        const ys = s.data.map((d) => d[1]);
+        const common = {
+          name: esc(s.name),
+          xaxis: `x${id}`,
+          yaxis: `y${id}`,
+          legend: legendKey,
+          showlegend: legendOn(p),
+          hovertemplate: tooltip ? hoverValue(s.name, xLabel) : undefined,
+          hoverinfo: tooltip ? undefined : "skip",
+        };
+        if (type === "bar") {
+          data.push({ ...common, type: "bar", x: xs, y: ys, marker: { color: s.color, cornerradius: 4, line: { color: INK.surface, width: 1 } } });
+        } else if (type === "scatter") {
+          data.push({
+            ...common,
+            type: "scatter",
+            mode: "markers",
+            x: xs,
+            y: ys,
+            marker: { color: s.color, size: MARKER_SIZE, opacity: xs.length > 1500 ? 0.55 : 0.9, line: { color: INK.surface, width: 1 } },
+          });
+        } else {
+          const d = decimate(xs, ys, Math.max(MAX_POINTS, target), view);
+          data.push({
+            ...common,
+            type: "scatter",
+            mode: "lines",
+            x: d.x,
+            y: d.y,
+            connectgaps: false,
+            line: { color: s.color, width: LINE_WIDTH, dash: s.dashed ? "dash" : "solid", shape: "linear" },
+          });
+        }
+      });
     });
-    onReady?.(chart);
+    const full: Figure = {
+      ...layout,
+      ...legends,
+      showlegend: Object.keys(legends).length > 0,
+      shapes,
+      annotations,
+      margin: { l: 64, r: 16, t: top, b: bottom, pad: 0 },
+      hovermode: !tooltip ? false : scatterOnly ? "closest" : "x unified",
+      bargap: 0.08,
+    };
+    return { data, layout: full };
+  }, [panels, columns, rows, n, size, xLabel, xRange, tooltip, scatterOnly, view, target]);
+
+  const table = (): PlotTable => {
+    const out: PlotTable = { columns: ["Panel", "Series", xLabel ?? "X", "Y"], rows: [] };
+    for (const p of panels) for (const s of p.series) for (const [x, y] of s.data) if (y !== null) out.rows.push([p.yLabel ?? p.title ?? "", s.name, x, y]);
+    return out;
+  };
+
+  const events = {
+    relayout: (e: Record<string, any>) => {
+      const shapeKey = Object.keys(e).find((k) => /^shapes\[\d+\]\.x0$/.test(k));
+      if (shapeKey) {
+        cbs.current.onDragLine?.(Number(e[shapeKey]));
+        return;
+      }
+      let range: [number, number] | null | undefined;
+      for (const [k, v] of Object.entries(e)) {
+        if (/^xaxis\d*\.autorange$/.test(k) && v) range = null;
+        else if (/^xaxis\d*\.range\[0\]$/.test(k)) range = [Number(v), Number(e[k.replace("[0]", "[1]")])];
+        else if (/^xaxis\d*\.range$/.test(k) && Array.isArray(v)) range = [Number(v[0]), Number(v[1])];
+      }
+      if (range === undefined) return;
+      clearTimeout(zoomTimer.current);
+      zoomTimer.current = setTimeout(() => {
+        setView(range);
+        cbs.current.onZoom?.(range);
+      }, 140);
+    },
+    hover: (e: { points?: { x: number }[] }) => {
+      const x = e.points?.[0]?.x;
+      if (typeof x === "number") cbs.current.onCursor?.(x);
+    },
+    click: (e: { event?: MouseEvent }, gd: PlotElement) => {
+      if (!e.event || (!cbs.current.onClick && !cbs.current.onDragLine)) return;
+      const rect = gd.getBoundingClientRect();
+      const px = e.event.clientX - rect.left;
+      const py = e.event.clientY - rect.top;
+      for (let i = 0; i < n; i++) {
+        const xa = gd._fullLayout[`xaxis${axisId(i)}`];
+        const ya = gd._fullLayout[`yaxis${axisId(i)}`];
+        if (!xa || !ya) continue;
+        if (px < xa._offset || px > xa._offset + xa._length || py < ya._offset || py > ya._offset + ya._length) continue;
+        const x = xa.p2l(px - xa._offset);
+        const y = ya.p2l(py - ya._offset);
+        cbs.current.onClick?.(i, x, y);
+        if (panels[i].vLines?.some((v) => v.draggable)) cbs.current.onDragLine?.(x);
+        return;
+      }
+    },
   };
 
   return (
     <div ref={host} className={className ?? "h-full w-full min-h-0"}>
-      {n > 0 && <EChart option={option} onReady={handleReady} onEvents={events} />}
+      {n > 0 && (
+        <Plot
+          data={figure.data}
+          layout={figure.layout}
+          uirevision={String(resetKey ?? "")}
+          table={table}
+          events={events}
+          config={config}
+        />
+      )}
     </div>
   );
+}
+
+function legendOn(p: ChartPanel) {
+  return p.legend ?? p.series.length > 1;
 }

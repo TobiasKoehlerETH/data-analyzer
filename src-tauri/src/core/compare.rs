@@ -9,10 +9,9 @@ use super::csv_parser::parse_csv;
 use super::dataset::time_axis;
 use super::dsp::{interp, mean};
 
-/// A+P chart palette: brand red first, then dark blue, blue/gray, grays and tints.
+/// Categorical chart palette in its validated, colour-blind-safe order (see src/lib/chart.ts).
 pub const FILE_COLORS: &[&str] = &[
-    "#ff2400", "#274259", "#6b7b84", "#5c5c5c", "#ff7a59", "#4f7fa3", "#a6b0b5", "#b31a00", "#8fa9bf", "#2b2b2b",
-    "#ffb199", "#1b2e3e", "#c4cacd", "#7a2e1e", "#a5a5a5",
+    "#ff2400", "#2a78d6", "#1baf7a", "#6250d6", "#eda100", "#e87ba4", "#008300",
 ];
 
 pub const MATCH_THRESHOLD: f64 = 0.7;

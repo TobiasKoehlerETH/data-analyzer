@@ -55,11 +55,11 @@ interface PageDef {
 
 const PAGES: Record<TabId, PageDef> = {
   file: { label: "Workspace", icon: Database, component: FileTab, hint: "Add columns from any number of files as variables." },
-  timeseries: { label: "Plots", icon: ChartLine, component: TimeSeriesTab, hint: "Tick signals on the left to plot them. Scroll to zoom, drag to pan.", needsData: true },
+  timeseries: { label: "Plots", icon: ChartLine, component: TimeSeriesTab, hint: "Tick signals on the left to plot them. Drag to zoom, double-click to reset.", needsData: true },
   statistics: { label: "Statistics", icon: ChartScatter, component: StatisticsTab, hint: "Pick a signal; drag on any chart to select rows and compare.", needsData: true },
   compare: { label: "Compare files", icon: Scale, component: CompareTab, hint: "Add two or more files to overlay and align the same signals." },
   filter: { label: "Filter", icon: SlidersHorizontal, component: FilterTab, hint: "Pick a signal, let the app suggest filters, preview, then apply.", needsData: true },
-  spectrum: { label: "Spectrum", icon: AudioWaveform, component: SpectrumTab, hint: "See which frequencies a signal contains. Drag the red line to read a cutoff.", needsData: true },
+  spectrum: { label: "Spectrum", icon: AudioWaveform, component: SpectrumTab, hint: "See which frequencies a signal contains. Drag the cutoff line to read a cutoff.", needsData: true },
   correlation: { label: "Correlations", icon: Grid3x3, component: CorrelationTab, hint: "Find signals that move together. Click a cell or pair for details.", needsData: true },
   curvefit: { label: "Curve fit", icon: Spline, component: CurveFitTab, hint: "Pick X and Y variables, choose a model and fit.", needsData: true },
   sysid: { label: "Identify model", icon: Cpu, component: SysIdTab, hint: "Choose inputs and outputs, then identify a state-space model.", needsData: true },

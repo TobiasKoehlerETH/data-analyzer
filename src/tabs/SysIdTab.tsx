@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { CheckList, EmptyState, Field, NumberInput, Panel, StatusText } from "@/components/common";
 import { StackedChart, type ChartPanel } from "@/components/StackedChart";
+import { seriesColor } from "@/lib/chart";
 import { api, errorText, type ProgressEvent, type SysIdRow } from "@/lib/api";
 import { useApp } from "@/lib/store";
 
@@ -103,10 +104,9 @@ export function SysIdTab() {
           {
             id: "vaf",
             yLabel: "VAF [%]",
-            legend: true,
             series: [
-              { name: "Mean VAF", color: "#ff2400", data: sorted.map((r) => [r.order, r.mean_vaf] as [number, number]), width: 2 },
-              { name: "Best VAF", color: "#274259", data: sorted.map((r) => [r.order, r.best_vaf] as [number, number]), width: 1.2, dashed: true },
+              { name: "Mean VAF", color: seriesColor(0), data: sorted.map((r) => [r.order, r.mean_vaf] as [number, number]) },
+              { name: "Best VAF", color: seriesColor(1), data: sorted.map((r) => [r.order, r.best_vaf] as [number, number]) },
             ],
           },
         ]
@@ -227,7 +227,7 @@ export function SysIdTab() {
           {results.length === 0 && <p className="p-3 text-xs text-muted-foreground">Select inputs and outputs, then click Identify.</p>}
         </Panel>
         <Panel title="VAF vs model order" className="min-h-0 flex-1" bodyClassName="p-1">
-          {vafPanels.length > 0 && <StackedChart panels={vafPanels} xLabel="Model order" showSlider={false} />}
+          {vafPanels.length > 0 && <StackedChart panels={vafPanels} xLabel="Model order" />}
         </Panel>
       </div>
     </div>

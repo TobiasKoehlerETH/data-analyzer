@@ -18,7 +18,7 @@ const TEMPLATE: &str = include_str!("../../../template/ap-report-template.html")
 const LOGO_PNG: &[u8] = include_bytes!("../../../src/assets/ap-logo.png");
 
 /// Plot colours matching the template palette (red first, then text / muted tones).
-pub const REPORT_PALETTE: &[&str] = &["#c41230", "#111419", "#5f6670", "#8b0d24", "#9aa1aa", "#e07a8c", "#3a3f47", "#c4c8ce"];
+pub const REPORT_PALETTE: &[&str] = &["#ff2400", "#2a78d6", "#1baf7a", "#6250d6", "#eda100", "#e87ba4", "#008300"];
 
 /// Extra rules for data-dense content (compact tables, paired figures); same tokens as the template.
 const EXTRA_CSS: &str = r#"

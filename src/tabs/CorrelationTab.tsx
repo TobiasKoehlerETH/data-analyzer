@@ -3,11 +3,11 @@ import { Calculator, Clock, ScatterChart } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { EmptyState, Field, Panel, StatusText } from "@/components/common";
-import { EChart } from "@/components/EChart";
+import { Plot } from "@/components/Plot";
 import { SignalSelect } from "@/components/SignalSelect";
 import { StackedChart, type ChartPanel } from "@/components/StackedChart";
 import { api, errorText, type CorrelationView, type PairAnalysis, type PairDto } from "@/lib/api";
-import { DIVERGING, FONT, tooltipStyle, zip } from "@/lib/chart";
+import { DIVERGING, INK, axis, baseLayout, esc, seriesColor, zip } from "@/lib/chart";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -64,42 +64,50 @@ export function CorrelationTab() {
   const heatmap = useMemo(() => {
     if (!result) return null;
     const m = method === "Spearman" ? result.spearman : result.pearson;
-    const names = result.names.map((n) => (n.length > 20 ? n.slice(0, 20) : n));
-    const data: [number, number, number | null][] = [];
-    m.forEach((row, i) => row.forEach((v, j) => data.push([j, i, v === null ? null : Number(v.toFixed(4))])));
-    const label = { fontSize: 10, fontFamily: FONT, color: "#000" };
+    const names = result.names.map((n) => esc(n.length > 22 ? n.slice(0, 21) + "…" : n));
+    const full = result.names.map(esc);
+    const showValues = names.length <= 12;
     return {
-      animation: false,
-      tooltip: {
-        ...tooltipStyle,
-        formatter: (p: { data: [number, number, number | null] }) => `${names[p.data[1]]} ↔ ${names[p.data[0]]}<br/>r = <b>${p.data[2] ?? "—"}</b>`,
-      },
-      grid: { left: 130, right: 70, top: 10, bottom: 120 },
-      xAxis: { type: "category", data: names, axisLabel: { ...label, rotate: 90, interval: 0 }, axisTick: { show: false }, splitArea: { show: false } },
-      yAxis: { type: "category", data: names, inverse: true, axisLabel: { ...label, interval: 0 }, axisTick: { show: false } },
-      visualMap: { min: -1, max: 1, calculable: true, orient: "vertical", right: 4, top: "middle", itemHeight: 220, inRange: { color: DIVERGING }, textStyle: label, precision: 1 },
-      series: [
+      data: [
         {
           type: "heatmap",
-          data,
-          label: { show: names.length <= 12, fontSize: 9, fontFamily: FONT, formatter: (p: { data: [number, number, number | null] }) => (p.data[2] === null ? "" : p.data[2].toFixed(2)) },
-          emphasis: { itemStyle: { borderColor: "#000", borderWidth: 1 } },
+          z: m,
+          x: names,
+          y: names,
+          customdata: m.map((row, i) => row.map((_, j) => [full[i], full[j]])),
+          zmin: -1,
+          zmax: 1,
+          colorscale: DIVERGING,
+          xgap: 2,
+          ygap: 2,
+          hoverongaps: false,
+          texttemplate: showValues ? "%{z:.2f}" : "",
+          textfont: { size: 11 },
+          colorbar: { thickness: 10, len: 0.8, outlinewidth: 0, tickfont: { size: 11, color: INK.muted }, tickvals: [-1, -0.5, 0, 0.5, 1], title: { text: "r", font: { size: 12, color: INK.secondary } } },
+          hovertemplate: "<b>r = %{z:.3f}</b><br>%{customdata[0]} ↔ %{customdata[1]}<extra></extra>",
         },
       ],
+      layout: baseLayout({
+        hovermode: "closest",
+        dragmode: false,
+        margin: { l: 8, r: 8, t: 32, b: 8 },
+        xaxis: axis(undefined, { type: "category", showgrid: false, showline: false, ticks: "", tickangle: -60, tickfont: { size: 11, color: INK.secondary } }),
+        yaxis: axis(undefined, { type: "category", showgrid: false, showline: false, ticks: "", autorange: "reversed", tickfont: { size: 11, color: INK.secondary } }),
+      }),
     };
   }, [result, method]);
 
   const scatterPanels: ChartPanel[] = useMemo(
     () =>
       pair
-        ? [{ id: "s", yLabel: pair.label_b, series: [{ name: "Samples", color: "#274259", data: zip(pair.scatter.x, pair.scatter.y), type: "scatter", symbolSize: 2.5 }] }]
+        ? [{ id: "s", yLabel: pair.label_b, series: [{ name: "Samples", color: seriesColor(0), data: zip(pair.scatter.x, pair.scatter.y), type: "scatter" }] }]
         : [],
     [pair],
   );
   const lagPanels: ChartPanel[] = useMemo(
     () =>
       pair
-        ? [{ id: "l", yLabel: "Correlation", hLines: [{ y: 0, color: "#a5a5a5", dashed: true }], series: [{ name: "Cross-correlation", color: "#ff2400", data: zip(pair.lags, pair.corr), width: 1.4 }] }]
+        ? [{ id: "l", yLabel: "Correlation", hLines: [{ y: 0 }], series: [{ name: "Cross-correlation", color: seriesColor(0), data: zip(pair.lags, pair.corr) }] }]
         : [],
     [pair],
   );
@@ -128,12 +136,19 @@ export function CorrelationTab() {
       <div className="flex min-h-0 flex-1 gap-3">
         <Panel title={`${method} correlation matrix`} className="min-w-0 flex-[2]" bodyClassName="p-1">
           {heatmap ? (
-            <EChart
-              option={heatmap}
-              onEvents={{
-                click: (p: { data?: [number, number, number | null] }) => {
-                  if (!result || !p.data) return;
-                  const [j, i] = p.data;
+            <Plot
+              data={heatmap.data}
+              layout={heatmap.layout}
+              uirevision={method}
+              table={() => ({
+                columns: ["Signal A", "Signal B", "r"],
+                rows: result!.names.flatMap((na, i) => result!.names.map((nb, j) => [na, nb, (method === "Spearman" ? result!.spearman : result!.pearson)[i][j]])),
+              })}
+              events={{
+                click: (e: { points?: { pointNumber: [number, number] }[] }) => {
+                  const pn = e.points?.[0]?.pointNumber;
+                  if (!result || !pn) return;
+                  const [i, j] = pn;
                   if (i !== j) showPair(result.columns[i], result.columns[j]);
                 },
               }}
@@ -143,7 +158,7 @@ export function CorrelationTab() {
           )}
         </Panel>
         <div className="flex w-[320px] shrink-0 flex-col gap-3">
-          <Panel title="Top correlated pairs" className="min-h-0 flex-1" bodyClassName="p-0 overflow-auto">
+          <Panel title="Top correlated pairs · |r|" className="min-h-0 flex-1" bodyClassName="p-0 overflow-auto">
             <ul>
               {pairs.map((p, i) => (
                 <li
@@ -155,7 +170,8 @@ export function CorrelationTab() {
                   className={cn("cursor-pointer border-b border-ap-line px-2.5 py-1.5 text-[12px] hover:bg-ap-bluegray-15", selectedPair === i && "bg-ap-bluegray-15")}
                   title="Click to view scatter plot and cross-correlation"
                 >
-                  <span className="text-ap-red tabular-nums">|r|={Math.abs(p.pearson_r).toFixed(3)}</span>: {p.name_a} ↔ {p.name_b}
+                  <span className="mr-1.5 inline-block w-11 font-medium tabular-nums">{Math.abs(p.pearson_r).toFixed(3)}</span>
+                  {p.name_a} ↔ {p.name_b}
                   {p.lag_seconds !== 0 && <span className="text-muted-foreground">, lag={p.lag_seconds.toFixed(1)}s</span>}
                 </li>
               ))}
@@ -194,10 +210,10 @@ export function CorrelationTab() {
         </div>
         <div className="flex min-w-0 flex-[2] flex-col gap-3">
           <Panel title={pair ? `Scatter · r = ${pair.pearson_r.toFixed(3)}` : "Scatter plot"} className="min-h-0 flex-1" bodyClassName="p-1">
-            {pair ? <StackedChart panels={scatterPanels} xLabel={pair.label_a} showSlider={false} tooltip={false} /> : <EmptyState title="Select a pair" />}
+            {pair ? <StackedChart panels={scatterPanels} xLabel={pair.label_a} /> : <EmptyState title="Select a pair" />}
           </Panel>
           <Panel title="Cross-correlation (lag)" className="min-h-0 flex-1" bodyClassName="p-1">
-            {pair && <StackedChart panels={lagPanels} xLabel="Lag [samples]" showSlider={false} />}
+            {pair && <StackedChart panels={lagPanels} xLabel="Lag [samples]" />}
           </Panel>
         </div>
       </div>
