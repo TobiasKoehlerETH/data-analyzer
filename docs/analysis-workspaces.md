@@ -1,60 +1,53 @@
-# Data plots and analysis
+# Guide
 
-Data Plots opens with the first numeric column plotted against row positions **1…N**. Choose **X** and **Y** above the plot before opening **Fit curve**. For example, choose Temperature for X and Pressure for Y to fit pressure as a function of temperature. Choosing two columns produces a scatter plot; row position and time remain available as X options. The swap button exchanges X and Y. Select additional Y columns on the left for multiple plots. Missing values keep their original row positions.
+The top bar follows the workflow: **Data → Prepare → Explore → Analyse → Model → Report**. Explore and Analyse have tabs.
 
-## Workspace
+## Data
 
-Workspace holds the variables of every imported file. Each file keeps its own time base; with several files, **Align** combines them **By time** (each file starts at its own zero), **By clock time** (from timestamps) or **By row**. The number beside each file shifts it in time; Compare's alignment sets the same shift. The step box sets the common grid's time step, also for a single file (**Resample to**). Leave it at 0 for the files' finest step. A coarser step averages the samples within each step, so resampling does not alias.
+Add files, a folder of runs, or drop them on the window. Each file keeps its own time base and shows its signals with a small trend line.
 
-A variable's menu offers **Clean in Prepare…**, **Rename**, **Duplicate**, **Reset to original** and **Remove**; value edits live in Prepare.
+**Time from** sets where a file's time comes from: one of its columns, or **Fixed step per row** (seconds per row). The ruler below shows rows against time at five points. **Row** and **Time** convert one into the other. Files with clock timestamps show the time of day.
+
+With several files, **Line up files** combines them **By time**, **By clock time** or **By row**. **Shift** moves one file in time. **Resample to** sets the common time step (0 keeps the finest step; a coarser step averages instead of aliasing). The common grid has at most 1,000,000 rows.
+
+A signal's menu has **Prepare**, **Rename**, **Duplicate**, **Reset to original** and **Remove**. **Formula** adds a signal computed from others. **Project** saves and opens projects and recipes (reusable processing).
 
 ## Prepare
 
-Prepare cleans one workspace variable at a time. The edited signal is drawn in red over the imported values in gray; **Show change** adds an edited − original panel. Drag a box on the plot, then choose **Remove points in box** (outliers), **Remove range** or **Keep only range**. **Remove spikes** applies a Hampel filter (11-sample window, threshold in robust standard deviations, floored at the noise level of first differences). **Fill gaps** interpolates linearly between valid neighbours. Offset, scale, remove mean, start at zero, normalize, z-score and invert are also available.
+Prepare processes one signal as a row of blocks: **Source → steps → Output**.
 
-**Filter** designs a digital filter for the same signal. **Suggest** proposes filters from the spectrum (notches for periodic interference, high-pass for drift, low-pass for noise); click one to load it. **Preview on the plot** draws the result in blue without changing anything; **Add filter** appends it to the signal's steps like any other edit. On Spectrum, drag the cutoff line and use **Add low-pass at cutoff** to add a fourth-order low-pass there.
+- **Add step** offers **Clean** (spikes, gaps, range), **Filter** (low-pass, high-pass, band-pass, band-stop, notch, moving average, median, Savitzky–Golay, exponential average), **Adjust** (offset, gain, remove mean, start at zero, normalize, z-score, invert) and **Suggest filters**.
+- A new step is previewed on the chart before it is added.
+- Click a block to see its input (gray) and output on the chart, change its settings, move it or delete it. Each block shows what it did: samples removed, filled or moved.
+- **Undo** removes the last step. **Reset** returns to the imported values.
 
-Removed values become missing; rows are never deleted, so every variable stays aligned. Every edit is listed under History; **Undo** reverts the last one (up to 30 steps) and **Reset** restores the imported values. Spectra and filters bridge missing values linearly for the computation, and filtered output keeps them missing. Plots offers **Show original** to overlay the imported values behind edited signals. Open a variable from the Workspace list with **Clean in Prepare…**.
+Removed values become missing. Rows are never deleted, so every signal stays aligned. Deleting or editing a step re-runs the steps after it. A step that finds nothing to do passes the values through.
 
-## Compare files
+## Explore
 
-Compare overlays the workspace's files, so each run keeps its import settings and the processing steps from Prepare. Signals are matched across files by column name (units ignored, close spellings accepted); **Mapping** overrides a match. The first file ★ is the reference for the difference traces and the RMSE, max deviation, R² and mean error table. **Add files…** imports more runs into the workspace with all their columns, and **Remove** takes a file out of the workspace.
+- **Plot**: tick signals to plot them, stacked or overlaid. Choose the X axis: row, time or another signal. **Show original** draws the imported values behind processed ones.
+- **Distribution**: scatter, values by row, histogram and quartiles for one signal, with a summary table. Datasets over 100,000 rows are thinned by a fixed stride for display.
+- **Compare files**: overlays the files of the workspace. Signals are matched by name; **Mapping** overrides a match. Line files up by typing a shift, clicking the same event on each trace, or aligning on a trigger. With two or more files it shows the difference and RMSE, maximum deviation, R² and mean error against the first file.
 
-Alignment sets each file's time shift, the same shift shown in Workspace, so it applies on every page. Type the shift (Manual), click the same feature on each trace (Click), or line up the first crossing of a threshold (Trigger). Aligning switches a workspace in By row mode to By time.
+## Analyse
+
+- **Spectrum**: FFT and power density (Welch). Drag the cutoff line and press **Add low-pass** to add a filter step at that frequency.
+- **Correlations**: Pearson or Spearman matrix. Click a cell to see the scatter and lag for that pair.
+- **Curve fit**: pick X and Y, a model and **Fit**. Click a point to leave it out. **Advanced** has X range, coefficient start values, bounds, fixed coefficients, centering and robust (Huber) fitting. Confidence bands are approximate (normal 1.96 multiplier), not prediction intervals. Built-in models: linear, quadratic, cubic, exponential, exponential decay, power, logarithmic, Gaussian, Lorentzian, sigmoid, sine, or a custom equation in `x` with up to eight coefficients.
 
 ## Model
 
-Model groups the state-space tools in tabs: **Identify** fits models over a range of orders, **Library** stores them, **Simulate** runs a model on the measured inputs and **Validate** checks its residuals. Results stay when you edit the data; a note says when they were computed on earlier data.
+State-space models in four tabs: **Identify**, **Library**, **Simulate**, **Validate**. Results stay when the data is edited.
 
-## Curve fitting
+## Report
 
-Choose **Fit curve** on a numeric line, scatter or bar chart. Select the data and model, then **Fit**. **Fit options** contains range limits, starting coefficients, bounds, fixed coefficients, normalization and robust fitting. Click a preview point to exclude it. For large datasets, the preview is sampled; the fit uses all included observations.
+Choose what to include, choose **HTML** or **PDF**, press **Create report**, then choose a name and place. The report is one file with one embedded font. It contains headings, tables and charts, and the processing of each signal as the same block diagram.
 
-Built-in models include linear, quadratic, cubic, exponential, exponential decay, power, logarithmic, Gaussian, Lorentzian, sigmoid and sine. Custom equations use `x` and up to eight named coefficients, `^` for powers, and functions such as `exp`, `ln`, `sqrt`, `sin` and `cos`.
+## Charts
 
-Data Plots and Statistics supply complete vectors to the fitter. Other charts supply their plotted observations, which can already be downsampled; the data count and source tooltip identify this scope. Heatmaps, boxplots and categorical charts do not represent numeric XY observations and therefore do not offer curve fitting.
+Drag to zoom, scroll to zoom, double-click to reset. The toolbar has Zoom, Pan, Previous view, Reset, a data table with CSV export, and PNG export. Stacked charts share the X axis. Long signals are thinned per pixel column (minimum and maximum kept) and again after each zoom, so peaks stay visible. Summary charts (matrix, histogram, quartiles, bars) do not zoom.
 
-Results include residuals, RMSE, SSE, R², adjusted R² and coefficient estimates. Confidence intervals and mean-response bands use a local linear approximation with a normal 1.96 multiplier. They are not prediction intervals. Uncertainty is withheld for robust fits, active bounds, nonconvergence and rank-deficient models. Robust fitting uses Huber loss; displayed error metrics remain unweighted. Constant Y has undefined R².
-
-With **Center and scale X**, the equation uses `(X − center) / scale`; results and exported files include both values. Coefficients therefore refer to that transformed variable. Power and logarithmic models need a valid domain: avoid nonpositive X when the equation requires positive X.
-
-Fits remain available for comparison while the toolbox is open. **Add to plot** overlays the chosen result; changing the source chart clears that overlay. **Export** saves the equation, included observations, options and results as JSON. This implementation provides 1D curve fitting, not MATLAB surface fitting or every MATLAB model family.
-
-## Statistics
-
-Choose X and Y, then drag a rectangle in the scatter plot or an X interval in By row or Distribution. All views highlight matching rows and fade the rest; the summary compares the selection with the full data. **Clear selection** removes it. Switch a chart's toolbar to Zoom or Pan to navigate instead of selecting. Scatter previews are limited to approximately 8,000 points; selection and statistics use complete vectors, including rows that are not rendered.
-
-Summary statistics include count, missing values, mean, sample standard deviation, minimum, quartiles, maximum and IQR. Quartiles use linear interpolation. Boxplot whiskers show the actual minimum and maximum. Use the download button to export the summary as CSV.
-
-## Navigation
-
-Charts share one set of controls. Drag to zoom: a rectangle zooms both axes, while a mostly horizontal drag zooms X only. Scroll to zoom around the pointer and double-click to reset. The toolbar offers Zoom, Pan, **Previous view** (steps back through earlier zooms), Reset, **Show data as table** (with CSV download) and PNG export. Stacked panels keep a common X axis. Long signals are decimated per pixel column (minimum and maximum kept), and are re-decimated after each zoom, so peaks remain visible.
-
-Charts follow one visual system: a validated categorical palette led by A+P red, a blue-to-red diverging scale with a neutral midpoint for correlations, 2px lines, ringed markers, hairline grids and a legend whenever a chart shows two or more series. Report figures use the same palette and styling.
-
-Use **Ctrl+PageUp** and **Ctrl+PageDown** to switch workspaces. Workspaces load on first use and retain their controls and results. Hidden charts pause rendering; returning to Data Plots or Statistics reuses loaded vectors until the data or selected columns change. Transitions respect the system's reduced-motion preference.
-
-## Verification
+## Verify
 
 ```text
 npm run build

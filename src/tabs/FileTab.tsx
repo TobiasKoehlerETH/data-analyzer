@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Clock, FileSpreadsheet, FolderOpen, Info, Loader2, Plus, SlidersHorizontal, Type, X } from "lucide-react";
+import { Clock, FileSpreadsheet, Info, Loader2, Plus, SlidersHorizontal, Type } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -21,9 +21,9 @@ function metaText(v: Json): string {
 
 function Chip({ label, value }: { label: string; value: string }) {
   return (
-    <span className="flex items-baseline gap-1.5 border border-ap-line bg-white px-2.5 py-1 text-[12px]">
+    <span className="flex items-baseline gap-1.5 rounded-md border border-ap-line bg-white px-2.5 py-1 text-[12.5px]">
       <span className="text-muted-foreground">{label}</span>
-      <span className="text-black">{value}</span>
+      <span className="font-medium text-foreground">{value}</span>
     </span>
   );
 }
@@ -159,156 +159,140 @@ export function FileTab() {
   const binary = !!preview && ["Parquet", "MATLAB", "MATLAB v7.3", "HDF5", "TDMS"].includes(preview.file_type);
   const meta = preview ? Object.entries(preview.metadata) : [];
 
+  if (!preview) {
+    return (
+      <div className="flex h-full flex-col gap-2">
+        <WorkspacePanel ws={ws} fresh={fresh} run={run} onAddFiles={browse} onExport={exportCsv} />
+        {error && <p className="text-[12.5px] text-destructive">{error}</p>}
+      </div>
+    );
+  }
+
   return (
-    <div className="flex h-full gap-4">
-      <WorkspacePanel
-        ws={ws}
-        fresh={fresh}
-        run={run}
-        onAddFiles={browse}
-        onExport={exportCsv}
-      />
-
-      {/* Import from a file */}
-      <div className="flex min-w-0 flex-1 flex-col gap-3">
-        {!preview ? (
-          <div className="flex h-full flex-col items-center justify-center gap-3">
-            <button
-              onClick={browse}
-              className="flex w-[440px] flex-col items-center gap-4 border border-dashed border-ap-bluegray-60 bg-white px-10 py-14 text-center transition-colors hover:border-ap-red"
-            >
-              <FolderOpen className="size-12 text-ap-red" strokeWidth={1.2} />
-              <span className="text-[22px] text-black">Add data</span>
-              <span className="text-[12.5px] text-muted-foreground">CSV · TXT · Excel · Parquet · MAT · HDF5 · TDMS</span>
-            </button>
-            {error && <p className="text-xs text-destructive">{error}</p>}
-          </div>
-        ) : (
-          <>
-            <div className="flex flex-wrap items-center gap-2 border border-ap-line bg-white px-3 py-2">
-              <FileSpreadsheet className="size-5 shrink-0 text-ap-red" />
-              <span className="min-w-0 truncate text-[14px]" title={path}>
-                {fileName(path)}
-              </span>
-              {preview.sheets.length > 1 && (
-                <Select value={sheet ?? undefined} onValueChange={(v) => openFile(path, v, {})}>
-                  <SelectTrigger className="h-8 w-44" title="Worksheet">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {preview.sheets.map((s) => (
-                      <SelectItem key={s} value={s}>
-                        {s}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-              {queue.length > 0 && (
-                <span className="text-[12px] text-muted-foreground" title={queue.map(fileName).join("\n")}>
-                  +{queue.length} queued
-                </span>
-              )}
-              <div className="flex-1" />
-              <Button variant="ghost" size="sm" onClick={closeFile} title={queue.length ? "Skip this file" : "Close"}>
-                <X />
-              </Button>
-              <Button onClick={addVariables} disabled={busy || picked.length === 0} className="min-w-40">
-                {busy ? <Loader2 className="animate-spin" /> : <Plus />} Add {picked.length} variable{picked.length === 1 ? "" : "s"}
-              </Button>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              {binary && <Chip label="Format" value={preview.file_type} />}
-              {!adjust && !binary && (
-                <>
-                  <Chip label="Header" value={preview.no_header ? "none" : `row ${preview.header_row + 1}`} />
-                  <Chip label="Data from" value={`row ${preview.data_start + 1}`} />
-                  {preview.file_type !== "Excel workbook" && <Chip label="Separator" value={preview.delimiter === "\\t" ? "tab" : preview.delimiter} />}
-                </>
-              )}
-              {meta.length > 0 && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="sm" className="text-muted-foreground" title="File header information">
-                      <Info /> {meta.length}
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent className="selectable max-h-80 w-96 overflow-auto rounded-none p-3 text-[12px]">
-                    <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
-                      {meta.map(([k, v]) => (
-                        <div key={k} className="contents">
-                          <dt className="text-ap-red">{k}</dt>
-                          <dd className="break-words">{metaText(v)}</dd>
-                        </div>
-                      ))}
-                    </dl>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
-              <div className="flex-1" />
-              <Button variant={adjust ? "default" : "outline"} size="sm" className={binary ? "hidden" : undefined} onClick={() => setAdjust(!adjust)} title="Header row, data start, ignored rows and columns">
-                <SlidersHorizontal /> Rows &amp; columns
-                {Object.keys(options).length > 0 && !adjust && <span className="ml-0.5 size-1.5 rounded-full bg-ap-red" />}
-              </Button>
-            </div>
-
-            {error && <p className="text-xs text-destructive">{error}</p>}
-
-            <section className="min-h-0 flex-1 border border-ap-line bg-white">
-              {adjust ? (
-                <ImportSettings preview={preview} options={options} onChange={(o) => openFile(path, sheet, o, true)} />
-              ) : (
-                <div className="selectable h-full overflow-auto">
-                  <Table className="text-[12px]">
-                    <TableHeader className="sticky top-0 z-10 bg-white shadow-[0_1px_0_var(--ap-line)]">
-                      <TableRow>
-                        <TableHead className="w-12 text-right text-muted-foreground">#</TableHead>
-                        {preview.headers.map((h, i) => {
-                          if (preview.skipped_columns.includes(i)) return null;
-                          const can = cols.includes(i);
-                          const on = picked.includes(h);
-                          return (
-                            <TableHead key={i} className="whitespace-nowrap">
-                              {can ? (
-                                <label className={cn("flex cursor-pointer items-center gap-1.5", on ? "text-black" : "text-muted-foreground")}>
-                                  <Checkbox checked={on} onCheckedChange={(v) => setPicked(v ? [...picked, h] : picked.filter((x) => x !== h))} />
-                                  {h}
-                                  {preview.time_column_index === i && <Clock className="size-3 text-ap-red" />}
-                                  {preview.text_columns.includes(i) && <Type className="size-3 text-muted-foreground" aria-label="Text column" />}
-                                </label>
-                              ) : (
-                                <span className="text-muted-foreground/70" title="Empty or not importable">
-                                  {h}
-                                </span>
-                              )}
-                            </TableHead>
-                          );
-                        })}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {preview.rows.map((r, i) => (
-                        <TableRow key={i} className="even:bg-[#f7f8f8]">
-                          <TableCell className="py-1 text-right text-muted-foreground tabular-nums">{preview.data_start + i + 1}</TableCell>
-                          {r.map((c, j) =>
-                            preview.skipped_columns.includes(j) ? null : (
-                              <TableCell key={j} className={cn("py-1 whitespace-nowrap tabular-nums", !picked.includes(preview.headers[j]) && "text-muted-foreground/60")}>
-                                {c}
-                              </TableCell>
-                            ),
-                          )}
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-            </section>
-          </>
+    <div className="flex h-full min-w-0 flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-ap-line bg-white px-4 py-3 shadow-[var(--ap-shadow-sm)]">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-ap-red-soft text-ap-red">
+          <FileSpreadsheet className="size-[18px]" />
+        </span>
+        <div className="min-w-0">
+          <p className="truncate text-[14.5px] font-semibold" title={path}>
+            {fileName(path)}
+          </p>
+          <p className="text-[12px] text-muted-foreground">
+            Tick the columns to add as variables
+            {queue.length > 0 && <span title={queue.map(fileName).join("\n")}> · {queue.length} more file{queue.length === 1 ? "" : "s"} waiting</span>}
+          </p>
+        </div>
+        {preview.sheets.length > 1 && (
+          <Select value={sheet ?? undefined} onValueChange={(v) => openFile(path, v, {})}>
+            <SelectTrigger className="h-8 w-44" title="Worksheet">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {preview.sheets.map((s) => (
+                <SelectItem key={s} value={s}>
+                  {s}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         )}
+        <div className="flex-1" />
+        <Button variant="ghost" onClick={closeFile} title={queue.length ? "Skip this file" : "Cancel"}>
+          {queue.length ? "Skip" : "Cancel"}
+        </Button>
+        <Button onClick={addVariables} disabled={busy || picked.length === 0} className="min-w-44">
+          {busy ? <Loader2 className="animate-spin" /> : <Plus />} Add {picked.length} variable{picked.length === 1 ? "" : "s"}
+        </Button>
       </div>
 
+      <div className="flex flex-wrap items-center gap-2">
+        {binary && <Chip label="Format" value={preview.file_type} />}
+        {!adjust && !binary && (
+          <>
+            <Chip label="Header" value={preview.no_header ? "none" : `row ${preview.header_row + 1}`} />
+            <Chip label="Data from" value={`row ${preview.data_start + 1}`} />
+            {preview.file_type !== "Excel workbook" && <Chip label="Separator" value={preview.delimiter === "\\t" ? "tab" : preview.delimiter} />}
+          </>
+        )}
+        {meta.length > 0 && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="text-muted-foreground" title="File header information">
+                <Info /> File info ({meta.length})
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="selectable max-h-80 w-96 overflow-auto p-3 text-[12px]">
+              <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+                {meta.map(([k, v]) => (
+                  <div key={k} className="contents">
+                    <dt className="font-medium text-ap-red">{k}</dt>
+                    <dd className="break-words">{metaText(v)}</dd>
+                  </div>
+                ))}
+              </dl>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+        <div className="flex-1" />
+        <Button variant={adjust ? "default" : "outline"} size="sm" className={binary ? "hidden" : undefined} onClick={() => setAdjust(!adjust)} title="Header row, data start, ignored rows and columns">
+          <SlidersHorizontal /> Rows &amp; columns
+          {Object.keys(options).length > 0 && !adjust && <span className="ml-0.5 size-1.5 rounded-full bg-ap-red" />}
+        </Button>
+      </div>
+
+      {error && <p className="text-[12.5px] text-destructive">{error}</p>}
+
+      <section className="min-h-0 flex-1 overflow-hidden rounded-xl border border-ap-line bg-white shadow-[var(--ap-shadow-sm)]">
+        {adjust ? (
+          <ImportSettings preview={preview} options={options} onChange={(o) => openFile(path, sheet, o, true)} />
+        ) : (
+          <div className="selectable h-full overflow-auto">
+            <Table className="text-[12.5px]">
+              <TableHeader className="sticky top-0 z-10 bg-white shadow-[0_1px_0_var(--ap-line)]">
+                <TableRow>
+                  <TableHead className="w-12 text-right text-muted-foreground">#</TableHead>
+                  {preview.headers.map((h, i) => {
+                    if (preview.skipped_columns.includes(i)) return null;
+                    const can = cols.includes(i);
+                    const on = picked.includes(h);
+                    return (
+                      <TableHead key={i} className="whitespace-nowrap">
+                        {can ? (
+                          <label className={cn("flex cursor-pointer items-center gap-1.5", on ? "text-foreground" : "text-muted-foreground")}>
+                            <Checkbox checked={on} onCheckedChange={(v) => setPicked(v ? [...picked, h] : picked.filter((x) => x !== h))} />
+                            {h}
+                            {preview.time_column_index === i && <Clock className="size-3 text-ap-red" aria-label="Time column" />}
+                            {preview.text_columns.includes(i) && <Type className="size-3 text-muted-foreground" aria-label="Text column" />}
+                          </label>
+                        ) : (
+                          <span className="text-muted-foreground/70" title="Empty or not importable">
+                            {h}
+                          </span>
+                        )}
+                      </TableHead>
+                    );
+                  })}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {preview.rows.map((r, i) => (
+                  <TableRow key={i} className="even:bg-[#f8f9fb]">
+                    <TableCell className="py-1 text-right text-muted-foreground tabular-nums">{preview.data_start + i + 1}</TableCell>
+                    {r.map((c, j) =>
+                      preview.skipped_columns.includes(j) ? null : (
+                        <TableCell key={j} className={cn("py-1 whitespace-nowrap tabular-nums", !picked.includes(preview.headers[j]) && "text-muted-foreground/60")}>
+                          {c}
+                        </TableCell>
+                      ),
+                    )}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </section>
     </div>
   );
 }

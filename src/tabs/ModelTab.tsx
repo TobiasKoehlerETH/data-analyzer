@@ -1,6 +1,6 @@
 import { useContext, useEffect, useState } from "react";
 import { BadgeCheck, Cpu, Library, Play } from "lucide-react";
-import { EmptyState } from "@/components/common";
+import { EmptyState, Segmented } from "@/components/common";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { WorkspaceActive } from "@/lib/workspace";
@@ -29,28 +29,12 @@ export function ModelTab() {
 
   return (
     <div className="flex h-full flex-col gap-3">
-      <div role="tablist" className="flex shrink-0 items-end gap-1 border-b border-ap-line">
-        {SUBS.map((s) => {
-          const Icon = s.icon;
-          const on = s.id === tab;
-          return (
-            <button
-              key={s.id}
-              role="tab"
-              aria-selected={on}
-              title={s.hint}
-              onClick={() => setTab(s.id)}
-              className={cn(
-                "-mb-px flex h-9 items-center gap-2 border-b-[3px] px-3 text-[13.5px] transition-colors",
-                on ? "border-ap-red text-black" : "border-transparent text-ap-bluegray hover:text-ap-red",
-              )}
-            >
-              <Icon className={cn("size-4", on && "text-ap-red")} strokeWidth={1.7} />
-              {s.label}
-              {s.id === "library" && models.length > 0 && <span className="rounded-full bg-ap-bluegray-15 px-1.5 text-[10.5px] text-ap-bluegray tabular-nums">{models.length}</span>}
-            </button>
-          );
-        })}
+      <div className="flex shrink-0 items-center">
+        <Segmented
+          value={tab}
+          onChange={setTab}
+          options={SUBS.map((s) => ({ value: s.id, label: s.id === "library" && models.length > 0 ? `${s.label} · ${models.length}` : s.label, hint: s.hint }))}
+        />
       </div>
       <div className="relative min-h-0 flex-1">
         {SUBS.map((s) => {
@@ -59,7 +43,7 @@ export function ModelTab() {
           return (
             <div key={s.id} role="tabpanel" className={cn("absolute inset-0 overflow-hidden", s.id !== tab && "invisible")}>
               <WorkspaceActive.Provider value={active && s.id === tab}>
-                {s.needsData && !dataset ? <EmptyState title="Workspace is empty">Add data in Workspace first.</EmptyState> : <C />}
+                {s.needsData && !dataset ? <EmptyState title="No data loaded" /> : <C />}
               </WorkspaceActive.Provider>
             </div>
           );

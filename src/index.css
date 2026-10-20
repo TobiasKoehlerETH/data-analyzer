@@ -1,88 +1,73 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-.analysis-field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; }
-.analysis-field select, .analysis-field input, .analysis-input { width: 100%; min-width: 0; border: 1px solid #c4cacd; background: white; padding: 5px 7px; font-size: 12px; border-radius: 0; }
-.analysis-field select:focus, .analysis-field input:focus, .analysis-input:focus { outline: 1px solid #ff2400; }
-
 @custom-variant dark (&:is(.dark *));
 
-button, input, select, textarea, summary, [role="combobox"] {
-  transition-property: background-color, border-color, color, box-shadow;
-  transition-duration: 140ms;
-  transition-timing-function: ease-out;
-}
-.analysis-field select, .analysis-field input, .analysis-input {
-  border-radius: 4px;
-  min-height: 32px;
-}
-.ap-workspace { animation: workspace-in 140ms ease-out; }
-@keyframes workspace-in { from { opacity: 0.7; } to { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
-}
-
 /*
- * Angst+Pfister design tokens (see C:\Code\A+P-style\style-guide.html).
- * Red sets the tone and is used sparingly; black carries the text; white space is part of the brand.
+ * Design tokens. A quiet, neutral surface so the data is the loudest thing on screen;
+ * Angst+Pfister red is the single accent (primary action, current step, selection).
  */
 :root {
   --ap-red: #ff2400;
   --ap-red-dark: #d61e00;
-  --ap-black: #000000;
+  --ap-red-soft: #fff1ee;
+  --ap-black: #0f1216;
   --ap-white: #ffffff;
-  --ap-bluegray: #6b7b84;
-  --ap-bluegray-60: #a6b0b5;
-  --ap-bluegray-15: #ebedee;
+  --ap-bluegray: #66717d;
+  --ap-bluegray-60: #a9b1ba;
+  --ap-bluegray-15: #eff1f4;
   --ap-darkblue: #274259;
-  --ap-gray-dark: #5c5c5c;
-  --ap-gray: #a5a5a5;
-  --ap-gray-light: #d1d1d1;
-  --ap-panel: #c4cacd;
-  --ap-surface: #e9ebed;
-  --ap-line: #d9dcde;
-  --ap-font: "Futura LT Book", "Futura LT", "Futura PT", Futura, "Century Gothic", "Avenir Next", Arial, sans-serif;
-  --ap-font-medium: "Futura LT Medium", "Futura LT", "Futura PT", Futura, "Century Gothic", "Avenir Next", Arial, sans-serif;
-  --ap-box-shadow: 2px 2px 6px rgb(0 0 0 / 35%);
+  --ap-gray-dark: #4a525c;
+  --ap-gray: #9aa2ab;
+  --ap-gray-light: #d6dae0;
+  --ap-panel: #d6dae0;
+  --ap-surface: #f3f4f7;
+  --ap-line: #e4e7ec;
+  --ap-font: "Inter Variable", Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+  --ap-font-medium: "Inter Variable", Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+  --ap-shadow-sm: 0 1px 2px rgb(16 24 40 / 5%);
+  --ap-shadow: 0 1px 3px rgb(16 24 40 / 8%), 0 1px 2px rgb(16 24 40 / 5%);
+  --ap-shadow-lg: 0 8px 24px rgb(16 24 40 / 12%), 0 2px 6px rgb(16 24 40 / 6%);
+  --ap-box-shadow: var(--ap-shadow-lg);
 
-  --radius: 0.125rem;
-  --background: #f5f6f7;
-  --foreground: #000000;
+  --radius: 0.5rem;
+  --background: #f3f4f7;
+  --foreground: #0f1216;
   --card: #ffffff;
-  --card-foreground: #000000;
+  --card-foreground: #0f1216;
   --popover: #ffffff;
-  --popover-foreground: #000000;
+  --popover-foreground: #0f1216;
   --primary: #ff2400;
   --primary-foreground: #ffffff;
-  --secondary: #ebedee;
-  --secondary-foreground: #000000;
-  --muted: #ebedee;
-  --muted-foreground: #5c5c5c;
-  --accent: #ebedee;
-  --accent-foreground: #000000;
+  --secondary: #eff1f4;
+  --secondary-foreground: #0f1216;
+  --muted: #eff1f4;
+  --muted-foreground: #5b6672;
+  --accent: #eff1f4;
+  --accent-foreground: #0f1216;
   --destructive: #d61e00;
-  --border: #d9dcde;
-  --input: #c4cacd;
+  --border: #e4e7ec;
+  --input: #d6dae0;
   --ring: #ff2400;
   --chart-1: #ff2400;
-  --chart-2: #6b7b83;
-  --chart-3: #a5a5a5;
-  --chart-4: #274259;
-  --chart-5: #5c5c5c;
+  --chart-2: #2a78d6;
+  --chart-3: #1baf7a;
+  --chart-4: #6250d6;
+  --chart-5: #eda100;
   --sidebar: #ffffff;
-  --sidebar-foreground: #000000;
+  --sidebar-foreground: #0f1216;
   --sidebar-primary: #ff2400;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #ebedee;
-  --sidebar-accent-foreground: #000000;
-  --sidebar-border: #d9dcde;
+  --sidebar-accent: #eff1f4;
+  --sidebar-accent-foreground: #0f1216;
+  --sidebar-border: #e4e7ec;
   --sidebar-ring: #ff2400;
 }
 
 @theme inline {
   --font-sans: var(--ap-font);
   --font-medium-ap: var(--ap-font-medium);
-  --font-mono: "Cascadia Mono", Consolas, "Courier New", monospace;
+  --font-mono: "JetBrains Mono Variable", "Cascadia Mono", Consolas, monospace;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -115,17 +100,18 @@ button, input, select, textarea, summary, [role="combobox"] {
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-ap-red: var(--ap-red);
+  --color-ap-red-soft: var(--ap-red-soft);
   --color-ap-bluegray: var(--ap-bluegray);
   --color-ap-bluegray-60: var(--ap-bluegray-60);
   --color-ap-bluegray-15: var(--ap-bluegray-15);
   --color-ap-darkblue: var(--ap-darkblue);
   --color-ap-panel: var(--ap-panel);
   --color-ap-line: var(--ap-line);
-  --radius-sm: calc(var(--radius) - 1px);
-  --radius-md: var(--radius);
-  --radius-lg: calc(var(--radius) + 1px);
-  --radius-xl: calc(var(--radius) + 2px);
-  --shadow-ap: var(--ap-box-shadow);
+  --radius-sm: calc(var(--radius) - 3px);
+  --radius-md: calc(var(--radius) - 1px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --shadow-ap: var(--ap-shadow);
 }
 
 @layer base {
@@ -140,10 +126,14 @@ button, input, select, textarea, summary, [role="combobox"] {
   body {
     @apply bg-background text-foreground;
     font-family: var(--ap-font);
-    font-size: 13px;
+    font-size: 13.5px;
+    line-height: 1.45;
+    letter-spacing: -0.003em;
     text-align: left;
     overflow: hidden;
     user-select: none;
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: "cv11", "ss03";
   }
   input,
   textarea,
@@ -153,43 +143,89 @@ button, input, select, textarea, summary, [role="combobox"] {
   }
   b,
   strong {
-    font-family: var(--ap-font-medium);
-    font-weight: 500;
+    font-weight: 600;
   }
   h1,
   h2,
   h3,
   h4 {
-    font-weight: 400;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum", "cv11", "ss03";
+  }
+  button,
+  input,
+  select,
+  textarea,
+  summary,
+  [role="combobox"] {
+    transition-property: background-color, border-color, color, box-shadow, opacity;
+    transition-duration: 140ms;
+    transition-timing-function: ease-out;
   }
   ::-webkit-scrollbar {
     width: 10px;
     height: 10px;
   }
   ::-webkit-scrollbar-thumb {
-    background: var(--ap-bluegray-60);
+    background: #c9ced6;
     border: 2px solid transparent;
     background-clip: content-box;
     border-radius: 5px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #a9b1ba;
+    background-clip: content-box;
+    border: 2px solid transparent;
   }
   ::-webkit-scrollbar-track {
     background: transparent;
   }
 }
 
-/* A+P white box: highlights key information. Boxes stay white. */
-@utility ap-box {
-  background: #fff;
-  box-shadow: var(--ap-box-shadow);
+/* Legacy form fields still used by a few dialogs. */
+.analysis-field { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; }
+.analysis-field select, .analysis-field input, .analysis-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  border: 1px solid var(--input);
+  background: white;
+  padding: 5px 9px;
+  font-size: 13px;
+  border-radius: var(--radius);
+}
+.analysis-field select:focus, .analysis-field input:focus, .analysis-input:focus { outline: 2px solid color-mix(in srgb, var(--ap-red) 40%, transparent); outline-offset: 0; border-color: var(--ap-red); }
+
+.ap-workspace { animation: workspace-in 160ms ease-out; }
+@keyframes workspace-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
 
-/* Small uppercase caption, as in the style guide eyebrow. */
+/* A raised white surface for key information. */
+@utility ap-box {
+  background: #fff;
+  border-radius: var(--radius-xl);
+  box-shadow: var(--ap-shadow-lg);
+}
+
+/* Section title inside a card: sentence case, semibold. */
 @utility ap-eyebrow {
-  color: var(--ap-gray-dark);
-  text-transform: uppercase;
+  color: var(--foreground);
   font-family: var(--ap-font);
-  font-weight: 700;
-  font-size: 10.5px;
+  font-weight: 600;
+  font-size: 13px;
   line-height: 1.4;
-  letter-spacing: 0.14em;
+  letter-spacing: -0.005em;
+}
+
+/* Small muted caption above a value. */
+@utility ap-caption {
+  color: var(--muted-foreground);
+  font-size: 11.5px;
+  line-height: 1.4;
 }

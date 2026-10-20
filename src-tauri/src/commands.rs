@@ -16,7 +16,7 @@ use crate::core::downsample::{minmax, minmax_indices, window_indices};
 use crate::core::dsp::{decimate, mean, searchsorted, std};
 use crate::core::filters::{suggest_filters, FilterStep};
 use crate::core::models::{ModelSummary, OutputMetrics, StateSpaceResult};
-use crate::core::report::{self, ComparisonStat, DataSummary, FilterInfo, ModelInfo, Plot, ReportContent, REPORT_PALETTE};
+use crate::core::report::{self, ComparisonStat, DataSummary, FilterInfo, ModelInfo, Plot, ReportBlock, ReportContent, REPORT_PALETTE};
 use crate::core::simulation::simulate;
 use crate::core::spectrum::{compute_fft, compute_psd, detect_peaks, PeakInfo};
 use crate::core::stats::{compute_descriptive_stats, norm_pdf, StatRow};
@@ -35,15 +35,19 @@ pub async fn curve_fit(request: crate::core::fitting::FitRequest) -> CmdResult<c
 
 /// Full vectors retain row correspondence, including missing values.
 #[tauri::command]
-pub async fn analysis_vectors(state: AppStateRef<'_>, columns: Vec<String>) -> CmdResult<serde_json::Value> {
+pub async fn analysis_vectors(state: AppStateRef<'_>, columns: Vec<String>, max_points: Option<usize>) -> CmdResult<serde_json::Value> {
     let st = state.inner().clone();
     blocking(move || with_data(&st, |d| {
+        // Long datasets are thinned by a fixed stride, so the page stays fast; `step` maps back to rows.
+        let n = d.time.len();
+        let step = max_points.map_or(1, |m| n.div_ceil(m.max(1))).max(1);
+        let pick = |v: &[f64]| -> Vec<f64> { if step == 1 { v.to_vec() } else { v.iter().step_by(step).copied().collect() } };
         let mut vectors = serde_json::Map::new();
         for c in columns {
             let values = d.get_signal(&c).ok_or_else(|| format!("Column not found: {c}"))?;
-            vectors.insert(c, serde_json::json!(*values));
+            vectors.insert(c, serde_json::json!(pick(&values)));
         }
-        Ok(serde_json::json!({"time": *d.time, "columns": vectors}))
+        Ok(serde_json::json!({"time": pick(&d.time), "columns": vectors, "step": step}))
     })).await
 }
 
@@ -141,7 +145,7 @@ fn install_dataset(app: &AppHandle, st: &AppState, ds: Dataset) -> CmdResult<Dat
 // Workspace (variables from any number of files, aligned on a common time grid)
 // ---------------------------------------------------------------------------
 
-use crate::core::workspace::{Align, Edit, Project, Recipe, SourceInfo, VariableInfo, Workspace};
+use crate::core::workspace::{Align, Edit, Pipeline, Project, Recipe, SourceInfo, VariableInfo, Workspace};
 
 #[derive(Serialize)]
 pub struct WorkspaceView {
@@ -172,13 +176,12 @@ fn view_of(ws: &Workspace, dataset: Option<DatasetInfo>, added: Vec<String>, war
 
 /// Rebuilds the analysis dataset from the workspace after every change.
 fn sync_workspace(app: &AppHandle, st: &AppState, added: Vec<String>, warnings: Vec<String>) -> CmdResult<WorkspaceView> {
-    let (parse, edited) = {
+    let (built, edited) = {
         let mut ws = st.workspace.lock().unwrap();
-        (ws.to_parse(), ws.edited_names())
+        (ws.to_dataset("Workspace"), ws.edited_names())
     };
-    let dataset = match parse {
-        Some(p) => {
-            let mut ds = Dataset::from_parse("Workspace", p);
+    let dataset = match built {
+        Some(mut ds) => {
             ds.edited = edited;
             Some(install_dataset(app, st, ds)?)
         }
@@ -268,6 +271,12 @@ pub async fn workspace_rename(app: AppHandle, state: AppStateRef<'_>, old: Strin
 }
 
 /// Makes `name` its source's time axis (`time = true`) or reverts that source to row numbers.
+/// Sets (or clears) a file's seconds-per-row conversion factor.
+#[tauri::command]
+pub async fn workspace_set_row_step(app: AppHandle, state: AppStateRef<'_>, id: u32, step: Option<f64>) -> CmdResult<WorkspaceView> {
+    ws_change(app, state, move |ws| ws.set_row_step(id, step).map(|_| Default::default())).await
+}
+
 #[tauri::command]
 pub async fn workspace_set_time(app: AppHandle, state: AppStateRef<'_>, name: String, time: bool) -> CmdResult<WorkspaceView> {
     ws_change(app, state, move |ws| ws.set_time(&name, time).map(|_| Default::default())).await
@@ -383,6 +392,54 @@ pub async fn workspace_variable(state: AppStateRef<'_>, name: String) -> CmdResu
             can_undo: !v.steps.is_empty(),
             time_origin: origin,
         })
+    })
+    .await
+}
+
+/// Where a row of an imported file sits in time, or which row a time falls on.
+#[tauri::command]
+pub async fn source_time_map(state: AppStateRef<'_>, id: u32, row: Option<usize>, time: Option<f64>) -> CmdResult<crate::core::workspace::TimeMap> {
+    let st = state.inner().clone();
+    blocking(move || st.workspace.lock().unwrap().time_map(id, row, time)).await
+}
+
+/// The variable's pipeline, block by block.
+#[tauri::command]
+pub async fn workspace_pipeline(state: AppStateRef<'_>, name: String) -> CmdResult<Pipeline> {
+    let st = state.inner().clone();
+    blocking(move || st.workspace.lock().unwrap().pipeline(&name)).await
+}
+
+#[derive(Serialize)]
+pub struct StageValues {
+    /// Values entering block `index`.
+    input: Vec<f64>,
+    /// Values leaving it.
+    output: Vec<f64>,
+}
+
+/// The values on both sides of block `index` (for probing one block on the plot).
+#[tauri::command]
+pub async fn workspace_stage(state: AppStateRef<'_>, name: String, index: usize) -> CmdResult<StageValues> {
+    let st = state.inner().clone();
+    blocking(move || {
+        let ws = st.workspace.lock().unwrap();
+        Ok(StageValues { input: ws.stage_values(&name, index)?, output: ws.stage_values(&name, index + 1)? })
+    })
+    .await
+}
+
+/// Changes one block of the pipeline: "remove", "move" (to position `to`) or "replace".
+#[tauri::command]
+pub async fn workspace_step(app: AppHandle, state: AppStateRef<'_>, name: String, action: String, index: usize, to: Option<usize>, edit: Option<Edit>) -> CmdResult<WorkspaceView> {
+    ws_change(app, state, move |ws| {
+        match action.as_str() {
+            "remove" => ws.remove_step(&name, index)?,
+            "move" => ws.move_step(&name, index, to.ok_or("No target position given.")?)?,
+            "replace" => ws.replace_step(&name, index, edit.ok_or("No step given.")?)?,
+            other => return Err(format!("Unknown action '{other}'")),
+        }
+        Ok((vec![], vec![]))
     })
     .await
 }
@@ -1407,7 +1464,16 @@ fn build_report(st: &AppState, sections: &[String], app: &AppHandle) -> CmdResul
     {
         let guard = st.data.read().unwrap();
         if let Some(d) = guard.as_ref() {
-            c.source_file = Some(d.path.clone());
+            // The workspace is not a file: name the file (one file) or count them.
+            let named = {
+                let ws = st.workspace.lock().unwrap();
+                match ws.sources.as_slice() {
+                    [one] => one.path.clone(),
+                    [] => d.path.clone(),
+                    many => format!("{} files", many.len()),
+                }
+            };
+            c.source_file = Some(named);
             let info = d.info();
             c.summary = Some(DataSummary {
                 file_name: d.path.clone(),
@@ -1465,7 +1531,21 @@ fn build_report(st: &AppState, sections: &[String], app: &AppHandle) -> CmdResul
                 let ws = st.workspace.lock().unwrap();
                 for s in &d.signals {
                     if let Some(v) = ws.get(&s.column).filter(|v| !v.edits.is_empty()) {
-                        c.filters.push(FilterInfo { signal: s.label.clone(), description: v.edits.join(" → ") });
+                        let (source, blocks) = match ws.pipeline(&s.column) {
+                            Ok(p) => {
+                                let blocks = p
+                                    .stages
+                                    .iter()
+                                    .map(|st| {
+                                        let (kind, title, params) = st.step.block();
+                                        ReportBlock { kind: kind.into(), title, params: params.join(" · "), effect: st.effect() }
+                                    })
+                                    .collect();
+                                (p.source, blocks)
+                            }
+                            Err(_) => (String::new(), Vec::new()),
+                        };
+                        c.filters.push(FilterInfo { signal: s.label.clone(), description: v.edits.join(" → "), source, blocks });
                     }
                 }
             }

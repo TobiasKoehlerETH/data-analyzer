@@ -1,11 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeftRight, Search } from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CheckField, EmptyState, NumberInput, Panel } from "@/components/common";
+import { CheckField, EmptyState, Panel, Segmented } from "@/components/common";
 import { StackedChart, type ChartPanel } from "@/components/StackedChart";
 import { analysisVectors, type Vectors } from "@/lib/analysis";
 import { api } from "@/lib/api";
@@ -18,14 +15,13 @@ const MAX_PLOTS = PALETTE.length;
 export function TimeSeriesTab() {
   const { dataset, dataVersion, activeTab } = useApp();
   const loadedRequest = useRef("");
-  const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
-  const [groups, setGroups] = useState<Record<string, number>>({});
+  /** Stack: one plot per signal. Overlay: every signal in one plot. */
+  const [overlayAll, setOverlayAll] = useState(false);
   /** Colour slot per signal, kept while it stays selected so other plots never repaint. */
   const [slots, setSlots] = useState<Record<string, number>>({});
   const [data, setData] = useState<Vectors | null>(null);
   const [xColumn, setXColumn] = useState("__row");
-  const [coord, setCoord] = useState("");
   const [loading, setLoading] = useState(false);
   /** Workspace variables with edits, and their imported values when "Show original" is on. */
   const [editedNames, setEditedNames] = useState<string[]>([]);
@@ -40,11 +36,9 @@ export function TimeSeriesTab() {
   useEffect(() => {
     const initial = dataset?.signals.slice(0, 1).map((s) => s.column) ?? [];
     setSelected(initial);
-    setGroups(Object.fromEntries(initial.map((c, i) => [c, i + 1])));
     setSlots(Object.fromEntries(initial.map((c, i) => [c, i])));
     // Timestamped data opens on a date axis; everything else on row numbers.
     setXColumn(dataset?.time_origin != null ? "__time" : "__row");
-    setCoord("");
   }, [dataset?.path, dataset?.sheet]);
 
   const select = (cols: string[]) => {
@@ -55,9 +49,6 @@ export function TimeSeriesTab() {
       );
       c = c.slice(0, MAX_PLOTS);
     }
-    const g: Record<string, number> = {};
-    let next = Math.max(0, ...Object.values(groups)) + 1;
-    for (const col of c) g[col] = groups[col] ?? Math.min(MAX_PLOTS, next++);
     const used = new Set(c.filter((col) => slots[col] !== undefined).map((col) => slots[col]));
     const s: Record<string, number> = {};
     for (const col of c) {
@@ -70,10 +61,10 @@ export function TimeSeriesTab() {
       }
     }
     setSlots(s);
-    setGroups(g);
     setSelected(c);
   };
 
+  const groups = useMemo(() => Object.fromEntries(selected.map((c, i) => [c, overlayAll ? 1 : i + 1])) as Record<string, number>, [selected, overlayAll]);
   const origin = dataset?.time_origin ?? null;
   const dateAxis = xColumn === "__time" && origin !== null;
   const rowAxis = xColumn === "__row";
@@ -122,7 +113,7 @@ export function TimeSeriesTab() {
     const columns = [
       ...new Set([...selected, ...(xSignal !== null ? [xSignal] : [])]),
     ];
-    analysisVectors(columns)
+    analysisVectors(columns, 100_000)
       .then((v) => {
         if (!cancelled) { loadedRequest.current = requestKey; setData(v); }
       })
@@ -227,8 +218,6 @@ export function TimeSeriesTab() {
         : NonNullable<typeof dataset>["signals"]
     >();
     for (const s of dataset?.signals ?? []) {
-      if (search && !s.column.toLowerCase().includes(search.toLowerCase()))
-        continue;
       m.set(s.group, [...(m.get(s.group) ?? []), s]);
     }
     return [...m.entries()]
@@ -237,194 +226,72 @@ export function TimeSeriesTab() {
         ([g, l]) =>
           [g, [...l].sort((a, b) => a.name.localeCompare(b.name))] as const,
       );
-  }, [dataset, search]);
+  }, [dataset]);
 
-  if (!dataset)
-    return (
-      <EmptyState title="No data loaded">
-        Load a CSV, TXT or Excel file in the File tab to plot its signals.
-      </EmptyState>
-    );
+  if (!dataset) return <EmptyState title="No data loaded" />;
+
+  const single = grouped.length === 1;
 
   return (
     <div className="flex h-full gap-3">
-      <Panel
-        title="Signals"
-        className="w-[270px] shrink-0"
-        bodyClassName="flex flex-col gap-2 p-2"
-      >
-        <div className="relative">
-          <Search className="absolute top-2 left-2 size-4 text-ap-bluegray" />
-          <Input
-            className="h-8 pl-7"
-            placeholder="Search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
-        <div className="flex gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            className="flex-1"
-            onClick={() =>
-              select(grouped.flatMap(([, l]) => l.map((s) => s.column)))
-            }
-          >
-            All
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="flex-1"
-            onClick={() => select([])}
-          >
-            None
-          </Button>
-        </div>
-        <div className="min-h-0 flex-1 overflow-auto text-[12.5px]">
-          {grouped.map(([g, list]) => {
-            const n = list.filter((s) => selected.includes(s.column)).length;
-            return (
-              <div key={g} className="mb-1">
-                <label className="flex items-center gap-2 px-1 py-1 text-ap-red">
+      <Panel title="Signals" className="w-[250px] shrink-0" bodyClassName="flex min-h-0 flex-col gap-1 p-2">
+        <div className="min-h-0 flex-1 overflow-auto text-[13px]">
+          {grouped.map(([g, list]) => (
+            <div key={g} className="mb-2">
+              {!single && <p className="px-2 py-1 text-[12px] font-medium text-muted-foreground">{g}</p>}
+              {list.map((s) => (
+                <label key={s.column} className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-ap-bluegray-15">
                   <Checkbox
-                    checked={
-                      n === list.length ? true : n > 0 ? "indeterminate" : false
-                    }
-                    onCheckedChange={(v) =>
-                      select(
-                        v
-                          ? [
-                              ...selected,
-                              ...list
-                                .map((s) => s.column)
-                                .filter((c) => !selected.includes(c)),
-                            ]
-                          : selected.filter(
-                              (c) => !list.some((s) => s.column === c),
-                            ),
-                      )
-                    }
+                    checked={selected.includes(s.column)}
+                    onCheckedChange={(v) => select(v ? [...selected, s.column] : selected.filter((c) => c !== s.column))}
                   />
-                  {g}
+                  <span className="flex-1 truncate">{s.name}</span>
+                  {editedNames.includes(s.column) && <span className="size-1.5 shrink-0 rounded-full bg-ap-red" title="Processed in Prepare" />}
+                  {selected.includes(s.column) && <span className="h-0.5 w-3 shrink-0 rounded-full" style={{ background: seriesColor(slots[s.column] ?? 0) }} aria-hidden />}
                 </label>
-                {list.map((s) => (
-                  <label
-                    key={s.column}
-                    className="flex cursor-pointer items-center gap-2 py-0.5 pr-1 pl-6 hover:bg-ap-bluegray-15"
-                  >
-                    <Checkbox
-                      checked={selected.includes(s.column)}
-                      onCheckedChange={(v) =>
-                        select(
-                          v
-                            ? [...selected, s.column]
-                            : selected.filter((c) => c !== s.column),
-                        )
-                      }
-                    />
-                    <span className="flex-1 truncate">{s.name}</span>
-                    {editedNames.includes(s.column) && <span className="text-[10px] text-muted-foreground">edited</span>}
-                    {selected.includes(s.column) && (
-                      <span className="h-0.5 w-3 shrink-0 rounded-full" style={{ background: seriesColor(slots[s.column] ?? 0) }} aria-hidden />
-                    )}
-                    <span className="text-[11px] text-muted-foreground">
-                      {s.unit}
-                    </span>
-                  </label>
-                ))}
-              </div>
-            );
-          })}
+              ))}
+            </div>
+          ))}
         </div>
       </Panel>
-      <div className="flex min-w-0 flex-1 flex-col gap-2">
-        <div className="flex items-center gap-2">
-          <span className="text-[12.5px] text-muted-foreground">X axis</span>
-          <Select
-            value={xColumn}
-            onValueChange={(v) => {
-              setXColumn(v);
-              setCoord("");
-            }}
-          >
-            <SelectTrigger className="h-8 w-[300px]" aria-label="X axis">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="max-h-80">
-              <SelectItem value="__row">Row number</SelectItem>
-              <SelectItem value="__time">Time</SelectItem>
-              {dataset.signals.map((s) => (
-                <SelectItem key={s.column} value={`column:${s.column}`}>
-                  {s.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button
-            size="sm"
-            variant="outline"
-            aria-label="Swap X and Y"
-            title="Swap X and Y"
-            disabled={xSignal === null || selected.length !== 1}
-            onClick={() => {
-              if (xSignal !== null && selected.length === 1) {
-                setXColumn(`column:${selected[0]}`);
-                select([xSignal]);
-                setCoord("");
-              }
-            }}
-          >
-            <ArrowLeftRight className="size-4" />
-          </Button>
-          {xSignal === null && overlay.length > 0 && (
-            <span className="ml-3">
-              <CheckField checked={showOriginal} onChange={setShowOriginal} label="Show original" hint="Overlay the imported values (gray) behind signals edited in Prepare or Workspace" />
-            </span>
-          )}
-        </div>
-        {selected.length > 1 && (
-          <div className="flex flex-wrap items-center gap-3 border border-ap-line bg-ap-bluegray-15 px-3 py-1.5 text-xs">
-            <span className="text-ap-red">Plot #</span>
-            {selected.map((c) => (
-              <span
-                key={c}
-                className="flex items-center gap-1.5"
-                title="Signals with the same plot number are overlaid on the same subplot"
-              >
-                {dataset.signals.find((s) => s.column === c)?.name.slice(0, 18)}
-                <NumberInput
-                  className="w-14"
-                  integer
-                  min={1}
-                  max={MAX_PLOTS}
-                  value={groups[c] ?? 1}
-                  onChange={(v) => setGroups({ ...groups, [c]: v })}
-                />
-              </span>
-            ))}
+      <div className="flex min-w-0 flex-1 flex-col gap-3">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+          <div className="flex items-center gap-2">
+            <span className="text-[12.5px] text-muted-foreground">X</span>
+            <Select value={xColumn} onValueChange={setXColumn}>
+              <SelectTrigger className="h-8 w-[240px]" aria-label="X axis">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="max-h-80">
+                <SelectItem value="__row">Row number</SelectItem>
+                <SelectItem value="__time">Time</SelectItem>
+                {dataset.signals.map((s) => (
+                  <SelectItem key={s.column} value={`column:${s.column}`}>
+                    {s.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-        )}
-        <Panel className={`min-h-0 flex-1 transition-opacity ${loading ? "opacity-60" : ""}`} bodyClassName="p-1">
-          {selected.length === 0 ? (
-            <EmptyState title="Select signals from the panel on the left to plot." />
-          ) : (
-            <StackedChart
-              panels={panels}
-              xLabel={xLabel}
-              xDate={dateAxis}
-              resetKey={resetKey}
-              onZoom={xSignal === null ? setWin : undefined}
-              onCursor={(v) =>
-                setCoord(`${xLabel}: ${dateAxis ? new Date(v).toISOString().replace("T", " ").replace("Z", "") : v.toPrecision(6)}`)
-              }
+          {selected.length > 1 && (
+            <Segmented
+              value={overlayAll ? "overlay" : "stack"}
+              onChange={(v) => setOverlayAll(v === "overlay")}
+              options={[
+                { value: "stack", label: "Stacked" },
+                { value: "overlay", label: "Overlaid" },
+              ]}
             />
           )}
+          {xSignal === null && overlay.length > 0 && <CheckField checked={showOriginal} onChange={setShowOriginal} label="Show original" />}
+        </div>
+        <Panel className={`min-h-0 flex-1 transition-opacity ${loading ? "opacity-60" : ""}`} bodyClassName="p-1">
+          {selected.length === 0 ? (
+            <EmptyState title="Tick a signal to plot it" />
+          ) : (
+            <StackedChart panels={panels} xLabel={xLabel} xDate={dateAxis} resetKey={resetKey} onZoom={xSignal === null ? setWin : undefined} />
+          )}
         </Panel>
-        <p className="h-4 truncate font-mono text-[11px] text-muted-foreground">
-          {coord}
-        </p>
       </div>
     </div>
   );

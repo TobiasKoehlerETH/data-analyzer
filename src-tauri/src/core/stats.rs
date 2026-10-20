@@ -53,30 +53,34 @@ pub fn compute_descriptive_stats(signals: &[(String, Arc<Vec<f64>>)], cache: Opt
             return v;
         }
     }
-    let rows: Vec<StatRow> = signals
-        .iter()
-        .filter_map(|(name, data)| {
-            let clean: Vec<f64> = data.iter().copied().filter(|v| v.is_finite()).collect();
-            if clean.is_empty() {
-                return None;
-            }
-            let mut sorted = clean.clone();
-            sorted.sort_by(|a, b| a.total_cmp(b));
-            Some(StatRow {
-                signal: name.clone(),
-                count: clean.len(),
-                mean: mean(&clean),
-                std: std(&clean),
-                min: sorted[0],
-                q1: percentile_sorted(&sorted, 25.0),
-                median: percentile_sorted(&sorted, 50.0),
-                q3: percentile_sorted(&sorted, 75.0),
-                max: sorted[sorted.len() - 1],
-                skew: skew(&clean),
-                kurtosis: kurtosis(&clean),
-            })
+    let row_of = |(name, data): &(String, Arc<Vec<f64>>)| -> Option<StatRow> {
+        let clean: Vec<f64> = data.iter().copied().filter(|v| v.is_finite()).collect();
+        if clean.is_empty() {
+            return None;
+        }
+        let mut sorted = clean.clone();
+        sorted.sort_unstable_by(|a, b| a.total_cmp(b));
+        Some(StatRow {
+            signal: name.clone(),
+            count: clean.len(),
+            mean: mean(&clean),
+            std: std(&clean),
+            min: sorted[0],
+            q1: percentile_sorted(&sorted, 25.0),
+            median: percentile_sorted(&sorted, 50.0),
+            q3: percentile_sorted(&sorted, 75.0),
+            max: sorted[sorted.len() - 1],
+            skew: skew(&clean),
+            kurtosis: kurtosis(&clean),
         })
-        .collect();
+    };
+    // Signals are independent, so they are spread over the available cores (order is kept).
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(signals.len().max(1));
+    let chunk = signals.len().div_ceil(threads.max(1)).max(1);
+    let rows: Vec<StatRow> = std::thread::scope(|sc| {
+        let handles: Vec<_> = signals.chunks(chunk).map(|part| sc.spawn(|| part.iter().filter_map(&row_of).collect::<Vec<_>>())).collect();
+        handles.into_iter().flat_map(|h| h.join().unwrap_or_default()).collect()
+    });
     let rows = Arc::new(rows);
     if let Some(c) = cache {
         c.set(key, CacheValue::Stats(rows.clone()));

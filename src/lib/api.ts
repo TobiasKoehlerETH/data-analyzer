@@ -92,12 +92,25 @@ export interface SourceInfo {
   origin: number | null;
   /** Shift added to this file's time when aligning (seconds). */
   offset: number;
+  /** Seconds per row when the time comes from a conversion factor instead of a time column. */
+  row_step: number | null;
   start: number | null;
   duration: number;
   sample_rate: number;
 }
 
 export type Align = "time" | "clock" | "row";
+
+/** Where one row of a file sits in time. */
+export interface TimeMap {
+  /** 1-based row in the file. */
+  row: number;
+  rows: number;
+  /** Seconds on the aligned axis. */
+  time: number;
+  /** Clock time (UTC) when the file has timestamps. */
+  clock: string | null;
+}
 
 /** Reusable processing: steps per column name plus derived variables. */
 export interface Recipe {
@@ -116,6 +129,29 @@ export type VariableEdit =
   | { op: "clear_points"; value: number[] }
   | { op: "filter"; value: FilterStep }
   | { op: "normalize" | "zscore" | "demean" | "zero_start" | "invert" | "fill_gaps" };
+
+/** What one pipeline block did to the values it received. */
+export interface StageInfo {
+  label: string;
+  /** The step itself (times on the aligned axis). */
+  step: VariableEdit;
+  /** Missing samples after this block. */
+  missing: number;
+  removed: number;
+  filled: number;
+  changed: number;
+  rms_change: number | null;
+}
+
+export interface Pipeline {
+  /** "file.csv · column" or "= formula". */
+  source: string;
+  kind: "imported" | "derived";
+  rows: number;
+  /** Missing samples in the imported values. */
+  missing: number;
+  stages: StageInfo[];
+}
 
 /** One variable at its own samples (no interpolation), times on the aligned axis. */
 export interface VariableSamples {
@@ -377,6 +413,9 @@ export const api = {
   workspaceImportBatch: (paths: string[], folder: string | null, columns: string[] | null) =>
     invoke<WorkspaceView>("workspace_import_batch", { paths, folder, columns }),
   workspaceRemoveSource: (id: number) => invoke<WorkspaceView>("workspace_remove_source", { id }),
+  workspaceSetRowStep: (id: number, step: number | null) => invoke<WorkspaceView>("workspace_set_row_step", { id, step }),
+  /** A row of a file → its time, or a time → the nearest row. */
+  sourceTimeMap: (id: number, at: { row?: number; time?: number }) => invoke<TimeMap>("source_time_map", { id, row: at.row ?? null, time: at.time ?? null }),
   workspaceSetOffset: (id: number, offset: number) => invoke<WorkspaceView>("workspace_set_offset", { id, offset }),
   workspaceSetAlign: (align: Align, gridStep: number | null) => invoke<WorkspaceView>("workspace_set_align", { align, gridStep }),
   workspaceAddDerived: (name: string, formula: string) => invoke<WorkspaceView>("workspace_add_derived", { name, formula }),
@@ -384,6 +423,11 @@ export const api = {
   workspaceVariable: (name: string) => invoke<VariableSamples>("workspace_variable", { name }),
   /** Values a step would produce, without adding it (times on the aligned axis). */
   workspacePreview: (name: string, edit: VariableEdit) => invoke<number[]>("workspace_preview", { name, edit }),
+  workspacePipeline: (name: string) => invoke<Pipeline>("workspace_pipeline", { name }),
+  /** Values entering and leaving block `index` of the pipeline. */
+  workspaceStage: (name: string, index: number) => invoke<{ input: (number | null)[]; output: (number | null)[] }>("workspace_stage", { name, index }),
+  workspaceStep: (name: string, action: "remove" | "move" | "replace", index: number, opts: { to?: number; edit?: VariableEdit } = {}) =>
+    invoke<WorkspaceView>("workspace_step", { name, action, index, to: opts.to ?? null, edit: opts.edit ?? null }),
   recipeSave: (path: string, name: string, names: string[] | null) => invoke<Recipe>("recipe_save", { path, name, names }),
   recipeLoad: (path: string) => invoke<Recipe>("recipe_load", { path }),
   recipeApply: (recipe: Recipe, source: number | null) => invoke<WorkspaceView>("recipe_apply", { recipe, source }),

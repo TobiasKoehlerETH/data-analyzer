@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeftRight, Download, Play, Plus, RotateCcw } from "lucide-react";
+import { ArrowLeftRight, ChevronDown, Download, Play, Plus, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { EmptyState, NumberInput, Panel } from "@/components/common";
 import { Plot } from "@/components/Plot";
 import { analysisVectors, curveFit, downloadText, finitePairs, FIT_MODELS, type FitRequest, type FitResult, type Parameter, type Point } from "@/lib/analysis";
-import { INK, LINE_WIDTH, MARKER_SIZE, axis, baseLayout, esc, fmtG, seriesColor, wash } from "@/lib/chart";
+import { INK, axis, baseLayout, esc, fmtG, markerStyle, seriesColor, wash } from "@/lib/chart";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -53,6 +53,8 @@ export function CurveFitTab() {
   const [bands, setBands] = useState(true);
   const [residuals, setResiduals] = useState(true);
   const [busy, setBusy] = useState(false);
+  /** Coefficient bounds, X range and scaling stay out of the way until asked for. */
+  const [advanced, setAdvanced] = useState(false);
   const [error, setError] = useState("");
   const [fits, setFits] = useState<SavedFit[]>([]);
   const [active, setActive] = useState<number | null>(null);
@@ -72,11 +74,11 @@ export function CurveFitTab() {
     if (!dataset || !yCol || activeTab !== "curvefit") return;
     let cancelled = false;
     const cols = [...new Set([yCol, ...(xCol === ROW || xCol === TIME ? [] : [xCol])])];
-    analysisVectors(cols)
+    analysisVectors(cols, 200_000)
       .then((v) => {
         if (cancelled) return;
         const y = v.columns[yCol] ?? [];
-        const x = xCol === ROW ? y.map((_, i) => i + 1) : xCol === TIME ? v.time : (v.columns[xCol] ?? []);
+        const x = xCol === ROW ? y.map((_, i) => i * v.step + 1) : xCol === TIME ? v.time : (v.columns[xCol] ?? []);
         setPoints(finitePairs(x, y));
         setExcluded(new Set());
         setActive(null);
@@ -147,25 +149,25 @@ export function CurveFitTab() {
         name: yName,
         x: plotted.map((p) => p[0]),
         y: plotted.map((p) => p[1]),
-        marker: { color: colors, size: MARKER_SIZE, opacity: plotted.length > 2000 ? 0.55 : 0.85, line: { color: INK.surface, width: 1 } },
+        marker: markerStyle(plotted.length, colors),
         hovertemplate: `<b>%{y:.6~g}</b>  ${yName}<br><span style="color:${INK.muted}">${xName} %{x:.6~g} · click to exclude</span><extra></extra>`,
       },
     ];
     if (current && bands) {
       const [lo, hi] = [current.result.lower, current.result.upper];
       traces.push(
-        { type: "scatter", mode: "lines", name: "95% band", x: lo.map((p) => p[0]), y: lo.map((p) => p[1]), line: { width: 0, color: fit }, hoverinfo: "skip", showlegend: false },
-        { type: "scatter", mode: "lines", name: "95% band", x: hi.map((p) => p[0]), y: hi.map((p) => p[1]), line: { width: 0, color: fit }, fill: "tonexty", fillcolor: wash(fit, 0.12), hoverinfo: "skip" },
+        { type: "scattergl", mode: "lines", name: "95% band", x: lo.map((p) => p[0]), y: lo.map((p) => p[1]), line: { width: 0, color: fit }, hoverinfo: "skip", showlegend: false },
+        { type: "scattergl", mode: "lines", name: "95% band", x: hi.map((p) => p[0]), y: hi.map((p) => p[1]), line: { width: 0, color: fit }, fill: "tonexty", fillcolor: wash(fit, 0.16), hoverinfo: "skip" },
       );
     }
     if (current) {
       traces.push({
-        type: "scatter",
+        type: "scattergl",
         mode: "lines",
         name: "Fit",
         x: current.result.curve.map((p) => p[0]),
         y: current.result.curve.map((p) => p[1]),
-        line: { color: fit, width: LINE_WIDTH },
+        line: { color: fit, width: 3 },
         hovertemplate: `<b>%{y:.6~g}</b>  fit<extra></extra>`,
       });
     }
@@ -180,7 +182,7 @@ export function CurveFitTab() {
         x: res.map((p) => p[0]),
         y: res.map((p) => p[1]),
         showlegend: false,
-        marker: { color: data, size: MARKER_SIZE - 2, opacity: 0.7, line: { color: INK.surface, width: 1 } },
+        marker: markerStyle(res.length, data),
         hovertemplate: `<b>%{y:.4~g}</b>  residual<extra></extra>`,
       });
     }
@@ -203,7 +205,7 @@ export function CurveFitTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [points, current, bands, residuals, excluded, range, xCol, yCol, step]);
 
-  if (!dataset) return <EmptyState title="Workspace is empty" />;
+  if (!dataset) return <EmptyState title="No data loaded" />;
 
   const columns = [
     { value: ROW, label: "Row" },
@@ -279,15 +281,21 @@ export function CurveFitTab() {
               placeholder="a*exp(-x/b)+c"
             />
           ) : (
-            <code className="bg-ap-bluegray-15 px-2 py-1.5 text-[12px] break-all">y = {expression}</code>
+            <code className="rounded-md bg-ap-bluegray-15 px-2.5 py-1.5 text-[12.5px] break-all">y = {expression}</code>
           )}
           <Button onClick={run} disabled={busy || included.length < 3}>
             <Play /> {busy ? "Fitting…" : "Fit"}
           </Button>
-          <p className="text-[11.5px] text-muted-foreground tabular-nums">{included.length.toLocaleString("en-US")} points</p>
+          <button
+            onClick={() => setAdvanced((v) => !v)}
+            aria-expanded={advanced}
+            className="flex items-center gap-1 self-start text-[12.5px] text-muted-foreground hover:text-foreground"
+          >
+            <ChevronDown className={cn("size-3.5 transition-transform", !advanced && "-rotate-90")} /> Advanced
+          </button>
         </Panel>
 
-        <Panel title="Options" bodyClassName="flex flex-col gap-2.5">
+        {advanced && <Panel title="Advanced" bodyClassName="flex flex-col gap-2.5">
           <div className="grid grid-cols-2 gap-2">
             {[0, 1].map((i) => (
               <Input
@@ -411,7 +419,7 @@ export function CurveFitTab() {
               </div>
             )}
           </div>
-        </Panel>
+        </Panel>}
 
         {fits.length > 0 && (
           <Panel title="Fits" bodyClassName="p-1">
@@ -455,7 +463,7 @@ export function CurveFitTab() {
               <Check checked={residuals} onChange={setResiduals} label="Residuals" />
             </>
           }
-          title={points.length > 10000 ? "Click points to exclude · preview sampled" : "Click points to exclude"}
+          title="Click a point to leave it out"
         >
           <Plot
             data={preview.data}

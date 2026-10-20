@@ -40,6 +40,7 @@ async fn dispatch(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String>
         "workspace_view" => ok(c::workspace_view(st())),
         "workspace_remove" => { args!(a; names: Vec<String>); ok(c::workspace_remove(app.clone(), st(), names).await?) }
         "workspace_rename" => { args!(a; old: String, new: String); ok(c::workspace_rename(app.clone(), st(), old, new).await?) }
+        "workspace_set_row_step" => { args!(a; id: u32, step: Option<f64>); ok(c::workspace_set_row_step(app.clone(), st(), id, step).await?) }
         "workspace_set_time" => { args!(a; name: String, time: bool); ok(c::workspace_set_time(app.clone(), st(), name, time).await?) }
         "workspace_import_batch" => { args!(a; paths: Vec<String>, folder: Option<String>, columns: Option<Vec<String>>); ok(c::workspace_import_batch(app.clone(), st(), paths, folder, columns).await?) }
         "workspace_remove_source" => { args!(a; id: u32); ok(c::workspace_remove_source(app.clone(), st(), id).await?) }
@@ -57,12 +58,16 @@ async fn dispatch(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String>
         "workspace_edit" => { args!(a; name: String, action: String, edit: Option<crate::core::workspace::Edit>); ok(c::workspace_edit(app.clone(), st(), name, action, edit).await?) }
         "category_vector" => { args!(a; name: String); ok(c::category_vector(st(), name).await?) }
         "workspace_preview" => { args!(a; name: String, edit: crate::core::workspace::Edit); ok(c::workspace_preview(st(), name, edit).await?) }
+        "source_time_map" => { args!(a; id: u32, row: Option<usize>, time: Option<f64>); ok(c::source_time_map(st(), id, row, time).await?) }
+        "workspace_pipeline" => { args!(a; name: String); ok(c::workspace_pipeline(st(), name).await?) }
+        "workspace_stage" => { args!(a; name: String, index: usize); ok(c::workspace_stage(st(), name, index).await?) }
+        "workspace_step" => { args!(a; name: String, action: String, index: usize, to: Option<usize>, edit: Option<crate::core::workspace::Edit>); ok(c::workspace_step(app.clone(), st(), name, action, index, to, edit).await?) }
         "workspace_vectors" => { args!(a; names: Vec<String>, range: Option<[f64; 2]>, maxPoints: Option<usize>, row: Option<bool>); ok(c::workspace_vectors(st(), names, range, maxPoints, row).await?) }
         "workspace_clear" => ok(c::workspace_clear(app.clone(), st()).await?),
         "export_dataset" => { args!(a; path: String); ok(c::export_dataset(st(), path).await?) }
         "dataset_info" => ok(c::dataset_info(st())),
         "descriptive_stats" => ok(c::descriptive_stats(st()).await?),
-        "analysis_vectors" => { args!(a; columns: Vec<String>); ok(c::analysis_vectors(st(), columns).await?) }
+        "analysis_vectors" => { args!(a; columns: Vec<String>, maxPoints: Option<usize>); ok(c::analysis_vectors(st(), columns, maxPoints).await?) }
         "curve_fit" => { let request = serde_json::from_value(a2.get("request").cloned().unwrap_or(Value::Null)).map_err(|e| e.to_string())?; ok(c::curve_fit(request).await?) }
         "get_series" => { args!(a; columns: Vec<String>, range: Option<[f64; 2]>, maxPoints: usize, row: Option<bool>); ok(c::get_series(st(), columns, range, maxPoints, row)?) }
         "values_at" => { args!(a; columns: Vec<String>, t: f64); ok(c::values_at(st(), columns, t)?) }

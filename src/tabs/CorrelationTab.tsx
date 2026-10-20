@@ -1,58 +1,39 @@
 import { useEffect, useMemo, useState } from "react";
-import { Calculator, Clock, ScatterChart } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { EmptyState, Field, Panel, StatusText } from "@/components/common";
+import { EmptyState, Panel, Segmented, StatusText } from "@/components/common";
 import { Plot } from "@/components/Plot";
-import { SignalSelect } from "@/components/SignalSelect";
 import { StackedChart, type ChartPanel } from "@/components/StackedChart";
-import { api, errorText, type CorrelationView, type PairAnalysis, type PairDto } from "@/lib/api";
+import { api, errorText, type CorrelationView, type PairAnalysis } from "@/lib/api";
 import { DIVERGING, INK, axis, baseLayout, esc, seriesColor, zip } from "@/lib/chart";
 import { useApp } from "@/lib/store";
-import { cn } from "@/lib/utils";
 
+/** Which signals move together: a matrix to read at a glance, then one pair in detail. */
 export function CorrelationTab() {
   const { dataset, dataVersion, activeTab } = useApp();
   const [result, setResult] = useState<CorrelationView | null>(null);
-  const [method, setMethod] = useState<"Pearson" | "Spearman">("Pearson");
-  const [pairs, setPairs] = useState<PairDto[]>([]);
-  const [selectedPair, setSelectedPair] = useState<number | null>(null);
-  const [a, setA] = useState<string | null>(null);
-  const [b, setB] = useState<string | null>(null);
+  const [method, setMethod] = useState<"pearson" | "spearman">("pearson");
   const [pair, setPair] = useState<PairAnalysis | null>(null);
-  const [status, setStatus] = useState<{ text: string; error?: boolean }>({ text: "" });
+  const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     setResult(null);
-    setPairs([]);
     setPair(null);
-    setSelectedPair(null);
-    setA(dataset?.signals[0]?.column ?? null);
-    setB(dataset?.signals[1]?.column ?? null);
   }, [dataset?.path]);
-
-  useEffect(() => {
-    // Filtering invalidates the correlation matrix.
-    if (result) setStatus({ text: "Data changed — recompute correlations to update." });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataVersion]);
 
   const compute = async () => {
     setBusy(true);
     try {
       const r = await api.correlationCompute();
       setResult(r);
-      setPairs(r.top_pairs);
-      setStatus({ text: `Correlation matrix for ${r.columns.length} signals. Click a cell or pair to analyse it.` });
+      setError("");
     } catch (e) {
-      setStatus({ text: errorText(e), error: true });
+      setError(errorText(e));
     } finally {
       setBusy(false);
     }
   };
 
-  // Computed on first visit (and after data changes) rather than at import.
+  // Computed on the first visit and again after the data changed, never at import.
   const [computedFor, setComputedFor] = useState(-1);
   useEffect(() => {
     if (activeTab !== "correlation" || !dataset || busy || computedFor === dataVersion) return;
@@ -66,13 +47,13 @@ export function CorrelationTab() {
     try {
       setPair(await api.correlationPair(ca, cb));
     } catch (e) {
-      setStatus({ text: errorText(e), error: true });
+      setError(errorText(e));
     }
   };
 
   const heatmap = useMemo(() => {
     if (!result) return null;
-    const m = method === "Spearman" ? result.spearman : result.pearson;
+    const m = method === "spearman" ? result.spearman : result.pearson;
     const names = result.names.map((n) => esc(n.length > 22 ? n.slice(0, 21) + "…" : n));
     const full = result.names.map(esc);
     const showValues = names.length <= 12;
@@ -99,7 +80,7 @@ export function CorrelationTab() {
       layout: baseLayout({
         hovermode: "closest",
         dragmode: false,
-        margin: { l: 8, r: 8, t: 32, b: 8 },
+        margin: { l: 8, r: 8, t: 16, b: 8 },
         xaxis: axis(undefined, { type: "category", showgrid: false, showline: false, ticks: "", tickangle: -60, tickfont: { size: 11, color: INK.secondary } }),
         yaxis: axis(undefined, { type: "category", showgrid: false, showline: false, ticks: "", autorange: "reversed", tickfont: { size: 11, color: INK.secondary } }),
       }),
@@ -107,124 +88,63 @@ export function CorrelationTab() {
   }, [result, method]);
 
   const scatterPanels: ChartPanel[] = useMemo(
-    () =>
-      pair
-        ? [{ id: "s", yLabel: pair.label_b, series: [{ name: "Samples", color: seriesColor(0), data: zip(pair.scatter.x, pair.scatter.y), type: "scatter" }] }]
-        : [],
+    () => (pair ? [{ id: "s", yLabel: pair.label_b, series: [{ name: "Samples", color: seriesColor(0), data: zip(pair.scatter.x, pair.scatter.y), type: "scatter" }] }] : []),
     [pair],
   );
   const lagPanels: ChartPanel[] = useMemo(
-    () =>
-      pair
-        ? [{ id: "l", yLabel: "Correlation", hLines: [{ y: 0 }], series: [{ name: "Cross-correlation", color: seriesColor(0), data: zip(pair.lags, pair.corr) }] }]
-        : [],
+    () => (pair ? [{ id: "l", yLabel: "Correlation", hLines: [{ y: 0 }], series: [{ name: "Cross-correlation", color: seriesColor(0), data: zip(pair.lags, pair.corr) }] }] : []),
     [pair],
   );
 
-  if (!dataset) return <EmptyState title="No data loaded">Load a file in the File tab to analyse correlations.</EmptyState>;
+  if (!dataset) return <EmptyState title="No data loaded" />;
 
   return (
-    <div className="flex h-full flex-col gap-3">
-      <div className="flex items-center gap-3">
-        <Button onClick={compute} disabled={busy} title="Compute the full correlation matrix for all numeric signals">
-          <Calculator /> {result ? "Recompute" : "Compute Correlations"}
-        </Button>
-        <Field label="Method" className="w-56" hint="Pearson measures linear correlation; Spearman measures monotonic relationships">
-          <Select value={method} onValueChange={(v) => setMethod(v as "Pearson" | "Spearman")}>
-            <SelectTrigger className="h-8 w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="Pearson">Pearson</SelectItem>
-              <SelectItem value="Spearman">Spearman</SelectItem>
-            </SelectContent>
-          </Select>
-        </Field>
-        <StatusText tone={status.error ? "error" : "muted"}>{status.text}</StatusText>
-      </div>
-      <div className="flex min-h-0 flex-1 gap-3">
-        <Panel title={`${method} correlation matrix`} className="min-w-0 flex-[2]" bodyClassName="p-1">
-          {heatmap ? (
-            <Plot
-              data={heatmap.data}
-              layout={heatmap.layout}
-              uirevision={method}
-              table={() => ({
-                columns: ["Signal A", "Signal B", "r"],
-                rows: result!.names.flatMap((na, i) => result!.names.map((nb, j) => [na, nb, (method === "Spearman" ? result!.spearman : result!.pearson)[i][j]])),
-              })}
-              events={{
-                click: (e: { points?: { pointNumber: [number, number] }[] }) => {
-                  const pn = e.points?.[0]?.pointNumber;
-                  if (!result || !pn) return;
-                  const [i, j] = pn;
-                  if (i !== j) showPair(result.columns[i], result.columns[j]);
-                },
-              }}
-            />
-          ) : (
-            <EmptyState title="Click 'Compute Correlations'">The matrix is pre-computed in the background when a file is loaded, so this is instant.</EmptyState>
-          )}
-        </Panel>
-        <div className="flex w-[320px] shrink-0 flex-col gap-3">
-          <Panel title="Top correlated pairs · |r|" className="min-h-0 flex-1" bodyClassName="p-0 overflow-auto">
-            <ul>
-              {pairs.map((p, i) => (
-                <li
-                  key={i}
-                  onClick={() => {
-                    setSelectedPair(i);
-                    showPair(p.signal_a, p.signal_b);
-                  }}
-                  className={cn("cursor-pointer border-b border-ap-line px-2.5 py-1.5 text-[12px] hover:bg-ap-bluegray-15", selectedPair === i && "bg-ap-bluegray-15")}
-                  title="Click to view scatter plot and cross-correlation"
-                >
-                  <span className="mr-1.5 inline-block w-11 font-medium tabular-nums">{Math.abs(p.pearson_r).toFixed(3)}</span>
-                  {p.name_a} ↔ {p.name_b}
-                  {p.lag_seconds !== 0 && <span className="text-muted-foreground">, lag={p.lag_seconds.toFixed(1)}s</span>}
-                </li>
-              ))}
-              {pairs.length === 0 && <li className="p-3 text-xs text-muted-foreground">Compute correlations to rank the top 20 pairs.</li>}
-            </ul>
-          </Panel>
-          <Panel title="Custom pair" bodyClassName="flex flex-col gap-2">
-            <Field label="Signal A">
-              <SignalSelect signals={dataset.signals} value={a} onChange={setA} />
-            </Field>
-            <Field label="Signal B">
-              <SignalSelect signals={dataset.signals} value={b} onChange={setB} />
-            </Field>
-            <Button size="sm" variant="outline" disabled={!a || !b || a === b} onClick={() => a && b && showPair(a, b)}>
-              <ScatterChart /> Analyse Pair
-            </Button>
-          </Panel>
-          <Button
-            variant="outline"
-            disabled={!result}
-            title="Compute the optimal lag (±300 s) for each top pair using cross-correlation"
-            onClick={async () => {
-              setBusy(true);
-              try {
-                setPairs(await api.correlationLags());
-                setStatus({ text: "Lag analysis complete." });
-              } catch (e) {
-                setStatus({ text: errorText(e), error: true });
-              } finally {
-                setBusy(false);
-              }
+    <div className="flex h-full min-h-0 gap-3">
+      <Panel
+        className="min-w-0 flex-[3]"
+        bodyClassName="p-1"
+        actions={
+          <Segmented
+            value={method}
+            onChange={setMethod}
+            options={[
+              { value: "pearson", label: "Pearson", hint: "Linear relationships" },
+              { value: "spearman", label: "Spearman", hint: "Any steadily rising or falling relationship" },
+            ]}
+          />
+        }
+      >
+        {heatmap ? (
+          <Plot
+            zoom={false}
+            data={heatmap.data}
+            layout={heatmap.layout}
+            uirevision={method}
+            table={() => ({
+              columns: ["Signal A", "Signal B", "r"],
+              rows: result!.names.flatMap((na, i) => result!.names.map((nb, j) => [na, nb, (method === "spearman" ? result!.spearman : result!.pearson)[i][j]])),
+            })}
+            events={{
+              click: (e: { points?: { pointNumber: [number, number] }[] }) => {
+                const pn = e.points?.[0]?.pointNumber;
+                if (!result || !pn) return;
+                const [i, j] = pn;
+                if (i !== j) showPair(result.columns[i], result.columns[j]);
+              },
             }}
-          >
-            <Clock /> Compute Lag Analysis
-          </Button>
-        </div>
-        <div className="flex min-w-0 flex-[2] flex-col gap-3">
-          <Panel title={pair ? `Scatter · r = ${pair.pearson_r.toFixed(3)}` : "Scatter plot"} className="min-h-0 flex-1" bodyClassName="p-1">
-            {pair ? <StackedChart panels={scatterPanels} xLabel={pair.label_a} /> : <EmptyState title="Select a pair" />}
-          </Panel>
-          <Panel title="Cross-correlation (lag)" className="min-h-0 flex-1" bodyClassName="p-1">
-            {pair && <StackedChart panels={lagPanels} xLabel="Lag [samples]" />}
-          </Panel>
-        </div>
+          />
+        ) : (
+          <EmptyState title={busy ? "Calculating…" : "No result"} />
+        )}
+      </Panel>
+      <div className="flex min-w-0 flex-[2] flex-col gap-3">
+        <Panel title={pair ? `${pair.label_a} vs ${pair.label_b}` : "Pair"} className="min-h-0 flex-1" bodyClassName="p-1">
+          {pair ? <StackedChart panels={scatterPanels} xLabel={pair.label_a} /> : <EmptyState title="Click a cell or a pair" />}
+        </Panel>
+        <Panel title="Lag" className="min-h-0 flex-1" bodyClassName="p-1">
+          {pair ? <StackedChart panels={lagPanels} xLabel="Lag [samples]" /> : null}
+        </Panel>
+        {error && <StatusText tone="error">{error}</StatusText>}
       </div>
     </div>
   );

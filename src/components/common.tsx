@@ -21,14 +21,14 @@ export function Panel({
   bodyClassName?: string;
 }) {
   return (
-    <section className={cn("flex min-h-0 flex-col rounded-sm border border-ap-line bg-white", className)}>
+    <section className={cn("flex min-h-0 flex-col rounded-xl border border-ap-line bg-white shadow-[var(--ap-shadow-sm)]", className)}>
       {(title || actions) && (
-        <header className="flex min-h-9 items-center justify-between gap-2 border-b border-ap-line px-3 py-1.5">
+        <header className="flex min-h-11 items-center justify-between gap-2 px-4 pt-2">
           {title && <h3 className="ap-eyebrow truncate">{title}</h3>}
           {actions && <div className="flex items-center gap-1">{actions}</div>}
         </header>
       )}
-      <div className={cn("min-h-0 flex-1 p-3", bodyClassName)}>{children}</div>
+      <div className={cn("min-h-0 flex-1 p-4", title || actions ? "pt-2" : "", bodyClassName)}>{children}</div>
     </section>
   );
 }
@@ -36,7 +36,7 @@ export function Panel({
 export function Field({ label, children, className, hint }: { label: string; children: ReactNode; className?: string; hint?: string }) {
   const field = (
     <div className={cn("flex items-center gap-2", className)}>
-      <Label className="shrink-0 text-[12px] font-normal text-muted-foreground">{label}</Label>
+      <Label className="shrink-0 text-[12.5px] font-normal text-muted-foreground">{label}</Label>
       <div className="min-w-0 flex-1">{children}</div>
     </div>
   );
@@ -144,7 +144,7 @@ export function CheckList({
         return (
           <li key={it.id}>
             <label
-              className="flex cursor-pointer items-center gap-2 px-2 py-1 text-[12.5px] hover:bg-ap-bluegray-15"
+              className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-[13px] hover:bg-ap-bluegray-15"
               title={it.hint ?? it.label}
             >
               <Checkbox
@@ -165,8 +165,8 @@ export function EmptyState({ title, children, icon }: { title: string; children?
   return (
     <div className="flex h-full min-h-40 flex-col items-center justify-center gap-2 p-6 text-center">
       {icon && <div className="text-ap-bluegray-60">{icon}</div>}
-      <p className="text-[15px] text-ap-red">{title}</p>
-      {children && <div className="max-w-md text-xs leading-relaxed text-muted-foreground">{children}</div>}
+      <p className="text-[15px] font-semibold text-foreground">{title}</p>
+      {children && <div className="max-w-md text-[13px] leading-relaxed text-muted-foreground">{children}</div>}
     </div>
   );
 }
@@ -175,7 +175,7 @@ export function EmptyState({ title, children, icon }: { title: string; children?
 export function StaleNote({ version }: { version: number | null }) {
   const current = useApp((s) => s.dataVersion);
   if (version === null || version === current) return null;
-  return <p className="text-xs text-ap-darkblue">The data changed since this result was computed. Run it again to update it.</p>;
+  return <p className="rounded-md bg-ap-red-soft px-2.5 py-1.5 text-xs text-ap-red-dark">The data changed since this result was computed. Run it again to update it.</p>;
 }
 
 export function StatusText({ children, tone = "muted" }: { children: ReactNode; tone?: "muted" | "error" | "ok" }) {
@@ -219,7 +219,7 @@ export function Radios<T extends string>({
   return (
     <RadioGroup value={value} onValueChange={(v) => onChange(v as T)} className={cn("flex flex-wrap gap-x-4 gap-y-1", className)}>
       {options.map((o) => (
-        <label key={o.value} className="flex cursor-pointer items-center gap-1.5 text-[12.5px]" title={o.hint}>
+        <label key={o.value} className="flex cursor-pointer items-center gap-1.5 text-[13px]" title={o.hint}>
           <RadioGroupItem value={o.value} />
           {o.label}
         </label>
@@ -230,9 +230,42 @@ export function Radios<T extends string>({
 
 export function CheckField({ checked, onChange, label, hint }: { checked: boolean; onChange: (v: boolean) => void; label: string; hint?: string }) {
   return (
-    <label className="flex cursor-pointer items-center gap-2 text-[12.5px]" title={hint}>
+    <label className="flex cursor-pointer items-center gap-2 text-[13px]" title={hint}>
       <Checkbox checked={checked} onCheckedChange={(v) => onChange(!!v)} />
       {label}
     </label>
+  );
+}
+
+/** Pill-style switch between a few options. */
+export function Segmented<T extends string>({
+  value,
+  onChange,
+  options,
+  className,
+}: {
+  value: T;
+  onChange: (v: T) => void;
+  options: { value: T; label: string; hint?: string }[];
+  className?: string;
+}) {
+  return (
+    <div role="tablist" className={cn("inline-flex items-center gap-0.5 rounded-lg bg-[#e8eaee] p-0.5", className)}>
+      {options.map((o) => (
+        <button
+          key={o.value}
+          role="tab"
+          aria-selected={o.value === value}
+          title={o.hint}
+          onClick={() => onChange(o.value)}
+          className={cn(
+            "h-7 rounded-md px-3 text-[13px] whitespace-nowrap transition-colors",
+            o.value === value ? "bg-white font-semibold text-foreground shadow-[var(--ap-shadow-sm)]" : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
   );
 }

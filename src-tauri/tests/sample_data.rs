@@ -80,7 +80,7 @@ fn sample_pipeline() {
     let content = ReportContent { metadata: Some(ds.metadata.clone()), stats: Some(stats.as_ref().clone()), ..Default::default() };
     let (p, _) = generate_report(&out, "html", &content, &|_, _| {}).unwrap();
     let html = std::fs::read_to_string(p).unwrap();
-    assert!(html.contains("Descriptive statistics") && html.contains("synthetic"));
+    assert!(html.contains("<h2>Statistics</h2>") && html.contains("synthetic"));
     assert!(html.contains("cover-band") && html.contains("data:image/png;base64"));
     std::fs::copy(&out, std::env::temp_dir().join("da_sample_report_copy.html")).ok();
     println!("total: {:?}", t0.elapsed());

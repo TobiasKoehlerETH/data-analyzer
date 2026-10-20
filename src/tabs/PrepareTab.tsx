@@ -1,40 +1,33 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, AudioWaveform, Crop, Eraser, RotateCcw, Sparkles, Spline, Trash2, Undo2, Zap } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { CheckField, EmptyState, Field, NumberInput, Panel, Radios, StatusText } from "@/components/common";
-import { FilterParams } from "@/components/FilterParams";
+import { EmptyState, Field, Panel, Segmented, StatusText } from "@/components/common";
+import { PipelineDiagram, blockInfo, type AddChoice } from "@/components/PipelineDiagram";
 import { SignalSelect } from "@/components/SignalSelect";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { StackedChart, type ChartPanel } from "@/components/StackedChart";
-import { api, errorText, type FilterStep, type FilterType, type Suggestion, type VariableEdit, type VariableSamples } from "@/lib/api";
-import { defaultStep, describeStep, FILTER_TYPES, filterTitle } from "@/lib/filters";
-import { INK, fmtG, seriesColor } from "@/lib/chart";
+import { api, errorText, type Pipeline, type VariableEdit, type VariableSamples } from "@/lib/api";
+import { INK, seriesColor } from "@/lib/chart";
 import { useApp } from "@/lib/store";
 
-type Box = { panel: number; x: [number, number]; y: [number, number] };
-
 const finite = (v: number | null | undefined): v is number => typeof v === "number" && Number.isFinite(v);
+const round = (n: number) => Number(n.toPrecision(6));
 
-/** Clean one workspace variable while the imported values stay visible in gray. */
+/** Clean one signal as a pipeline of steps; the imported values stay visible in gray. */
 export function PrepareTab() {
-  const { dataset, dataVersion, activeTab, setDataset, setActiveTab, prepareVariable, setPrepareVariable } = useApp();
+  const { dataset, dataVersion, activeTab, setDataset, prepareVariable, setPrepareVariable, showStatus } = useApp();
   const [column, setColumn] = useState<string | null>(null);
   const [xMode, setXMode] = useState<"time" | "row">("time");
-  const [showChange, setShowChange] = useState(true);
   const [vec, setVec] = useState<VariableSamples | null>(null);
+  const [pipeline, setPipeline] = useState<Pipeline | null>(null);
   const [loading, setLoading] = useState(false);
-  const [box, setBox] = useState<Box | null>(null);
-  const [selectionKey, setSelectionKey] = useState(0);
-  const [spikeK, setSpikeK] = useState(4);
-  const [offset, setOffset] = useState(0);
-  const [scale, setScale] = useState(1);
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState<{ text: string; error?: boolean }>({ text: "" });
-  /** Filter being designed: previewed on the plot, added as a step. */
-  const [filter, setFilter] = useState<FilterStep>(defaultStep("lowpass"));
-  const [previewOn, setPreviewOn] = useState(false);
+  const [error, setError] = useState("");
+  /** Step whose input and output the plot shows (null = original vs final). */
+  const [block, setBlock] = useState<number | null>(null);
+  const [probe, setProbe] = useState<{ input: (number | null)[]; output: (number | null)[] } | null>(null);
+  /** A step being set up: previewed on the plot until it is added. */
+  const [draft, setDraft] = useState<VariableEdit | null>(null);
   const [preview, setPreview] = useState<number[] | null>(null);
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [suggestions, setSuggestions] = useState<{ reason: string; step: VariableEdit }[]>([]);
+  const [viewRange, setViewRange] = useState<[number, number] | null>(null);
 
   useEffect(() => {
     if (!dataset) return;
@@ -50,44 +43,74 @@ export function PrepareTab() {
     if (!column || activeTab !== "prepare") return;
     let cancelled = false;
     setLoading(true);
-    api
-      .workspaceVariable(column)
-      .then((v) => !cancelled && setVec(v))
-      .catch((e) => !cancelled && setStatus({ text: errorText(e), error: true }))
+    Promise.all([api.workspaceVariable(column), api.workspacePipeline(column)])
+      .then(([v, p]) => {
+        if (cancelled) return;
+        setVec(v);
+        setPipeline(p);
+        setError("");
+      })
+      .catch((e) => !cancelled && setError(errorText(e)))
       .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;
     };
   }, [column, dataVersion, activeTab]);
 
-  useEffect(() => setSuggestions([]), [column]);
-  // Live preview of the filter on the current values (not committed).
+  // A different signal starts clean.
   useEffect(() => {
-    if (!previewOn || !column || !vec) {
+    setBlock(null);
+    setDraft(null);
+    setSuggestions([]);
+    setViewRange(null);
+    setError("");
+  }, [column, xMode]);
+
+  // Values on both sides of the selected step.
+  useEffect(() => {
+    if (block === null || !column || !pipeline || block >= pipeline.stages.length) {
+      setProbe(null);
+      return;
+    }
+    let cancelled = false;
+    api
+      .workspaceStage(column, block)
+      .then((p) => !cancelled && setProbe(p))
+      .catch((e) => !cancelled && setError(errorText(e)));
+    return () => {
+      cancelled = true;
+    };
+  }, [block, column, pipeline]);
+
+  // Live preview of the step being set up (not committed).
+  useEffect(() => {
+    if (!draft || !column) {
       setPreview(null);
       return;
     }
     let cancelled = false;
     const t = setTimeout(() => {
       api
-        .workspacePreview(column, { op: "filter", value: filter })
-        .then((v) => !cancelled && setPreview(v))
-        .catch((e) => !cancelled && setStatus({ text: errorText(e), error: true }));
+        .workspacePreview(column, draft)
+        .then((v) => {
+          if (cancelled) return;
+          setPreview(v);
+          setError("");
+        })
+        .catch((e) => {
+          if (cancelled) return;
+          setPreview(null);
+          setError(errorText(e));
+        });
     }, 200);
     return () => {
       cancelled = true;
       clearTimeout(t);
     };
-  }, [previewOn, filter, column, vec]);
-
-  const clearSelection = () => {
-    setBox(null);
-    setSelectionKey((k) => k + 1);
-  };
-  useEffect(clearSelection, [column, xMode]);
+  }, [draft, column, vec]);
 
   const label = dataset?.signals.find((s) => s.column === column)?.label ?? column ?? "";
-  // The variable's own samples: no interpolation, times on the aligned axis.
+  // The signal's own samples: no interpolation, times on the aligned axis.
   const time = useMemo(() => vec?.time ?? [], [vec]);
   const origin = vec?.time_origin ?? null;
   const dateAxis = xMode === "time" && origin !== null;
@@ -97,105 +120,113 @@ export function PrepareTab() {
   );
   const edited = !!vec && vec.edits.length > 0;
 
-  const stats = useMemo(() => {
-    if (!vec) return null;
-    let missing = 0;
-    let changed = 0;
-    let gaps = 0;
-    let seen = false;
-    let pending = 0;
-    for (let i = 0; i < vec.edited.length; i++) {
-      const a = vec.original[i];
-      const b = vec.edited[i];
-      if (!finite(b)) {
-        missing++;
-        if (seen) pending++;
-      } else {
-        gaps += pending;
-        pending = 0;
-        seen = true;
-      }
-      if (finite(a) !== finite(b) || (finite(a) && finite(b) && a !== b)) changed++;
-    }
-    return { rows: vec.edited.length, missing, changed, gaps };
-  }, [vec]);
-
-  const selection = useMemo(() => {
-    if (!box || !vec) return null;
-    let first = -1;
-    let last = -1;
-    const points: number[] = [];
-    for (let i = 0; i < x.length; i++) {
-      const xi = x[i];
-      if (!finite(xi) || xi < box.x[0] || xi > box.x[1]) continue;
-      if (first < 0) first = i;
-      last = i;
-      const y = vec.edited[i];
-      if (box.panel === 0 && finite(y) && y >= box.y[0] && y <= box.y[1]) points.push(i);
-    }
-    // Edits are stored as times, so they replay correctly in recipes and projects.
-    return first < 0 ? null : { range: [time[first], time[last]] as [number, number], rows: last - first + 1, points: points.map((i) => time[i]) };
-  }, [box, vec, x, time]);
-
   const panels: ChartPanel[] = useMemo(() => {
     if (!vec) return [];
     const pairs = (v: (number | null)[]) => v.map((y, i) => [x[i] ?? null, finite(y) ? y : null] as [number | null, number | null]);
+    const before = probe ? probe.input : vec.original;
+    const after = probe ? probe.output : vec.edited;
+    const names = probe ? [`Before step ${block! + 1}`, `After step ${block! + 1}`] : ["Original", "Edited"];
     const main: ChartPanel = {
       id: "values",
       yLabel: label,
       series: [
         ...(edited
           ? [
-              { name: "Original", color: INK.muted, data: pairs(vec.original) },
-              { name: "Edited", color: seriesColor(0), data: pairs(vec.edited) },
+              { name: names[0], color: INK.muted, data: pairs(before) },
+              { name: names[1], color: seriesColor(0), data: pairs(after) },
             ]
           : [{ name: label, color: seriesColor(0), data: pairs(vec.edited) }]),
-        ...(preview ? [{ name: `Preview: ${describeStep(filter)}`, color: seriesColor(1), data: pairs(preview) }] : []),
+        ...(preview && draft ? [{ name: `Preview: ${blockInfo(draft).title}`, color: seriesColor(1), data: pairs(preview) }] : []),
       ],
     };
-    if (!edited || !showChange) return [main];
-    const diff = vec.edited.map((b, i) => {
-      const a = vec.original[i];
+    if (!edited) return [main];
+    const diff = after.map((b, i) => {
+      const a = before[i];
       return finite(a) && finite(b) ? b - a : null;
     });
     if (!diff.some((d) => d !== null && d !== 0)) return [main];
-    return [main, { id: "change", yLabel: "Edited − original", hLines: [{ y: 0 }], series: [{ name: "Change", color: seriesColor(1), data: pairs(diff) }] }];
-  }, [vec, x, label, edited, showChange, preview, filter]);
+    return [main, { id: "change", yLabel: probe ? "Output − input" : "Edited − original", hLines: [{ y: 0 }], series: [{ name: "Change", color: seriesColor(1), data: pairs(diff) }] }];
+  }, [vec, x, label, edited, preview, draft, probe, block]);
 
   const nyquist = useMemo(() => {
     const dts = time.slice(1, 2001).map((t, i) => t - time[i]).filter((d) => d > 0).sort((a, b) => a - b);
     return dts.length ? 0.5 / dts[Math.floor(dts.length / 2)] : 1;
   }, [time]);
 
-  const run = async (action: "edit" | "undo" | "reset", edit?: VariableEdit) => {
-    if (!column) return;
+  /** Chart x → time on the aligned axis (the axis may show dates or row numbers). */
+  const xToTime = (xv: number) => (xMode === "row" ? (time[Math.min(time.length - 1, Math.max(0, Math.round(xv) - 1))] ?? 0) : dateAxis ? xv / 1000 - origin! : xv);
+  const rangeDefault: [number, number] = useMemo(() => {
+    if (!time.length) return [0, 1];
+    if (viewRange) {
+      const [a, b] = [xToTime(viewRange[0]), xToTime(viewRange[1])];
+      return [round(Math.min(a, b)), round(Math.max(a, b))];
+    }
+    const [t0, t1] = [time[0], time[time.length - 1]];
+    return [round(t0), round(t0 + (t1 - t0) * 0.1)];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewRange, time, xMode, origin]);
+
+  const fmtTime = (t: number) => (origin !== null ? new Date((origin + t) * 1000).toISOString().slice(11, 23) : `${Number(t.toPrecision(5))} s`);
+
+  const run = async (f: () => Promise<{ dataset: typeof dataset }>, done: string) => {
     setBusy(true);
     try {
-      const v = await api.workspaceEdit(column, action, edit);
+      const v = await f();
       setDataset(v.dataset);
-      const info = v.variables.find((x) => x.name === column);
-      const done = action === "edit" ? info?.edits.at(-1) : action === "undo" ? "Last edit undone" : "Back to the imported values";
-      setStatus({ text: done ? `${done[0].toUpperCase()}${done.slice(1)}.` : "" });
-      clearSelection();
+      setError("");
+      showStatus(done);
+      return true;
     } catch (e) {
-      setStatus({ text: errorText(e), error: true });
+      setError(errorText(e));
+      return false;
     } finally {
       setBusy(false);
     }
   };
 
-  if (!dataset) return <EmptyState title="No data loaded">Add variables in Workspace to prepare them.</EmptyState>;
+  const onAdd = async ({ step, now }: AddChoice) => {
+    if (!column) return;
+    setBlock(null);
+    setSuggestions([]);
+    if (!now) {
+      setDraft(step);
+      return;
+    }
+    const ok = await run(() => api.workspaceEdit(column, "edit", step), `${blockInfo(step).title} added.`);
+    if (ok) setDraft(null);
+  };
+
+  const onSuggest = async () => {
+    if (!column) return;
+    try {
+      const s = await api.filterSuggest(column);
+      setSuggestions(s.map((sg) => ({ reason: sg.reason, step: { op: "filter", value: sg.step } as VariableEdit })));
+      setDraft(null);
+      setBlock(null);
+      if (!s.length) showStatus("No filter suggestions for this signal.");
+    } catch (e) {
+      setError(errorText(e));
+    }
+  };
+
+  const step = (action: "remove" | "move" | "replace", index: number, opts: { to?: number; edit?: VariableEdit } = {}) => {
+    if (!column) return;
+    run(() => api.workspaceStep(column, action, index, opts), action === "remove" ? `Step ${index + 1} deleted.` : action === "move" ? "Step moved." : `Step ${index + 1} updated.`).then((ok) => {
+      if (ok) setBlock(action === "move" ? (opts.to ?? null) : action === "replace" ? index : null);
+    });
+  };
+
+  if (!dataset) return <EmptyState title="No data loaded">Add data first, then clean it here.</EmptyState>;
 
   const xLabel = xMode === "time" ? (dateAxis ? "Time" : "Time [s]") : "Row";
-  const rows = selection?.rows ?? 0;
 
   return (
     <div className="flex h-full flex-col gap-3">
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
         <Field label="Signal" className="w-[340px]">
-          <SignalSelect signals={dataset.signals} value={column} onChange={setColumn} />
+          <SignalSelect signals={dataset.signals} value={column} onChange={setColumn} edited={dataset.edited} />
         </Field>
-        <Radios
+        <Segmented
           value={xMode}
           onChange={setXMode}
           options={[
@@ -203,197 +234,58 @@ export function PrepareTab() {
             { value: "row", label: "Row" },
           ]}
         />
-        <CheckField checked={showChange} onChange={setShowChange} label="Show change" hint="Plot edited − original below the signal" />
-        {stats && (
-          <span className="text-xs text-muted-foreground tabular-nums">
-            {stats.rows.toLocaleString()} rows · {stats.missing.toLocaleString()} missing · {stats.changed.toLocaleString()} changed
-          </span>
-        )}
-        <Button size="sm" variant="outline" className="ml-auto" onClick={() => setActiveTab("timeseries")} title="Open the prepared data in Plots">
-          Explore in Plots <ArrowRight />
-        </Button>
       </div>
 
-      <div className="flex min-h-0 flex-1 gap-3">
-        <Panel
-          className={`min-w-0 flex-1 transition-opacity ${loading ? "opacity-60" : ""}`}
-          bodyClassName="p-1"
-          title={edited ? `${label} · edited vs original` : label}
-        >
-          {panels.length ? (
-            <StackedChart
-              panels={panels}
-              xLabel={xLabel}
-              xDate={dateAxis}
-              resetKey={`${column}|${xMode}`}
-              onSelect={setBox}
-              selectionKey={selectionKey}
-            />
-          ) : (
-            <EmptyState title="Loading…" />
-          )}
-        </Panel>
-
-        <div className="flex w-[300px] shrink-0 flex-col gap-3 overflow-y-auto [&>*]:shrink-0">
-          <Panel title="Selection" bodyClassName="flex flex-col gap-2">
-            <p className="text-xs text-muted-foreground">
-              {selection
-                ? `${rows.toLocaleString()} rows in range · ${selection.points.length.toLocaleString()} points in the box`
-                : "Drag a box on the plot to select."}
-            </p>
-            <Button size="sm" variant="outline" disabled={busy || !selection?.points.length} onClick={() => run("edit", { op: "clear_points", value: selection!.points })} title="Mark the points inside the box as missing (outliers)">
-              <Eraser /> Remove points in box
-            </Button>
-            <Button size="sm" variant="outline" disabled={busy || !selection} onClick={() => run("edit", { op: "clear_range", value: selection!.range })} title="Mark every row in the selected X range as missing">
-              <Trash2 /> Remove range
-            </Button>
-            <Button size="sm" variant="outline" disabled={busy || !selection} onClick={() => run("edit", { op: "keep_range", value: selection!.range })} title="Mark every row outside the selected X range as missing">
-              <Crop /> Keep only range
-            </Button>
-          </Panel>
-
-          <Panel title="Clean" bodyClassName="flex flex-col gap-2">
-            <div className="flex items-center gap-2">
-              <NumberInput className="w-20" value={spikeK} min={1} max={20} step={0.5} suffix="σ" onChange={setSpikeK} title="Threshold in robust standard deviations from the local median" />
-              <Button size="sm" variant="outline" className="flex-1" disabled={busy} onClick={() => run("edit", { op: "despike", value: spikeK })} title="Hampel filter: remove points far from the local median">
-                <Zap /> Remove spikes
-              </Button>
-            </div>
-            <Button size="sm" variant="outline" disabled={busy || !stats?.gaps} onClick={() => run("edit", { op: "fill_gaps" })} title="Linearly interpolate missing values between valid neighbours">
-              <Spline /> Fill gaps{stats?.gaps ? ` (${stats.gaps.toLocaleString()})` : ""}
-            </Button>
-          </Panel>
-
-          <Panel
-            title="Filter"
-            bodyClassName="flex flex-col gap-2"
-            actions={
-              <Button
-                size="xs"
-                variant="ghost"
-                disabled={busy || !column}
-                title="Analyse the spectrum and suggest filters"
-                onClick={async () => {
-                  try {
-                    const s = await api.filterSuggest(column!);
-                    setSuggestions(s);
-                    setStatus({ text: s.length ? `${s.length} suggestion(s). Click one to preview it.` : "No filter suggestions for this signal." });
-                  } catch (e) {
-                    setStatus({ text: errorText(e), error: true });
-                  }
-                }}
-              >
-                <Sparkles /> Suggest
-              </Button>
+      {pipeline && (
+        <PipelineDiagram
+          source={pipeline.source}
+          sourceKind={pipeline.kind}
+          output={label}
+          pipeline={pipeline}
+          selected={block}
+          onSelect={(i) => {
+            setBlock(i);
+            if (i !== null) {
+              setDraft(null);
+              setSuggestions([]);
             }
-          >
-            {suggestions.length > 0 && (
-              <ul className="max-h-36 overflow-y-auto border border-ap-line">
-                {suggestions.map((sg, i) => (
-                  <li key={i}>
-                    <button
-                      className="w-full border-b border-ap-line px-2 py-1.5 text-left text-[12px] leading-snug last:border-0 hover:bg-ap-bluegray-15"
-                      title={sg.description}
-                      onClick={() => {
-                        setFilter(sg.step);
-                        setPreviewOn(true);
-                      }}
-                    >
-                      {sg.reason}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <Select value={filter.filter_type} onValueChange={(v) => setFilter(defaultStep(v as FilterType))}>
-              <SelectTrigger className="h-8 w-full" title="Filter type">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {FILTER_TYPES.map((t) => (
-                  <SelectItem key={t} value={t}>
-                    {filterTitle(t)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <FilterParams step={filter} onChange={setFilter} nyquist={nyquist} />
-            <CheckField checked={previewOn} onChange={setPreviewOn} label="Preview on the plot" />
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={busy}
-              onClick={async () => {
-                await run("edit", { op: "filter", value: filter });
-                setPreviewOn(false);
-              }}
-              title="Add the filter as a step (undo or reset any time)"
-            >
-              <AudioWaveform /> Add filter
-            </Button>
-          </Panel>
+          }}
+          busy={busy}
+          fmtTime={fmtTime}
+          nyquist={nyquist}
+          rangeDefault={rangeDefault}
+          onRemove={(i) => step("remove", i)}
+          onMove={(i, to) => step("move", i, { to })}
+          onReplace={(i, edit) => step("replace", i, { edit })}
+          draft={draft}
+          onDraftChange={(d) => {
+            setDraft(d);
+            if (d) {
+              setBlock(null);
+              setSuggestions([]);
+            }
+          }}
+          onAdd={onAdd}
+          onSuggest={onSuggest}
+          suggestions={suggestions}
+          canUndo={!!vec?.can_undo}
+          onUndo={() => column && run(() => api.workspaceEdit(column, "undo"), "Last step removed.")}
+          onReset={() => column && run(() => api.workspaceEdit(column, "reset"), "Back to the imported values.")}
+        />
+      )}
 
-          <Panel title="Adjust" bodyClassName="flex flex-col gap-2">
-            <div className="flex items-center gap-2">
-              <NumberInput className="flex-1" value={offset} step={0.1} onChange={setOffset} title="Value added to every point" />
-              <Button size="sm" variant="outline" className="w-20" disabled={busy || offset === 0} onClick={() => run("edit", { op: "offset", value: offset })}>
-                Offset
-              </Button>
-            </div>
-            <div className="flex items-center gap-2">
-              <NumberInput className="flex-1" value={scale} step={0.1} onChange={setScale} title="Factor every point is multiplied by" />
-              <Button size="sm" variant="outline" className="w-20" disabled={busy || scale === 1} onClick={() => run("edit", { op: "scale", value: scale })}>
-                Scale
-              </Button>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              {(
-                [
-                  ["demean", "Remove mean"],
-                  ["zero_start", "Start at zero"],
-                  ["normalize", "Normalize 0–1"],
-                  ["zscore", "Z-score"],
-                  ["invert", "Invert sign"],
-                ] as const
-              ).map(([op, text]) => (
-                <Button key={op} size="sm" variant="outline" disabled={busy} onClick={() => run("edit", { op })}>
-                  {text}
-                </Button>
-              ))}
-            </div>
-          </Panel>
-
-          <Panel title={`History · ${vec?.edits.length ?? 0}`} bodyClassName="flex flex-col gap-2">
-            {vec?.edits.length ? (
-              <ol className="list-inside list-decimal text-[12.5px] leading-6">
-                {vec.edits.map((e, i) => (
-                  <li key={i} className="truncate" title={e}>
-                    {e}
-                  </li>
-                ))}
-              </ol>
-            ) : (
-              <p className="text-xs text-muted-foreground">No edits yet. The imported values are always kept.</p>
-            )}
-            <div className="flex gap-2">
-              <Button size="sm" variant="outline" className="flex-1" disabled={busy || !vec?.can_undo} onClick={() => run("undo")}>
-                <Undo2 /> Undo
-              </Button>
-              <Button size="sm" variant="outline" className="flex-1" disabled={busy || !edited} onClick={() => run("reset")}>
-                <RotateCcw /> Reset
-              </Button>
-            </div>
-          </Panel>
-        </div>
-      </div>
-      <StatusText tone={status.error ? "error" : "muted"}>
-        {status.text ||
-          (box
-            ? dateAxis
-              ? `Box: ${new Date(box.x[0]).toISOString().slice(11, 23)} – ${new Date(box.x[1]).toISOString().slice(11, 23)}`
-              : `Box: ${xLabel} ${fmtG(box.x[0])} – ${fmtG(box.x[1])}`
-            : "")}
-      </StatusText>
+      <Panel
+        className={`min-h-0 min-w-0 flex-1 transition-opacity ${loading ? "opacity-60" : ""}`}
+        bodyClassName="p-1"
+        title={probe ? `Step ${block! + 1}: input and output` : undefined}
+      >
+        {panels.length ? (
+          <StackedChart panels={panels} xLabel={xLabel} xDate={dateAxis} resetKey={`${column}|${xMode}`} onZoom={setViewRange} />
+        ) : (
+          <EmptyState title="Loading…" />
+        )}
+      </Panel>
+      {error && <StatusText tone="error">{error}</StatusText>}
     </div>
   );
 }

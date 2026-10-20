@@ -1,54 +1,44 @@
 import { useState } from "react";
-import { save, message } from "@/lib/platform";
-import { openPath } from "@/lib/platform";
-import { ExternalLink, FileDown, FolderOpen } from "lucide-react";
+import { FileDown, Loader2 } from "lucide-react";
+import { toast } from "sonner";
+import { Segmented } from "@/components/common";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CheckField, Field, Panel, StatusText } from "@/components/common";
 import { api, errorText } from "@/lib/api";
+import { save } from "@/lib/platform";
 import { useApp } from "@/lib/store";
+import { cn } from "@/lib/utils";
 
 const SECTIONS: { name: string; hint: string }[] = [
-  { name: "Metadata", hint: "File metadata (Raser header, stashed text columns)" },
-  { name: "Statistics", hint: "Descriptive statistics of all signals" },
+  { name: "Metadata", hint: "File information" },
+  { name: "Statistics", hint: "Summary statistics of all signals" },
   { name: "Signal Plots", hint: "All signals, four per figure" },
-  { name: "Filters Applied", hint: "Filter chains applied to full data" },
-  { name: "Correlations", hint: "Heatmap and top pairs (compute in the Correlations tab first)" },
-  { name: "Models", hint: "All models in the library with per-output metrics" },
-  { name: "Simulations", hint: "Current plots of the Simulation tab" },
-  { name: "Validation", hint: "Last validation run (residuals + histogram)" },
-  { name: "Comparison", hint: "Compare tab overlays and statistics (≥ 2 files)" },
+  { name: "Filters Applied", hint: "The processing steps of each signal" },
+  { name: "Correlations", hint: "Heatmap and strongest pairs (open Correlations first)" },
+  { name: "Models", hint: "Every stored model with its metrics" },
+  { name: "Simulations", hint: "The plots of the Model page" },
+  { name: "Validation", hint: "The last validation run" },
+  { name: "Comparison", hint: "File overlays and statistics (two or more files)" },
 ];
 
+/** Pick what goes in, press one button, choose where to save: the report is written right away. */
 export function ReportTab() {
-  const { setProgress } = useApp();
+  const { setProgress, dataset } = useApp();
   const [sections, setSections] = useState<string[]>(SECTIONS.map((s) => s.name));
-  const [format, setFormat] = useState<"HTML" | "PDF">("HTML");
-  const [path, setPath] = useState("");
+  const [format, setFormat] = useState<"html" | "pdf">("html");
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState<{ text: string; error?: boolean }>({ text: "" });
-  const [lastPath, setLastPath] = useState<string | null>(null);
 
-  const browse = async () => {
-    const ext = format.toLowerCase();
-    const p = await save({ defaultPath: `report.${ext}`, filters: [{ name: `${format} Files`, extensions: [ext] }], title: "Save Report" });
-    if (p) setPath(p);
-  };
-
-  const generate = async () => {
-    if (!path) {
-      await message("Select an output file path.", { title: "No Path", kind: "warning" });
-      return;
-    }
+  const exportReport = async () => {
+    const stem = dataset && dataset.path !== "Workspace" ? (dataset.path.split(/[\\/]/).pop() ?? "report").replace(/\.[^.]+$/, "") : "report";
+    const picked = await save({ defaultPath: `${stem}-report.${format}`, filters: [{ name: format.toUpperCase(), extensions: [format] }], title: "Save report" });
+    if (!picked) return;
+    const path = picked.toLowerCase().endsWith(`.${format}`) ? picked : `${picked}.${format}`;
     setBusy(true);
-    setStatus({ text: "Generating report..." });
     try {
-      const r = await api.reportGenerate(sections, format.toLowerCase(), path);
-      setLastPath(r.path);
-      setStatus({ text: r.note ? `${r.note} Saved to: ${r.path}` : `Report saved to: ${r.path}`, error: !!r.note });
+      const r = await api.reportGenerate(sections, format, path);
+      if (r.note) toast.warning(`${r.note} Saved to ${r.path}`);
+      else toast.success(`Report saved to ${r.path}`);
     } catch (e) {
-      setStatus({ text: `Error: ${errorText(e)}`, error: true });
+      toast.error(errorText(e));
       setProgress("report", 100, "");
     } finally {
       setBusy(false);
@@ -56,52 +46,41 @@ export function ReportTab() {
   };
 
   return (
-    <div className="flex h-full max-w-3xl flex-col gap-3">
-      <Panel title="Report sections" bodyClassName="grid grid-cols-2 gap-x-6 gap-y-2.5 p-4">
-        {SECTIONS.map((s) => (
-          <CheckField
-            key={s.name}
-            label={s.name}
-            hint={s.hint}
-            checked={sections.includes(s.name)}
-            onChange={(v) => setSections(v ? [...sections, s.name] : sections.filter((x) => x !== s.name))}
-          />
-        ))}
-      </Panel>
-      <Panel title="Output" bodyClassName="flex flex-col gap-3 p-4">
-        <Field label="Format" className="w-64" hint="PDF is rendered with the Edge browser that ships with Windows; falls back to HTML if unavailable">
-          <Select
+    <div className="flex h-full items-center justify-center">
+      <div className="flex w-[560px] max-w-full flex-col gap-6 rounded-2xl border border-ap-line bg-white p-8 shadow-[var(--ap-shadow)]">
+        <div className="flex flex-wrap gap-2">
+          {SECTIONS.map((s) => {
+            const on = sections.includes(s.name);
+            return (
+              <button
+                key={s.name}
+                title={s.hint}
+                aria-pressed={on}
+                onClick={() => setSections(on ? sections.filter((x) => x !== s.name) : [...sections, s.name])}
+                className={cn(
+                  "rounded-full border px-3.5 py-1.5 text-[13px] transition-colors",
+                  on ? "border-ap-red bg-ap-red-soft font-medium text-ap-red-dark" : "border-ap-line text-muted-foreground hover:border-ap-bluegray-60 hover:text-foreground",
+                )}
+              >
+                {s.name}
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex items-center gap-3">
+          <Segmented
             value={format}
-            onValueChange={(v) => {
-              setFormat(v as "HTML" | "PDF");
-              if (path) setPath(path.replace(/\.(html?|pdf)$/i, v === "PDF" ? ".pdf" : ".html"));
-            }}
-          >
-            <SelectTrigger className="h-8 w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="HTML">HTML</SelectItem>
-              <SelectItem value="PDF">PDF</SelectItem>
-            </SelectContent>
-          </Select>
-        </Field>
-        <div className="flex gap-2">
-          <Input className="h-9 flex-1" placeholder="Select output file..." value={path} onChange={(e) => setPath(e.target.value)} title="Path where the generated report will be saved" />
-          <Button variant="outline" className="h-9" onClick={browse}>
-            <FolderOpen /> Browse…
+            onChange={setFormat}
+            options={[
+              { value: "html", label: "HTML" },
+              { value: "pdf", label: "PDF", hint: "Rendered with the Edge browser that ships with Windows" },
+            ]}
+          />
+          <Button size="lg" className="h-11 flex-1 text-[15px]" onClick={exportReport} disabled={busy || sections.length === 0}>
+            {busy ? <Loader2 className="animate-spin" /> : <FileDown />} {busy ? "Creating report…" : "Create report"}
           </Button>
         </div>
-        <div className="flex gap-2">
-          <Button className="h-11 flex-1 text-[15px]" onClick={generate} disabled={busy} title="Generate the report with all selected sections">
-            <FileDown /> Generate Report
-          </Button>
-          <Button variant="outline" className="h-11" disabled={!lastPath} onClick={() => lastPath && openPath(lastPath)} title="Open the last generated report">
-            <ExternalLink /> Open
-          </Button>
-        </div>
-        <StatusText tone={status.error ? "error" : "muted"}>{status.text}</StatusText>
-      </Panel>
+      </div>
     </div>
   );
 }

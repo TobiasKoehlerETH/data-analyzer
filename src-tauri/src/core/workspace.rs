@@ -10,11 +10,12 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::csv_parser::{parse_file_with, ImportOptions, ParseResult};
-use super::dataset::sample_rate_of;
+use super::dataset::{sample_rate_of, Dataset, SharedParts};
 use super::filters::{apply_steps, FilterStep};
 
 /// Upper bound on the common grid; longer spans get a coarser step.
-const MAX_GRID: usize = 4_000_000;
+/// Longest common grid. Files at very different rates are thinned to this, so every page stays quick.
+const MAX_GRID: usize = 1_000_000;
 /// Half-width of the Hampel window (11 samples).
 const HAMPEL_HALF: usize = 5;
 
@@ -117,6 +118,30 @@ fn plural(n: usize, word: &str) -> String {
 }
 
 impl Edit {
+    /// How the step reads in a block diagram: family, title and parameter lines.
+    pub fn block(&self) -> (&'static str, String, Vec<String>) {
+        let range = |a: &f64, b: &f64| vec![format!("{} → {}", num(a.min(*b)), num(a.max(*b)))];
+        match self {
+            Edit::Offset(c) => ("adjust", "Offset".into(), vec![format!("{}{}", if *c >= 0.0 { "+" } else { "−" }, num(c.abs()))]),
+            Edit::Scale(k) => ("adjust", "Gain".into(), vec![format!("× {}", num(*k))]),
+            Edit::Normalize => ("adjust", "Normalize".into(), vec!["to 0 … 1".into()]),
+            Edit::Zscore => ("adjust", "Z-score".into(), vec!["mean 0, σ 1".into()]),
+            Edit::Demean => ("adjust", "Remove mean".into(), vec![]),
+            Edit::ZeroStart => ("adjust", "Start at zero".into(), vec![]),
+            Edit::Invert => ("adjust", "Invert sign".into(), vec!["× −1".into()]),
+            Edit::ClearRange((a, b)) => ("clean", "Remove range".into(), range(a, b)),
+            Edit::KeepRange((a, b)) => ("clean", "Keep range".into(), range(a, b)),
+            Edit::ClearPoints(t) => ("clean", "Remove points".into(), vec![plural(t.len(), "point")]),
+            Edit::Despike(k) => ("clean", "Remove spikes".into(), vec![format!("Hampel, k = {}σ", num(*k))]),
+            Edit::FillGaps => ("clean", "Fill gaps".into(), vec!["linear".into()]),
+            Edit::Filter(step) => {
+                let d = step.describe();
+                let mut parts = d.split(", ").map(str::to_string);
+                ("filter", parts.next().unwrap_or_default(), parts.collect())
+            }
+        }
+    }
+
     /// Manual picks (individual points) are tied to one file and are left out of recipes.
     pub fn is_manual(&self) -> bool {
         matches!(self, Edit::ClearPoints(_))
@@ -133,6 +158,28 @@ impl Edit {
             Edit::KeepRange((a, b)) => Edit::KeepRange((a + dt, b + dt)),
             Edit::ClearPoints(ts) => Edit::ClearPoints(ts.iter().map(|t| t + dt).collect()),
             other => other.clone(),
+        }
+    }
+
+    /// Like [`Edit::apply`], for re-running a stored pipeline: a step that finds nothing to do
+    /// (no spikes, no gaps, an empty selection) passes the values through instead of failing,
+    /// so deleting or editing an earlier block never breaks the ones after it.
+    pub fn apply_stored(&self, v: &[f64], t: &[f64]) -> Result<(Vec<f64>, String), String> {
+        match self.apply(v, t) {
+            Err(_) if self.idle_label().is_some() => Ok((v.to_vec(), format!("{} (nothing to do)", self.idle_label().unwrap()))),
+            r => r,
+        }
+    }
+
+    /// Name of a step that can legitimately find nothing to do.
+    fn idle_label(&self) -> Option<String> {
+        match self {
+            Edit::ClearRange((a, b)) => Some(format!("remove t {}…{}", num(a.min(*b)), num(a.max(*b)))),
+            Edit::KeepRange((a, b)) => Some(format!("keep t {}…{}", num(a.min(*b)), num(a.max(*b)))),
+            Edit::ClearPoints(_) => Some("remove points".into()),
+            Edit::Despike(k) if *k > 0.0 => Some(format!("remove spikes (> {} σ)", num(*k))),
+            Edit::FillGaps => Some("fill gaps".into()),
+            _ => None,
         }
     }
 
@@ -268,7 +315,7 @@ pub fn replay(original: &[f64], steps: &[Edit], t: &[f64]) -> Result<(Vec<f64>, 
     let mut data = original.to_vec();
     let mut labels = Vec::with_capacity(steps.len());
     for (i, s) in steps.iter().enumerate() {
-        let (d, label) = s.apply(&data, t).map_err(|e| format!("Step {} failed: {e}", i + 1))?;
+        let (d, label) = s.apply_stored(&data, t).map_err(|e| format!("Step {} failed: {e}", i + 1))?;
         data = d;
         labels.push(label);
     }
@@ -298,6 +345,8 @@ pub struct Source {
     pub time_var: Option<String>,
     /// Shift added to this source's time when aligning (seconds).
     pub offset: f64,
+    /// Seconds per row, when the time comes from a conversion factor instead of a time column.
+    pub row_step: Option<f64>,
     /// Name suffix for variables from batch imports ("Pressure · run3").
     pub suffix: Option<String>,
 }
@@ -352,6 +401,66 @@ pub struct VariableInfo {
     pub error: Option<String>,
 }
 
+/// What one pipeline block did to the values it received.
+#[derive(Debug, Clone, Serialize)]
+pub struct StageInfo {
+    pub label: String,
+    /// The step itself, on the aligned time axis.
+    pub step: Edit,
+    /// Missing samples after this block.
+    pub missing: usize,
+    /// Samples that were valid before and are missing now.
+    pub removed: usize,
+    /// Samples that were missing before and are valid now.
+    pub filled: usize,
+    /// Samples valid before and after whose value moved.
+    pub changed: usize,
+    /// Root-mean-square movement of those samples.
+    pub rms_change: Option<f64>,
+}
+
+impl StageInfo {
+    /// One line on what the block did to the samples.
+    pub fn effect(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        if self.removed > 0 {
+            parts.push(format!("−{} removed", self.removed));
+        }
+        if self.filled > 0 {
+            parts.push(format!("+{} filled", self.filled));
+        }
+        if self.changed > 0 {
+            parts.push(format!("{} changed", self.changed));
+        }
+        if parts.is_empty() { "no change".into() } else { parts.join(" · ") }
+    }
+}
+
+/// Where one row of a file sits in time.
+#[derive(Debug, Clone, Serialize)]
+pub struct TimeMap {
+    /// 1-based row in the file.
+    pub row: usize,
+    pub rows: usize,
+    /// Seconds on the aligned axis (any shift of the file included).
+    pub time: f64,
+    /// Clock time (UTC) when the file has timestamps.
+    pub clock: Option<String>,
+}
+
+/// A variable's pipeline, block by block.
+#[derive(Debug, Clone, Serialize)]
+pub struct Pipeline {
+    /// "file.csv · column" or "= formula".
+    pub source: String,
+    /// "imported" or "derived".
+    pub kind: String,
+    pub rows: usize,
+    /// Missing samples in the imported values.
+    pub missing: usize,
+    pub stages: Vec<StageInfo>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SourceInfo {
     pub id: u32,
@@ -361,6 +470,8 @@ pub struct SourceInfo {
     pub time_var: Option<String>,
     pub origin: Option<f64>,
     pub offset: f64,
+    /// Seconds per row when the time comes from a conversion factor.
+    pub row_step: Option<f64>,
     pub start: Option<f64>,
     pub duration: f64,
     pub sample_rate: f64,
@@ -419,6 +530,8 @@ pub struct ProjectSource {
     pub suffix: Option<String>,
     #[serde(default)]
     pub time_var: Option<String>,
+    #[serde(default)]
+    pub row_step: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -449,7 +562,40 @@ pub struct Workspace {
     pub auto_recipe: Option<Recipe>,
     /// Common time grid of the last build.
     pub grid: Arc<Vec<f64>>,
+    /// What `grid` was built from; while it is unchanged the grid and the aligned columns stay valid.
+    grid_key: String,
+    /// Keeps the time axes behind `grid_key` alive, so their addresses cannot be reused.
+    grid_times: Vec<Arc<Vec<f64>>>,
+    /// Sample rate of `grid`.
+    grid_rate: f64,
+    aligned_cache: HashMap<String, AlignedColumn>,
+    text_cache: HashMap<String, AlignedText>,
     next_source: u32,
+}
+
+/// A signal aligned onto the grid, valid while its inputs are the same allocations.
+struct AlignedColumn {
+    values: Arc<Vec<f64>>,
+    time: Option<Arc<Vec<f64>>>,
+    grid: Arc<Vec<f64>>,
+    shift: u64,
+    out: Arc<Vec<f64>>,
+}
+
+struct AlignedText {
+    values: Arc<Vec<String>>,
+    time: Arc<Vec<f64>>,
+    grid: Arc<Vec<f64>>,
+    shift: u64,
+    out: Arc<Vec<String>>,
+}
+
+fn same_time(a: &Option<Arc<Vec<f64>>>, b: &Option<Arc<Vec<f64>>>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+        (None, None) => true,
+        _ => false,
+    }
 }
 
 fn file_name(path: &str) -> String {
@@ -772,6 +918,7 @@ impl Workspace {
             time_column: parsed.time_column.clone(),
             time_var: None,
             offset: 0.0,
+            row_step: None,
             suffix: suffix.clone(),
         };
         let label = |c: &str| match &suffix {
@@ -880,6 +1027,121 @@ impl Workspace {
         let v = self.get(name).ok_or("Variable not found.")?;
         let edit = edit.shifted(-self.shift_of(v));
         Ok(edit.apply(&v.data, &self.local_time(v))?.0)
+    }
+
+    /// The pipeline block by block, with what each block changed.
+    pub fn pipeline(&self, name: &str) -> Result<Pipeline, String> {
+        let v = self.get(name).ok_or("Variable not found.")?;
+        let t = self.local_time(v);
+        let shift = self.shift_of(v);
+        let mut data = v.original.to_vec();
+        let missing = data.iter().filter(|x| !x.is_finite()).count();
+        let mut stages = Vec::with_capacity(v.steps.len());
+        for (i, s) in v.steps.iter().enumerate() {
+            let (next, label) = s.apply_stored(&data, &t).map_err(|e| format!("Step {} failed: {e}", i + 1))?;
+            let (mut removed, mut filled, mut changed, mut sq) = (0usize, 0usize, 0usize, 0.0f64);
+            for (a, b) in data.iter().zip(&next) {
+                match (a.is_finite(), b.is_finite()) {
+                    (true, false) => removed += 1,
+                    (false, true) => filled += 1,
+                    (true, true) if a != b => {
+                        changed += 1;
+                        sq += (b - a).powi(2);
+                    }
+                    _ => {}
+                }
+            }
+            stages.push(StageInfo {
+                label,
+                step: s.shifted(shift),
+                missing: next.iter().filter(|x| !x.is_finite()).count(),
+                removed,
+                filled,
+                changed,
+                rms_change: (changed > 0).then(|| (sq / changed as f64).sqrt()),
+            });
+            data = next;
+        }
+        let (source, kind) = match &v.kind {
+            Kind::Imported { source, column } => (format!("{} · {column}", self.source(*source).map(|s| s.name.as_str()).unwrap_or_default()), "imported"),
+            Kind::Derived { formula } => (format!("= {formula}"), "derived"),
+        };
+        Ok(Pipeline { source, kind: kind.into(), rows: data.len(), missing, stages })
+    }
+
+    /// The values after the first `count` blocks (0 = the imported values).
+    pub fn stage_values(&self, name: &str, count: usize) -> Result<Vec<f64>, String> {
+        let v = self.get(name).ok_or("Variable not found.")?;
+        let count = count.min(v.steps.len());
+        Ok(replay(&v.original, &v.steps[..count], &self.local_time(v))?.0)
+    }
+
+    /// Swaps in a new step list and rebuilds; the old list comes back if the new one fails.
+    fn set_steps(&mut self, name: &str, steps: Vec<Edit>) -> Result<(), String> {
+        let v = self.get_mut(name)?;
+        let old = std::mem::replace(&mut v.steps, steps);
+        if let Err(e) = self.rebuild_var(name) {
+            self.get_mut(name)?.steps = old;
+            self.rebuild_var(name)?;
+            return Err(e);
+        }
+        Ok(())
+    }
+
+    /// Deletes block `index` from the pipeline.
+    pub fn remove_step(&mut self, name: &str, index: usize) -> Result<(), String> {
+        let mut steps = self.get(name).ok_or("Variable not found.")?.steps.clone();
+        if index >= steps.len() {
+            return Err("No such block.".into());
+        }
+        steps.remove(index);
+        self.set_steps(name, steps)
+    }
+
+    /// Moves block `from` so it sits at position `to`.
+    pub fn move_step(&mut self, name: &str, from: usize, to: usize) -> Result<(), String> {
+        let mut steps = self.get(name).ok_or("Variable not found.")?.steps.clone();
+        if from >= steps.len() || to >= steps.len() {
+            return Err("No such block.".into());
+        }
+        let s = steps.remove(from);
+        steps.insert(to, s);
+        self.set_steps(name, steps)
+    }
+
+    /// Replaces block `index` (new parameters; times on the aligned axis).
+    pub fn replace_step(&mut self, name: &str, index: usize, edit: Edit) -> Result<(), String> {
+        let v = self.get(name).ok_or("Variable not found.")?;
+        let mut steps = v.steps.clone();
+        if index >= steps.len() {
+            return Err("No such block.".into());
+        }
+        steps[index] = edit.shifted(-self.shift_of(v));
+        self.set_steps(name, steps)
+    }
+
+    /// Maps a row of file `id` to its time, or a time to the nearest row.
+    pub fn time_map(&self, id: u32, row: Option<usize>, time: Option<f64>) -> Result<TimeMap, String> {
+        let s = self.source(id).ok_or("File not found.")?;
+        let n = s.time.len();
+        if n == 0 {
+            return Err("The file has no rows.".into());
+        }
+        let shift = self.source_shift(s);
+        let idx = match (row, time) {
+            (Some(r), _) => r.clamp(1, n) - 1,
+            (None, Some(t)) => (0..n)
+                .filter(|&i| s.time[i].is_finite())
+                .min_by(|&a, &b| (s.time[a] + shift - t).abs().total_cmp(&(s.time[b] + shift - t).abs()))
+                .unwrap_or(0),
+            (None, None) => 0,
+        };
+        let local = s.time[idx];
+        let clock = s
+            .origin
+            .and_then(|o| chrono::DateTime::<chrono::Utc>::from_timestamp_millis(((o + local) * 1000.0).round() as i64))
+            .map(|d| d.format("%Y-%m-%d %H:%M:%S%.3f").to_string());
+        Ok(TimeMap { row: idx + 1, rows: n, time: local + shift, clock })
     }
 
     /// Reverts the most recent step.
@@ -1015,10 +1277,39 @@ impl Workspace {
             }
             s.time = data;
             s.time_var = Some(name.to_string());
+            s.row_step = None;
         } else if s.time_var.as_deref() == Some(name) {
             s.time_var = None;
             s.time = Arc::new((0..s.n_rows).map(|i| i as f64).collect());
             s.origin = None;
+        }
+        Ok(())
+    }
+
+    /// Time from a conversion factor: row i is at i × `step` seconds (None goes back to a time
+    /// column, or to the row number when the file has none).
+    pub fn set_row_step(&mut self, id: u32, step: Option<f64>) -> Result<(), String> {
+        if step.is_some_and(|k| !(k > 0.0) || !k.is_finite()) {
+            return Err("Seconds per row must be a positive number.".into());
+        }
+        let s = self.sources.iter_mut().find(|s| s.id == id).ok_or("File not found.")?;
+        match step {
+            Some(k) => {
+                s.row_step = Some(k);
+                s.time_var = None;
+                s.origin = None;
+                s.time = Arc::new((0..s.n_rows).map(|i| i as f64 * k).collect());
+            }
+            None => {
+                s.row_step = None;
+                s.time = Arc::new((0..s.n_rows).map(|i| i as f64).collect());
+                // Go back to the file's own time column when it is still around.
+                let column = s.time_column.clone();
+                let var = self.vars.iter().find(|v| matches!(&v.kind, Kind::Imported { source, column: c } if *source == id && Some(c) == column.as_ref())).map(|v| v.name.clone());
+                if let Some(name) = var {
+                    let _ = self.set_time(&name, true);
+                }
+            }
         }
         Ok(())
     }
@@ -1051,15 +1342,32 @@ impl Workspace {
         s.time.iter().map(|t| t + shift).collect()
     }
 
-    /// Common grid for the current sources: a source's own time when only one is involved
-    /// (or all share it), otherwise a uniform grid over the union at the finest step.
-    fn make_grid(&self) -> Vec<f64> {
+    /// Sources that supply at least one signal (all of them when none does).
+    fn used_sources(&self) -> Vec<&Source> {
+        let signals = self.signal_vars();
         let used: Vec<&Source> = self
             .sources
             .iter()
-            .filter(|s| self.signal_vars().iter().any(|v| matches!(v.kind, Kind::Imported { source, .. } if source == s.id)))
+            .filter(|s| signals.iter().any(|v| matches!(v.kind, Kind::Imported { source, .. } if source == s.id)))
             .collect();
-        let used = if used.is_empty() { self.sources.iter().collect() } else { used };
+        if used.is_empty() { self.sources.iter().collect() } else { used }
+    }
+
+    /// Everything the grid depends on, as a comparable key (plus the time axes it names).
+    fn grid_signature(&self) -> (String, Vec<Arc<Vec<f64>>>) {
+        let mut key = format!("{:?}|{:?}", self.align, self.grid_step.map(f64::to_bits));
+        let mut times = Vec::new();
+        for s in self.used_sources() {
+            key.push_str(&format!("|{}:{}:{}:{}", s.id, Arc::as_ptr(&s.time) as usize, self.source_shift(s).to_bits(), s.n_rows));
+            times.push(s.time.clone());
+        }
+        (key, times)
+    }
+
+    /// Common grid for the current sources: a source's own time when only one is involved
+    /// (or all share it), otherwise a uniform grid over the union at the finest step.
+    fn make_grid(&self) -> Vec<f64> {
+        let used = self.used_sources();
         if self.align == Align::Row {
             let n = used.iter().map(|s| s.n_rows).max().unwrap_or(0);
             if used.len() == 1 {
@@ -1125,6 +1433,53 @@ impl Workspace {
         }
     }
 
+    /// A variable's pipeline output on the grid, reused until its values, time axis or the grid change.
+    fn aligned_arc(&mut self, idx: usize) -> Arc<Vec<f64>> {
+        let v = &self.vars[idx];
+        if matches!(v.kind, Kind::Derived { .. }) {
+            return v.data.clone();
+        }
+        let (time, shift) = match &v.kind {
+            Kind::Imported { source, .. } => match self.source(*source) {
+                Some(s) => (Some(s.time.clone()), self.source_shift(s).to_bits()),
+                None => (None, 0),
+            },
+            Kind::Derived { .. } => (None, 0),
+        };
+        if let Some(e) = self.aligned_cache.get(&v.name) {
+            if Arc::ptr_eq(&e.values, &v.data) && Arc::ptr_eq(&e.grid, &self.grid) && same_time(&e.time, &time) && e.shift == shift {
+                return e.out.clone();
+            }
+        }
+        let name = v.name.clone();
+        let values = v.data.clone();
+        let out = Arc::new(self.aligned(v, false));
+        self.aligned_cache.insert(name, AlignedColumn { values, time, grid: self.grid.clone(), shift, out: out.clone() });
+        out
+    }
+
+    /// A text variable held onto the grid, reused like `aligned_arc`.
+    fn aligned_text(&mut self, idx: usize) -> Option<Arc<Vec<String>>> {
+        let tv = &self.texts[idx];
+        let s = self.source(tv.source)?;
+        let (time, shift) = (s.time.clone(), self.source_shift(s).to_bits());
+        if let Some(e) = self.text_cache.get(&tv.name) {
+            if Arc::ptr_eq(&e.values, &tv.values) && Arc::ptr_eq(&e.grid, &self.grid) && Arc::ptr_eq(&e.time, &time) && e.shift == shift {
+                return Some(e.out.clone());
+            }
+        }
+        let out = Arc::new(if self.align == Align::Row {
+            let mut v = tv.values.to_vec();
+            v.resize(self.grid.len(), String::new());
+            v
+        } else {
+            hold_onto(&self.effective_time(s), &tv.values, &self.grid)
+        });
+        let (name, values) = (tv.name.clone(), tv.values.clone());
+        self.text_cache.insert(name, AlignedText { values, time, grid: self.grid.clone(), shift, out: out.clone() });
+        Some(out)
+    }
+
     fn aligned_inputs(&self) -> Result<HashMap<String, Arc<Vec<f64>>>, String> {
         Ok(self
             .vars
@@ -1136,14 +1491,23 @@ impl Workspace {
 
     /// Recomputes the grid and every derived variable (in creation order).
     fn refresh(&mut self) {
-        self.grid = Arc::new(self.make_grid());
+        let (key, times) = self.grid_signature();
+        if key != self.grid_key || self.grid.is_empty() {
+            self.grid = Arc::new(self.make_grid());
+            self.grid_rate = sample_rate_of(&self.grid);
+            self.grid_key = key;
+            self.grid_times = times;
+        }
         let mut inputs: HashMap<String, Arc<Vec<f64>>> = HashMap::new();
         for i in 0..self.vars.len() {
+            if matches!(self.vars[i].kind, Kind::Imported { .. }) {
+                let a = self.aligned_arc(i);
+                inputs.insert(self.vars[i].name.clone(), a);
+                continue;
+            }
             let v = &self.vars[i];
             match &v.kind {
-                Kind::Imported { .. } => {
-                    inputs.insert(v.name.clone(), Arc::new(self.aligned(v, false)));
-                }
+                Kind::Imported { .. } => {}
                 Kind::Derived { formula } => {
                     let result = evaluate(formula, &inputs, &self.grid).and_then(|o| {
                         let (d, labels) = replay(&o, &v.steps, &self.grid)?;
@@ -1168,6 +1532,31 @@ impl Workspace {
                 }
             }
         }
+    }
+
+    /// The analysis dataset on the common grid. Columns are shared with the caches below, so an
+    /// edit re-aligns only the signal it changed (None without numeric signals).
+    pub fn to_dataset(&mut self, path: &str) -> Option<Dataset> {
+        self.refresh();
+        let signal_idx: Vec<usize> = (0..self.vars.len()).filter(|&i| !self.is_time_var(&self.vars[i].name)).collect();
+        if signal_idx.is_empty() {
+            return None;
+        }
+        let columns: Vec<(String, Arc<Vec<f64>>)> = signal_idx.iter().map(|&i| (self.vars[i].name.clone(), self.aligned_arc(i))).collect();
+        let texts: Vec<(String, Arc<Vec<String>>)> =
+            (0..self.texts.len()).filter_map(|i| self.aligned_text(i).map(|t| (self.texts[i].name.clone(), t))).collect();
+        let time_origin = match self.align {
+            Align::Clock => self.min_origin(),
+            Align::Time if self.sources.len() == 1 => self.sources[0].origin.map(|o| o - self.sources[0].offset),
+            _ => None,
+        };
+        let mut metadata = Map::new();
+        metadata.insert(
+            "variables".into(),
+            Value::Array(self.info().iter().map(|v| Value::String(format!("{} ← {}", v.name, v.source))).collect()),
+        );
+        metadata.insert("alignment".into(), Value::String(format!("{:?}", self.align).to_lowercase()));
+        Some(Dataset::from_shared(path, SharedParts { time: self.grid.clone(), sample_rate: self.grid_rate, columns, texts, time_origin, metadata }))
     }
 
     /// Row-aligned dataset of all signals on the common grid (None without numeric signals).
@@ -1291,6 +1680,7 @@ impl Workspace {
                     time_var: s.time_var.clone(),
                     origin: s.origin,
                     offset: s.offset,
+                    row_step: s.row_step,
                     start,
                     duration: match (start, end) {
                         (Some(a), Some(b)) => b - a,
@@ -1421,6 +1811,7 @@ impl Workspace {
                     offset: s.offset,
                     suffix: s.suffix.clone(),
                     time_var: s.time_var.clone(),
+                    row_step: s.row_step,
                 })
                 .collect(),
             variables: self
@@ -1481,6 +1872,7 @@ impl Workspace {
                 time_column: parsed.time_column.clone(),
                 time_var: None,
                 offset: ps.offset,
+                row_step: ps.row_step.filter(|k| *k > 0.0 && k.is_finite()),
                 suffix: ps.suffix.clone(),
             });
             ws.next_source = ws.next_source.max(ps.id + 1);
@@ -1576,6 +1968,76 @@ mod tests {
     fn import(ws: &mut Workspace, path: &str, cols: &[&str]) -> Vec<String> {
         let cols: Vec<String> = cols.iter().map(|c| c.to_string()).collect();
         ws.import(path, None, &ImportOptions::default(), &cols, None).unwrap().0
+    }
+
+    #[test]
+    fn editing_one_signal_reuses_the_others() {
+        let a = write("cache_a.csv", "time,a\n0,0\n1,10\n2,20\n3,30\n");
+        let b = write("cache_b.csv", "time,b\n0,5\n0.5,6\n1,7\n1.5,8\n2,9\n2.5,10\n3,11\n");
+        let mut ws = Workspace::default();
+        import(&mut ws, &a, &["time", "a"]);
+        import(&mut ws, &b, &["time", "b"]);
+        let first = ws.to_dataset("Workspace").unwrap();
+        ws.edit("a", Edit::Offset(1.0)).unwrap();
+        let second = ws.to_dataset("Workspace").unwrap();
+        assert!(Arc::ptr_eq(&first.get_signal("b").unwrap(), &second.get_signal("b").unwrap()), "b was not touched, so it is not recomputed");
+        assert!(Arc::ptr_eq(&first.time, &second.time), "the grid is reused");
+        assert_ne!(first.get_signal("a").unwrap()[0], second.get_signal("a").unwrap()[0]);
+        // The shared build agrees with the plain one.
+        let plain = ws.to_parse().unwrap();
+        for (name, values) in &plain.columns {
+            let shared = second.get_signal(name).unwrap();
+            assert_eq!(values.len(), shared.len());
+            for (x, y) in values.iter().zip(shared.iter()) {
+                assert!(x == y || (x.is_nan() && y.is_nan()), "{name} differs");
+            }
+        }
+        std::fs::remove_file(a).ok();
+        std::fs::remove_file(b).ok();
+    }
+
+    #[test]
+    fn a_step_with_nothing_to_do_passes_through_when_replayed() {
+        let a = write("idle.csv", "time,x\n0,1\n1,2\n2,3\n3,4\n");
+        let mut ws = Workspace::default();
+        import(&mut ws, &a, &["time", "x"]);
+        assert!(ws.edit("x", Edit::FillGaps).is_err(), "adding it interactively still reports why");
+        ws.edit("x", Edit::Offset(1.0)).unwrap();
+        ws.get_mut("x").unwrap().steps.insert(0, Edit::FillGaps);
+        ws.rebuild_var("x").unwrap();
+        let p = ws.pipeline("x").unwrap();
+        assert!(p.stages[0].label.contains("nothing to do"));
+        assert_eq!(ws.get("x").unwrap().data[0], 2.0);
+        // Deleting the step that made it meaningful no longer breaks the pipeline.
+        ws.remove_step("x", 1).unwrap();
+        std::fs::remove_file(a).ok();
+    }
+
+    #[test]
+    fn a_conversion_factor_replaces_the_time_column() {
+        let a = write("step.csv", "time,x\n0,1\n5,2\n10,3\n15,4\n");
+        let mut ws = Workspace::default();
+        import(&mut ws, &a, &["time", "x"]);
+        assert_eq!(ws.time_map(0, Some(4), None).unwrap().time, 15.0, "from the time column");
+        ws.set_row_step(0, Some(0.01)).unwrap();
+        assert!((ws.time_map(0, Some(4), None).unwrap().time - 0.03).abs() < 1e-12, "from the factor");
+        assert!(ws.sources[0].time_var.is_none());
+        assert!(ws.set_row_step(0, Some(0.0)).is_err());
+        ws.set_row_step(0, None).unwrap();
+        assert_eq!(ws.time_map(0, Some(4), None).unwrap().time, 15.0, "back to the time column");
+        std::fs::remove_file(a).ok();
+    }
+
+    #[test]
+    fn rows_map_to_time_and_back() {
+        let a = write("map.csv", "time,x\n0,1\n0.5,2\n1.0,3\n1.5,4\n");
+        let mut ws = Workspace::default();
+        import(&mut ws, &a, &["time", "x"]);
+        let m = ws.time_map(0, Some(3), None).unwrap();
+        assert_eq!((m.row, m.rows, m.time), (3, 4, 1.0));
+        assert_eq!(ws.time_map(0, None, Some(1.4)).unwrap().row, 4);
+        assert_eq!(ws.time_map(0, Some(99), None).unwrap().row, 4, "rows are clamped to the file");
+        std::fs::remove_file(a).ok();
     }
 
     #[test]

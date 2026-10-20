@@ -116,7 +116,7 @@ export function SysIdTab() {
       : [];
   }, [results]);
 
-  if (!dataset) return <EmptyState title="No data loaded">Load a file in the File tab to identify state-space models.</EmptyState>;
+  if (!dataset) return <EmptyState title="No data loaded" />;
 
   const items = dataset.signals.map((s) => ({ id: s.column, label: s.label }));
 
@@ -190,7 +190,7 @@ export function SysIdTab() {
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col gap-3">
-        <Panel title="Results (sorted by mean VAF)" className="min-h-0 flex-1" bodyClassName="p-0 overflow-auto">
+        <Panel title="Results" className="min-h-0 flex-1" bodyClassName="p-0 overflow-auto">
           <Table className="text-[12.5px]">
             <TableHeader className="sticky top-0 bg-white">
               <TableRow>
@@ -228,10 +228,10 @@ export function SysIdTab() {
               ))}
             </TableBody>
           </Table>
-          {results.length === 0 && <p className="p-3 text-xs text-muted-foreground">Select inputs and outputs, then click Identify.</p>}
+          {results.length === 0 && <p className="p-3 text-[13px] text-muted-foreground">Choose inputs and outputs, then identify.</p>}
         </Panel>
         <Panel title="VAF vs model order" className="min-h-0 flex-1" bodyClassName="p-1">
-          {vafPanels.length > 0 && <StackedChart panels={vafPanels} xLabel="Model order" />}
+          {vafPanels.length > 0 && <StackedChart panels={vafPanels} xLabel="Model order" zoom={false} />}
         </Panel>
       </div>
     </div>

@@ -42,3 +42,6 @@ build/
 # Local sample data
 sample_data.csv
 /template.html
+
+# Generated reports
+reports/

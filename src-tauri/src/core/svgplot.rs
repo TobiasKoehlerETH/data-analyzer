@@ -5,7 +5,8 @@
 use super::downsample::minmax;
 use super::report::REPORT_PALETTE;
 
-const FONT: &str = "'Futura LT Book','Futura PT',Futura,'Century Gothic','Avenir Next',Arial,sans-serif";
+/// The same stack as the report's text, so charts and text match.
+const FONT: &str = "Inter,Arial,sans-serif";
 const AXIS: &str = "#c3c2b7";
 const GRID: &str = "#e1e0d9";
 const MUTED: &str = "#898781";

@@ -25,14 +25,14 @@ interface Props {
   data: Figure[];
   layout?: Figure;
   config?: Partial<Config>;
-  /** Zoom and selection survive data updates until this changes. */
+  /** Zoom survives data updates until this changes. */
   uirevision?: string | number;
   /** Table view; derived from the x/y traces when omitted. */
   table?: PlotTable | (() => PlotTable);
-  events?: Partial<Record<"click" | "hover" | "unhover" | "selected" | "deselect" | "relayout", Handler>>;
+  events?: Partial<Record<"click" | "hover" | "unhover" | "relayout", Handler>>;
   className?: string;
-  /** Adds the box-select tool for linked selections. */
-  select?: boolean;
+  /** False for summary charts (heatmaps, bars, box plots): no zoom, pan or wheel zoom. */
+  zoom?: boolean;
   onInit?: (gd: PlotElement) => void;
 }
 
@@ -83,7 +83,7 @@ function ranges(gd: PlotElement): Record<string, unknown> {
 }
 
 /** Plotly wrapper: renders with the shared theme, resizes with its box and adds Back and Table view. */
-export function Plot({ data, layout, config, uirevision, table, events, className, select, onInit }: Props) {
+export function Plot({ data, layout, config, uirevision, table, events, className, zoom = true, onInit }: Props) {
   const active = useContext(WorkspaceActive);
   const el = useRef<HTMLDivElement>(null);
   const gdRef = useRef<PlotElement | null>(null);
@@ -112,9 +112,14 @@ export function Plot({ data, layout, config, uirevision, table, events, classNam
       },
     };
     const tableButton = { name: "table", title: "Show data as table", icon: ICONS.table, click: () => setShowTable((v) => !v) };
-    const navigation: any[] = [...(select ? ["select2d"] : []), "zoom2d", "pan2d", back, "resetScale2d"];
-    return { ...plotConfig, ...config, modeBarButtons: [navigation, [tableButton, "toImage"]] as any };
-  }, [config, select]);
+    const navigation: any[] = ["zoom2d", "pan2d", back, "resetScale2d"];
+    return {
+      ...plotConfig,
+      ...(zoom ? {} : { scrollZoom: false, doubleClick: false as const }),
+      ...config,
+      modeBarButtons: [...(zoom ? [navigation] : []), [tableButton, "toImage"]] as any,
+    };
+  }, [config, zoom]);
 
   useEffect(() => {
     history.current = [];
@@ -193,7 +198,13 @@ export function Plot({ data, layout, config, uirevision, table, events, classNam
   useEffect(() => {
     if (!active || !el.current) return;
     const node = el.current;
-    const fullLayout = { ...baseLayout(), ...layout, uirevision: uirevision ?? "static" };
+    const fullLayout: Record<string, any> = { ...baseLayout(), ...layout, uirevision: uirevision ?? "static" };
+    if (!zoom) {
+      fullLayout.dragmode = false;
+      for (const k of ["xaxis", "yaxis", ...Object.keys(fullLayout).filter((key) => /^[xy]axis\d+$/.test(key))]) {
+        fullLayout[k] = { ...(fullLayout[k] ?? {}), fixedrange: true };
+      }
+    }
     let cancelled = false;
     // No hover tooltips: hover events still fire (cursor readouts, click-to-exclude), but nothing pops up.
     const quiet = data.map((t) => ({ ...t, hoverinfo: "none", hovertemplate: undefined }));
@@ -209,8 +220,6 @@ export function Plot({ data, layout, config, uirevision, table, events, classNam
       on("plotly_click", (e) => handlers.current?.click?.(e, plot));
       on("plotly_hover", (e) => handlers.current?.hover?.(e, plot));
       on("plotly_unhover", (e) => handlers.current?.unhover?.(e, plot));
-      on("plotly_selected", (e) => handlers.current?.selected?.(e, plot));
-      on("plotly_deselect", (e) => handlers.current?.deselect?.(e, plot));
       on("plotly_relayout", (e: Record<string, unknown>) => {
         const zoomed = Object.keys(e).some((k) => /^[xy]axis\d*\.(range|autorange)/.test(k));
         if (zoomed && !restoring.current) {
@@ -226,7 +235,7 @@ export function Plot({ data, layout, config, uirevision, table, events, classNam
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, layout, fullConfig, uirevision, active]);
+  }, [data, layout, fullConfig, uirevision, active, zoom]);
 
   useEffect(() => {
     if (!active || !el.current) return;

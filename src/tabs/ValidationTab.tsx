@@ -141,7 +141,7 @@ export function ValidationTab() {
     };
   }, [view]);
 
-  if (!dataset) return <EmptyState title="No data loaded">Load the measurement file the model's signals come from.</EmptyState>;
+  if (!dataset) return <EmptyState title="No data loaded" />;
 
   return (
     <div className="flex h-full flex-col gap-3">
@@ -182,22 +182,22 @@ export function ValidationTab() {
             <TabsTrigger value="metrics">Metrics</TabsTrigger>
           </TabsList>
           <TabsContent value="residuals" className="min-h-0">
-            <Panel title="Residuals over time (measured − simulated)" className="h-full" bodyClassName="p-1">
+            <Panel title="Residuals" className="h-full" bodyClassName="p-1">
               <StackedChart panels={residualPanels} xLabel="Sample" resetKey={output ?? ""} />
             </Panel>
           </TabsContent>
           <TabsContent value="histogram" className="min-h-0">
-            <Panel title="Residual distribution with fitted normal" className="h-full" bodyClassName="p-1">
-              {histogram && <Plot data={histogram.data} layout={histogram.layout} uirevision={output ?? ""} />}
+            <Panel title="Distribution" className="h-full" bodyClassName="p-1">
+              {histogram && <Plot data={histogram.data} layout={histogram.layout} uirevision={output ?? ""} zoom={false} />}
             </Panel>
           </TabsContent>
           <TabsContent value="acf" className="min-h-0">
-            <Panel title="Residual autocorrelation (white residuals stay inside the bounds)" className="h-full" bodyClassName="p-1">
+            <Panel title="Autocorrelation" className="h-full" bodyClassName="p-1">
               <StackedChart panels={acfPanels} xLabel="Lag" />
             </Panel>
           </TabsContent>
           <TabsContent value="xcorr" className="min-h-0">
-            <Panel title="Input-residual cross-correlation (should be near zero)" className="h-full" bodyClassName="p-1">
+            <Panel title="Cross-correlation" className="h-full" bodyClassName="p-1">
               {xcorrPanels.length ? <StackedChart panels={xcorrPanels} xLabel="Lag" /> : <EmptyState title="No inputs" />}
             </Panel>
           </TabsContent>
@@ -228,13 +228,13 @@ export function ValidationTab() {
               </Table>
             </Panel>
             <Panel title="Fit (VAF) per output" className="min-h-0 flex-1" bodyClassName="p-1">
-              {vaf && <Plot data={vaf.data} layout={vaf.layout} uirevision={model ?? ""} />}
+              {vaf && <Plot data={vaf.data} layout={vaf.layout} uirevision={model ?? ""} zoom={false} />}
             </Panel>
           </TabsContent>
         </Tabs>
       ) : (
         <Panel className="min-h-0 flex-1">
-          <EmptyState title="Select a model and click Validate">Residuals, histogram with Shapiro-Wilk test, ACF with 95% bounds, input-residual cross-correlation and RMSE / NRMSE / MAE / R² / VAF per output.</EmptyState>
+          <EmptyState title="Pick a model and validate it" />
         </Panel>
       )}
       <StatusText tone={status.error ? "error" : "muted"}>{status.text}</StatusText>

@@ -200,7 +200,7 @@ export function ModelsTab() {
                 ))}
               </TableBody>
             </Table>
-            {models.length === 0 && <EmptyState title="No models yet">Identify models in the System ID tab and save them, or load a library (Ctrl+L).</EmptyState>}
+            {models.length === 0 && <EmptyState title="No models yet" />}
           </Panel>
         </ResizablePanel>
         <ResizableHandle className="my-1 bg-transparent" />
@@ -270,7 +270,7 @@ export function ModelsTab() {
                 </div>
               </div>
             ) : (
-              <p className="text-xs text-muted-foreground">Double-click a model to view and edit its matrices, or select several and click Compare Selected.</p>
+              <p className="text-[13px] text-muted-foreground">Double-click a model to open it.</p>
             )}
           </Panel>
         </ResizablePanel>

@@ -104,6 +104,16 @@ pub struct Dataset {
     sheet: Option<String>,
 }
 
+/// Columns that already live behind shared pointers (the workspace's aligned signals).
+pub struct SharedParts {
+    pub time: Arc<Vec<f64>>,
+    pub sample_rate: f64,
+    pub columns: Vec<(String, Arc<Vec<f64>>)>,
+    pub texts: Vec<(String, Arc<Vec<String>>)>,
+    pub time_origin: Option<f64>,
+    pub metadata: Map<String, Value>,
+}
+
 pub fn time_axis(parse_time: Option<Vec<f64>>, n_rows: usize) -> Vec<f64> {
     parse_time.unwrap_or_else(|| (0..n_rows).map(|i| i as f64).collect())
 }
@@ -122,6 +132,35 @@ pub fn sample_rate_of(time: &[f64]) -> f64 {
 }
 
 impl Dataset {
+    /// A workspace dataset: no column is copied, so an edit costs only what it changed.
+    pub fn from_shared(path: &str, parts: SharedParts) -> Dataset {
+        let mut signals = Vec::new();
+        let mut raw = HashMap::new();
+        for (idx, (col, values)) in parts.columns.into_iter().enumerate() {
+            let (name, unit, group) = parse_signal_name(&col);
+            let label = signal_label(&name, &unit);
+            signals.push(SignalInfo { column: col.clone(), name, unit, group, index: idx, label });
+            raw.insert(col, values);
+        }
+        Dataset {
+            path: path.to_string(),
+            time: parts.time,
+            signals,
+            raw,
+            texts: parts.texts,
+            edited: vec![],
+            time_origin: parts.time_origin,
+            metadata: parts.metadata,
+            sample_rate: parts.sample_rate,
+            encoding: "—".into(),
+            delimiter: "—".into(),
+            header_row: 0,
+            is_raser: false,
+            file_type: "Workspace".into(),
+            sheet: None,
+        }
+    }
+
     pub fn from_parse(path: &str, parse: ParseResult) -> Dataset {
         let time = time_axis(parse.time, parse.n_rows);
         let sample_rate = sample_rate_of(&time);

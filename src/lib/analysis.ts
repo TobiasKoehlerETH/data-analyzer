@@ -1,4 +1,4 @@
-import { invoke } from "@/lib/platform";
+import { invoke } from "./platform.ts";
 
 export type Point = [number, number];
 export interface Parameter {
@@ -36,9 +36,12 @@ export interface FitResult {
 export interface Vectors {
   time: (number | null)[];
   columns: Record<string, (number | null)[]>;
+  /** Every `step`-th row was kept (1 = all rows). */
+  step: number;
 }
-export const analysisVectors = (columns: string[]) =>
-  invoke<Vectors>("analysis_vectors", { columns });
+/** Columns on the dataset rows; long datasets are thinned to about `maxPoints` rows. */
+export const analysisVectors = (columns: string[], maxPoints?: number) =>
+  invoke<Vectors>("analysis_vectors", { columns, maxPoints: maxPoints ?? null });
 /** A text variable on the dataset rows: levels in order of appearance, -1 = missing. */
 export interface Categories {
   levels: string[];
@@ -73,44 +76,6 @@ export function finitePairs(
       ? [[x[i] as number, v] as Point]
       : [],
   );
-}
-
-export type PlotSelection = {
-  kind: "scatter" | "row" | "histogram";
-  x: [number, number];
-  y?: [number, number];
-};
-export function matchingRows(
-  x: (number | null)[],
-  y: (number | null)[],
-  selection: PlotSelection,
-): Set<number> {
-  const rows = new Set<number>();
-  for (let i = 0; i < y.length; i++) {
-    const a =
-      selection.kind === "row"
-        ? i + 1
-        : selection.kind === "histogram"
-          ? y[i]
-          : x[i];
-    if (
-      a == null ||
-      !Number.isFinite(a) ||
-      a < selection.x[0] ||
-      a > selection.x[1]
-    )
-      continue;
-    const b = y[i];
-    if (
-      selection.kind === "scatter" &&
-      (b == null ||
-        !Number.isFinite(b) ||
-        (selection.y && (b < selection.y[0] || b > selection.y[1])))
-    )
-      continue;
-    rows.add(i);
-  }
-  return rows;
 }
 
 export function summarize(values: (number | null)[]) {

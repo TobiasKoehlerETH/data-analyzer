@@ -1,16 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { open, message, ask } from "@/lib/platform";
-import { FilePlus2, Link2, Star, X } from "lucide-react";
+import { FilePlus2, Link2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { CheckField, CheckList, EmptyState, Field, NumberInput, Panel, Radios } from "@/components/common";
+import { CheckField, CheckList, EmptyState, Field, NumberInput, Panel, Radios, Segmented } from "@/components/common";
 import { StackedChart, type ChartPanel } from "@/components/StackedChart";
 import { api, DATA_FILE_FILTERS, errorText, type CompareSignalSeries, type CompareState, type CompareStatistics } from "@/lib/api";
 import { zip } from "@/lib/chart";
 import { useApp } from "@/lib/store";
-import { cn } from "@/lib/utils";
 
 type AlignMode = "manual" | "click" | "trigger";
 const NONE = "__none__";
@@ -18,9 +17,9 @@ const NONE = "__none__";
 export function CompareTab() {
   const { setProgress, setDataset, dataset } = useApp();
   const [state, setState] = useState<CompareState>({ files: [], mapped_signals: [], mappings: [], dataset: null });
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [checked, setChecked] = useState<string[]>([]);
   const [mode, setMode] = useState<AlignMode>("manual");
+  const multiple = () => state.files.length >= 2;
   const [trigSignal, setTrigSignal] = useState("");
   const [threshold, setThreshold] = useState(0);
   const [rising, setRising] = useState(true);
@@ -77,7 +76,6 @@ export function CompareTab() {
     try {
       const v = await api.workspaceRemoveSource(Number(id));
       setDataset(v.dataset ?? null);
-      setSelectedFile(null);
     } catch (e) {
       await message(errorText(e), { title: "Compare", kind: "error" });
     }
@@ -171,32 +169,28 @@ export function CompareTab() {
   return (
     <div className="flex h-full gap-3">
       <div className="flex w-[300px] shrink-0 flex-col gap-3 overflow-y-auto">
-        <Panel title="Files" bodyClassName="flex flex-col gap-2 p-2">
-          <ul className="max-h-40 min-h-16 overflow-auto border border-ap-line" title="The workspace's files. The first file is the reference.">
-            {state.files.map((f, i) => (
-              <li
-                key={f.id}
-                onClick={() => setSelectedFile(f.id)}
-                className={cn("flex cursor-pointer items-center gap-2 px-2 py-1 text-[12.5px]", selectedFile === f.id && "bg-ap-bluegray-15")}
-                title={f.path}
-              >
-                {i === 0 ? <Star className="size-3.5 fill-ap-red text-ap-red" /> : <span className="w-3.5" />}
-                <span className="h-2.5 w-2.5 shrink-0" style={{ background: f.color }} />
-                <span className="truncate">
-                  {f.short_name}
-                </span>
-              </li>
-            ))}
-            {state.files.length < 2 && <li className="p-2 text-xs text-muted-foreground">Compare shows the workspace's files. Add two or more runs of the same test.</li>}
-          </ul>
-          <div className="flex gap-1.5">
-            <Button size="sm" className="flex-1" onClick={addFiles} title="Add files to the workspace with all their columns">
-              <FilePlus2 /> Add files…
+        <Panel
+          title="Files"
+          bodyClassName="flex flex-col gap-1 p-2"
+          actions={
+            <Button size="xs" variant="outline" onClick={addFiles} title="Add files to the workspace">
+              <FilePlus2 /> Add
             </Button>
-            <Button size="sm" variant="outline" disabled={!selectedFile} onClick={() => selectedFile && removeFile(selectedFile)} title="Remove the selected file from the workspace">
-              <X /> Remove
-            </Button>
-          </div>
+          }
+        >
+          {state.files.map((f) => (
+            <div key={f.id} className="group flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] hover:bg-ap-bluegray-15" title={f.path}>
+              <span className="size-2.5 shrink-0 rounded-sm" style={{ background: f.color }} />
+              <span className="min-w-0 flex-1 truncate">{f.short_name}</span>
+              {mode === "manual" && state.files.length > 1 && (
+                <NumberInput className="w-24" value={f.offset} step={0.1} suffix="s" title="Time shift of this file" onChange={(v) => run(() => api.compareSetOffset(f.id, v))} />
+              )}
+              <Button size="icon-xs" variant="ghost" className="opacity-0 group-hover:opacity-100" title="Remove this file" onClick={() => removeFile(f.id)}>
+                <X />
+              </Button>
+            </div>
+          ))}
+          {state.files.length === 0 && <p className="px-2 py-3 text-[13px] text-muted-foreground">Add two or more runs.</p>}
         </Panel>
 
         <Panel
@@ -214,97 +208,90 @@ export function CompareTab() {
             items={state.mapped_signals.map((s) => ({ id: s, label: s }))}
             checked={checked}
             onChange={setChecked}
-            emptyText="Signals present in at least two files appear here."
+            emptyText="No signal is in two files."
           />
         </Panel>
 
-        <Panel title="Alignment" bodyClassName="flex flex-col gap-2">
-          <Radios
-            value={mode}
-            onChange={setMode}
-            options={[
-              { value: "manual", label: "Manual" },
-              { value: "click", label: "Click" },
-              { value: "trigger", label: "Trigger" },
-            ]}
-          />
-          {mode === "manual" && (
-            <>
-              <p className="text-xs text-muted-foreground">Time shift per file. It is the same shift as in Workspace and applies on every page.</p>
-              {state.files.map((f) => (
-                <Field key={f.id} label={f.short_name.slice(0, 20)}>
-                  <NumberInput value={f.offset} step={0.1} suffix="s" onChange={(v) => run(() => api.compareSetOffset(f.id, v))} />
-                </Field>
-              ))}
-            </>
-          )}
-          {mode === "click" && (
-            <div className="text-xs text-muted-foreground">
-              <p>Click on each file's trace to set its alignment point (overlay view).</p>
-              <ul className="mt-1">
+        {state.files.length > 1 && (
+          <Panel title="Line up" bodyClassName="flex flex-col gap-3">
+            <Segmented
+              value={mode}
+              onChange={setMode}
+              options={[
+                { value: "manual", label: "Shift", hint: "Type a time shift per file" },
+                { value: "click", label: "Click", hint: "Click the same event on each trace" },
+                { value: "trigger", label: "Trigger", hint: "Line up the first threshold crossing" },
+              ]}
+            />
+            {mode === "click" && (
+              <ul className="text-[12.5px] text-muted-foreground">
                 {state.files.map((f) => (
                   <li key={f.id} className="flex items-center gap-1.5">
                     <span className="size-2 shrink-0 rounded-full" style={{ background: f.color }} />
-                    {f.short_name}: {clicks[f.id] !== undefined ? `t = ${clicks[f.id].toFixed(3)} s` : "—"}
+                    {f.short_name}: {clicks[f.id] !== undefined ? `${clicks[f.id].toFixed(3)} s` : "click its trace"}
                   </li>
                 ))}
               </ul>
-            </div>
-          )}
-          {mode === "trigger" && (
-            <>
-              <Field label="Signal">
-                <Select value={trigSignal || undefined} onValueChange={setTrigSignal}>
-                  <SelectTrigger className="h-8 w-full">
-                    <SelectValue placeholder="Select signal" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {state.mapped_signals.map((s) => (
-                      <SelectItem key={s} value={s}>
-                        {s}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field label="Threshold">
-                <NumberInput value={threshold} step={0.1} onChange={setThreshold} />
-              </Field>
-              <Radios
-                value={rising ? "r" : "f"}
-                onChange={(v) => setRising(v === "r")}
-                options={[
-                  { value: "r", label: "Rising" },
-                  { value: "f", label: "Falling" },
-                ]}
-              />
-              <Button size="sm" variant="outline" disabled={!trigSignal} onClick={() => run(() => api.compareAlignTrigger(trigSignal, threshold, rising))} title="Shift every file so the first crossing lines up with the reference file's">
-                Align on trigger
-              </Button>
-            </>
-          )}
-        </Panel>
-
-        <Panel title="View" bodyClassName="flex flex-col gap-2">
-          <Radios
-            value={view}
-            onChange={setView}
-            options={[
-              { value: "overlay", label: "Overlay" },
-              { value: "side", label: "Side-by-side" },
-            ]}
-          />
-          <CheckField checked={showDiff} onChange={setShowDiff} label="Show difference trace" />
-          <CheckField checked={showStats} onChange={setShowStats} label="Show statistics" />
-        </Panel>
+            )}
+            {mode === "trigger" && (
+              <>
+                <Field label="Signal">
+                  <Select value={trigSignal || undefined} onValueChange={setTrigSignal}>
+                    <SelectTrigger className="h-8 w-full">
+                      <SelectValue placeholder="Select signal" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {state.mapped_signals.map((sg) => (
+                        <SelectItem key={sg} value={sg}>
+                          {sg}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field label="Threshold">
+                  <NumberInput value={threshold} step={0.1} onChange={setThreshold} />
+                </Field>
+                <Radios
+                  value={rising ? "r" : "f"}
+                  onChange={(v) => setRising(v === "r")}
+                  options={[
+                    { value: "r", label: "Rising" },
+                    { value: "f", label: "Falling" },
+                  ]}
+                />
+                <Button variant="outline" disabled={!trigSignal} onClick={() => run(() => api.compareAlignTrigger(trigSignal, threshold, rising))}>
+                  Line up
+                </Button>
+              </>
+            )}
+          </Panel>
+        )}
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col gap-2">
-        <Panel className="min-h-0 flex-[4]" bodyClassName="p-1">
+        <Panel
+          className="min-h-0 flex-[4]"
+          bodyClassName="p-1"
+          actions={
+            multiple() ? (
+              <div className="flex items-center gap-4">
+                <CheckField checked={showDiff} onChange={setShowDiff} label="Difference" />
+                <CheckField checked={showStats} onChange={setShowStats} label="Statistics" />
+                <Segmented
+                  value={view}
+                  onChange={setView}
+                  options={[
+                    { value: "overlay", label: "Overlay" },
+                    { value: "side", label: "Side by side" },
+                  ]}
+                />
+              </div>
+            ) : undefined
+          }
+        >
           {panels.length === 0 ? (
-            <EmptyState title={state.files.length < 2 ? "Add at least two files" : "Select signals to compare"}>
-              Compare overlays the workspace's files with their processing steps. Signals are matched by column name; the first file ★ is the reference.
-            </EmptyState>
+            <EmptyState title={state.files.length < 2 ? "Add at least two files" : "Tick a signal to compare"} />
           ) : (
             <StackedChart
               panels={panels}
@@ -322,8 +309,8 @@ export function CompareTab() {
             <StackedChart panels={diffPanels} xLabel="Time [s]" />
           </Panel>
         )}
-        {showStats && (
-          <Panel title={ref ? `Statistics vs reference ${ref.short_name}` : "Statistics"} className="max-h-56 min-h-24 flex-1" bodyClassName="p-0 overflow-auto selectable">
+        {showStats && multiple() && (
+          <Panel title={ref ? `Against ${ref.short_name}` : "Statistics"} className="max-h-56 min-h-24 flex-1" bodyClassName="p-0 overflow-auto selectable">
             <Table className="text-[12px]">
               <TableHeader className="sticky top-0 bg-white">
                 <TableRow>
@@ -352,9 +339,9 @@ export function CompareTab() {
       </div>
 
       <Dialog open={mappingOpen} onOpenChange={setMappingOpen}>
-        <DialogContent className="max-h-[80vh] max-w-4xl overflow-auto rounded-none sm:max-w-4xl">
+        <DialogContent className="max-h-[80vh] max-w-4xl overflow-auto sm:max-w-4xl">
           <DialogHeader>
-            <DialogTitle className="text-ap-red font-normal">Signal mapping</DialogTitle>
+            <DialogTitle>Signal mapping</DialogTitle>
           </DialogHeader>
           <Table className="text-[12px]">
             <TableHeader>

@@ -1,8 +1,7 @@
-import Plotly from "plotly.js-dist-min";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { WorkspaceActive } from "@/lib/workspace";
 import { Plot, type PlotElement, type PlotTable } from "./Plot";
-import { INK, LINE_WIDTH, MARKER_SIZE, axis, baseLayout, decimate, esc, hoverValue, type Figure } from "@/lib/chart";
+import { INK, LINE_WIDTH, MARKER_SIZE, axis, baseLayout, decimate, esc, hoverValue, markerStyle, type Figure } from "@/lib/chart";
 
 export interface ChartSeries {
   name: string;
@@ -56,13 +55,11 @@ export interface StackedChartProps {
   onClick?: (panelIndex: number, x: number, y: number) => void;
   /** Called while the draggable vertical line moves. */
   onDragLine?: (x: number) => void;
-  /** Enables box selection (drag) and reports the box in data coordinates; null when cleared. */
-  onSelect?: (box: { panel: number; x: [number, number]; y: [number, number] } | null) => void;
-  /** Changing this key removes the drawn selection box without touching the zoom. */
-  selectionKey?: string | number;
   /** Changing this key resets the zoom. */
   resetKey?: string | number;
   tooltip?: boolean;
+  /** False for summary charts: no zoom or pan. */
+  zoom?: boolean;
   className?: string;
 }
 
@@ -82,10 +79,9 @@ export function StackedChart({
   onCursor,
   onClick,
   onDragLine,
-  onSelect,
-  selectionKey,
   resetKey,
   tooltip = true,
+  zoom = true,
   className,
 }: StackedChartProps) {
   const active = useContext(WorkspaceActive);
@@ -93,17 +89,11 @@ export function StackedChart({
   const [size, setSize] = useState({ w: 800, h: 400 });
   const [view, setView] = useState<[number, number] | null>(null);
   const zoomTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const cbs = useRef({ onZoom, onCursor, onClick, onDragLine, onSelect });
-  cbs.current = { onZoom, onCursor, onClick, onDragLine, onSelect };
+  const cbs = useRef({ onZoom, onCursor, onClick, onDragLine });
+  cbs.current = { onZoom, onCursor, onClick, onDragLine };
   const gdRef = useRef<PlotElement | null>(null);
-  const selectable = !!onSelect;
 
   useEffect(() => setView(null), [resetKey]);
-  useEffect(() => {
-    const gd = gdRef.current;
-    if (gd && selectionKey !== undefined) Plotly.relayout(gd, { selections: [] } as any).catch(() => {});
-  }, [selectionKey]);
-
   useEffect(() => {
     if (!host.current || !active) return;
     const ro = new ResizeObserver(() => {
@@ -277,7 +267,7 @@ export function StackedChart({
             mode: "markers",
             x: xs,
             y: ys,
-            marker: { color: s.color, size: MARKER_SIZE, opacity: xs.length > 1500 ? 0.55 : 0.9, line: { color: INK.surface, width: 1 } },
+            marker: markerStyle(xs.length, s.color),
           });
         } else {
           const d = decimate(xs, ys, Math.max(MAX_POINTS, target), view);
@@ -302,17 +292,9 @@ export function StackedChart({
       margin: { l: 64, r: 16, t: top, b: bottom, pad: 0 },
       hovermode: !tooltip ? false : scatterOnly ? "closest" : "x unified",
       bargap: 0.08,
-      ...(selectable
-        ? {
-            dragmode: "select",
-            selectdirection: "any",
-            newselection: { line: { color: INK.secondary, width: 1, dash: "solid" } },
-            activeselection: { fillcolor: INK.primary, opacity: 0.06 },
-          }
-        : {}),
     };
     return { data, layout: full };
-  }, [panels, columns, rows, n, size, xLabel, xDate, xRange, tooltip, scatterOnly, view, target, selectable]);
+  }, [panels, columns, rows, n, size, xLabel, xDate, xRange, tooltip, scatterOnly, view, target]);
 
   const table = (): PlotTable => {
     const out: PlotTable = { columns: ["Panel", "Series", xLabel ?? "X", "Y"], rows: [] };
@@ -340,21 +322,6 @@ export function StackedChart({
         cbs.current.onZoom?.(range);
       }, 140);
     },
-    selected: (e: { range?: Record<string, number[]> } | undefined) => {
-      const range = e?.range;
-      const xKey = range && Object.keys(range).find((k) => /^x\d*$/.test(k));
-      if (!range || !xKey) return;
-      const id = xKey.slice(1);
-      const xr = range[xKey];
-      const yr = range[`y${id}`];
-      if (!xr || !yr) return;
-      const sorted = (v: (number | string)[]): [number, number] => {
-        const [a, b] = [toNum(v[0]), toNum(v[1])];
-        return [Math.min(a, b), Math.max(a, b)];
-      };
-      cbs.current.onSelect?.({ panel: id ? Number(id) - 1 : 0, x: sorted(xr), y: sorted(yr) });
-    },
-    deselect: () => cbs.current.onSelect?.(null),
     hover: (e: { points?: { x: number | string }[] }) => {
       const x = e.points?.[0]?.x;
       if (x !== undefined && Number.isFinite(toNum(x))) cbs.current.onCursor?.(toNum(x));
@@ -388,7 +355,7 @@ export function StackedChart({
           table={table}
           events={events}
           config={config}
-          select={selectable}
+          zoom={zoom}
           onInit={(gd) => (gdRef.current = gd)}
         />
       )}

@@ -29,7 +29,7 @@ export const INK = {
   faded: "#d6d5cf",
 };
 
-export const FONT = '"Futura LT Book","Futura LT","Futura PT",Futura,"Century Gothic","Avenir Next",Arial,sans-serif';
+export const FONT = '"Inter Variable",Inter,"Segoe UI",system-ui,-apple-system,sans-serif';
 
 /** Sequential blue ramp (light → dark) for magnitude. */
 export const SEQUENTIAL: [number, string][] = [
@@ -57,6 +57,16 @@ export function wash(hex: string, alpha = 0.1): string {
 
 export const LINE_WIDTH = 2;
 export const MARKER_SIZE = 8;
+
+/**
+ * Marker look by point count. A few points get full, outlined dots; thousands of points get small,
+ * soft, outline-free ones, so a dense cloud still shows its shape instead of a solid blob.
+ */
+export function markerStyle(n: number, color: string | string[]) {
+  const size = n > 20000 ? 2.5 : n > 8000 ? 3 : n > 3000 ? 4 : n > 1000 ? 5 : n > 300 ? 6 : MARKER_SIZE;
+  const opacity = n > 8000 ? 0.45 : n > 3000 ? 0.55 : n > 1000 ? 0.7 : 0.9;
+  return { color, size, opacity, line: n > 1000 ? { width: 0 } : { color: INK.surface, width: 1 } };
+}
 
 export function zip(x: (number | null)[], y: (number | null)[]): [number | null, number | null][] {
   const n = Math.min(x.length, y.length);

@@ -1,12 +1,14 @@
-//! Report generator. Renders the analysis into the A+P A4 report template
-//! (`template/ap-report-template.html`): cover, summary, one page per figure,
-//! paginated tables and a results / next-steps page. Plots are embedded as base64
-//! images so the HTML is self-contained; PDF is printed with headless Edge/Chrome.
+//! Report generator. Renders the analysis into the A4 report template
+//! (`template/ap-report-template.html`): a cover, a data page, then only what was asked for:
+//! tables, one chart per page and the processing diagram. Text is kept to headings and facts.
+//! Charts are inline SVG and Inter is embedded, so the HTML is one self-contained file and
+//! text and charts share one font; PDF is printed with headless Edge/Chrome.
 
 use base64::Engine;
 use serde::Serialize;
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::correlation::CorrelationPair;
 use super::models::OutputMetrics;
@@ -14,6 +16,8 @@ use super::stats::StatRow;
 use super::svgplot::esc;
 
 /// The A+P report template; its stylesheet is used verbatim.
+/// The report's one font. It is embedded, so text and charts look the same on every computer.
+const INTER_WOFF2: &[u8] = include_bytes!("../../assets/Inter-latin.woff2");
 const TEMPLATE: &str = include_str!("../../../template/ap-report-template.html");
 const LOGO_PNG: &[u8] = include_bytes!("../../../src/assets/ap-logo.png");
 
@@ -22,14 +26,17 @@ pub const REPORT_PALETTE: &[&str] = &["#ff2400", "#2a78d6", "#1baf7a", "#6250d6"
 
 /// Extra rules for data-dense content (compact tables, paired figures); same tokens as the template.
 const EXTRA_CSS: &str = r#"
-    table.data { font-size: 8pt; }
-    table.data th, table.data td { padding: 1.5mm 2mm; }
+    table.data { font-size: 7pt; width: 100%; }
+    table.data th { font-size: 6.5pt; letter-spacing: 0; padding: 1.5mm 1mm; }
+    table.data td { padding: 1.5mm 1mm; }
     table.data td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
     table.kv td:first-child { color: var(--red); font-weight: 700; width: 45mm; }
-    .figure-pair .report-image img { max-height: 82mm; }
+    /* Charts are inline SVG (so they use the page font), without a frame. */
+    .report-image { border: 0; padding: 0; }
+    .report-image svg { display: block; width: 100%; height: auto; max-height: 115mm; }
+    .figure-pair .report-image svg { max-height: 100mm; }
     .figure-pair .report-image + .report-image { margin-top: 6mm; }
-    .cover-figure img { display: block; width: 100%; max-height: 62mm; object-fit: contain; border: 1px solid var(--line); }
-    .continued { color: var(--muted); font-size: 9pt; margin-top: 3mm; }
+    .cover-figure svg { display: block; width: 100%; height: auto; max-height: 62mm; }
 "#;
 
 pub struct Plot {
@@ -38,9 +45,81 @@ pub struct Plot {
     pub caption: String,
 }
 
+pub struct ReportBlock {
+    /// "clean", "filter" or "adjust".
+    pub kind: String,
+    pub title: String,
+    pub params: String,
+    pub effect: String,
+}
+
 pub struct FilterInfo {
     pub signal: String,
     pub description: String,
+    pub source: String,
+    pub blocks: Vec<ReportBlock>,
+}
+
+fn cut(s: &str, n: usize) -> String {
+    if s.chars().count() <= n { s.to_string() } else { format!("{}…", s.chars().take(n.saturating_sub(1)).collect::<String>()) }
+}
+
+/// A signal's processing as a block diagram: Source → blocks → Output, wrapped to the page width.
+fn pipeline_svg(source: &str, output: &str, blocks: &[ReportBlock]) -> String {
+    const W: f64 = 128.0;
+    const H: f64 = 46.0;
+    const GAP: f64 = 22.0;
+    const ROW: f64 = H + 14.0;
+    let color = |k: &str| match k {
+        "clean" => "#2a78d6",
+        "filter" => "#6250d6",
+        "adjust" => "#1baf7a",
+        "output" => "#ff2400",
+        _ => "#66717d",
+    };
+    let file = source.split(" · ").next().unwrap_or(source);
+    let mut items: Vec<(String, String, String, &str)> = vec![("Source".into(), cut(file, 22), String::new(), "source")];
+    for b in blocks {
+        items.push((b.title.clone(), cut(&b.params, 24), String::new(), b.kind.as_str()));
+    }
+    items.push(("Output".into(), cut(output, 22), String::new(), "output"));
+    let per_row = 4usize;
+    let rows = items.len().div_ceil(per_row);
+    let width = per_row as f64 * (W + GAP) - GAP;
+    let mut out = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {width} {h}\" width=\"100%\" role=\"img\" style=\"max-width:{width}px;font-family:Inter,Arial,sans-serif\">",
+        h = rows as f64 * ROW - 14.0 + 2.0
+    );
+    for (i, (title, line2, line3, kind)) in items.iter().enumerate() {
+        let (col, row) = (i % per_row, i / per_row);
+        let (x, y) = (col as f64 * (W + GAP), row as f64 * ROW + 1.0);
+        let c = color(kind);
+        out.push_str(&format!(
+            "<rect x=\"{x}\" y=\"{y}\" width=\"{W}\" height=\"{H}\" rx=\"6\" fill=\"#fff\" stroke=\"#d6dae0\"/><rect x=\"{x}\" y=\"{y}\" width=\"4\" height=\"{H}\" rx=\"2\" fill=\"{c}\"/>\
+             <text x=\"{tx}\" y=\"{y1}\" font-size=\"11.5\" font-weight=\"600\" fill=\"#0f1216\">{t}</text>\
+             <text x=\"{tx}\" y=\"{y2}\" font-size=\"9.5\" fill=\"#2c333b\">{l2}</text>\
+             <text x=\"{tx}\" y=\"{y3}\" font-size=\"8.5\" fill=\"#66717d\">{l3}</text>",
+            tx = x + 11.0,
+            y1 = y + 19.0,
+            y2 = y + 35.0,
+            y3 = y + 46.0,
+            t = esc(&cut(title, 20)),
+            l2 = esc(line2),
+            l3 = esc(line3),
+        ));
+        if col > 0 {
+            let (x0, ym) = (x - GAP + 3.0, y + H / 2.0);
+            out.push_str(&format!(
+                "<line x1=\"{x0}\" y1=\"{ym}\" x2=\"{x1}\" y2=\"{ym}\" stroke=\"#a9b1ba\" stroke-width=\"1.5\"/><path d=\"M{x1} {a} L{x2} {ym} L{x1} {b} Z\" fill=\"#a9b1ba\"/>",
+                x1 = x - 6.0,
+                x2 = x - 1.0,
+                a = ym - 3.5,
+                b = ym + 3.5
+            ));
+        }
+    }
+    out.push_str("</svg>");
+    out
 }
 
 pub struct ModelInfo {
@@ -94,18 +173,32 @@ pub struct ReportContent {
 fn template_css() -> String {
     let start = TEMPLATE.find("<style>").map(|i| i + "<style>".len());
     let end = TEMPLATE.find("</style>");
-    match (start, end) {
-        (Some(s), Some(e)) if e > s => TEMPLATE[s..e].to_string(),
-        _ => String::new(),
+    let raw = match (start, end) {
+        (Some(s), Some(e)) if e > s => &TEMPLATE[s..e],
+        _ => "",
+    };
+    // The template points at font files that are not shipped; the embedded font replaces them.
+    let mut css = String::new();
+    let mut rest = raw;
+    while let Some(i) = rest.find("@font-face") {
+        css.push_str(&rest[..i]);
+        rest = match rest[i..].find('}') {
+            Some(j) => &rest[i + j + 1..],
+            None => "",
+        };
     }
+    css.push_str(rest);
+    format!(
+        "@font-face {{ font-family: Inter; font-weight: 100 900; src: url(data:font/woff2;base64,{}) format(\"woff2\"); }}\n{css}",
+        base64::engine::general_purpose::STANDARD.encode(INTER_WOFF2)
+    )
 }
 
-fn img_svg(svg: &str, alt: &str) -> String {
-    format!(
-        r#"<img src="data:image/svg+xml;base64,{}" alt="{}">"#,
-        base64::engine::general_purpose::STANDARD.encode(svg.as_bytes()),
-        esc(alt)
-    )
+/// A chart placed straight into the page, so it uses the page's font. Ids are made unique per chart.
+fn inline_svg(svg: &str, alt: &str) -> String {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    svg.replace("id=\"c", &format!("id=\"f{n}c")).replace("url(#c", &format!("url(#f{n}c")).replacen("<svg ", &format!("<svg role=\"img\" aria-label=\"{}\" ", esc(alt)), 1)
 }
 
 fn meta_value(v: &Value) -> String {
@@ -190,15 +283,11 @@ impl Doc {
 }
 
 fn figure(plot: &Plot) -> String {
-    format!(
-        "    <figure class=\"report-image\">\n      {}\n      <figcaption>{}</figcaption>\n    </figure>\n",
-        img_svg(&plot.svg, &plot.title),
-        esc(&plot.caption)
-    )
+    format!("    <figure class=\"report-image\">\n      {}\n    </figure>\n", inline_svg(&plot.svg, &plot.title))
 }
 
 /// One page per figure (`per_page` = 1) or two stacked figures per page.
-fn figure_pages(doc: &mut Doc, name: &str, heading: &str, intro: &str, plots: &[Plot], per_page: usize) {
+fn figure_pages(doc: &mut Doc, name: &str, heading: &str, _intro: &str, plots: &[Plot], per_page: usize) {
     if plots.is_empty() {
         return;
     }
@@ -207,9 +296,6 @@ fn figure_pages(doc: &mut Doc, name: &str, heading: &str, intro: &str, plots: &[
         let mut body = String::new();
         let h = if per_page == 1 { chunk[0].title.clone() } else if i == 0 { heading.to_string() } else { format!("{heading} (continued)") };
         body.push_str(&format!("    <h2>{}</h2>\n", esc(&h)));
-        if i == 0 && !intro.is_empty() {
-            body.push_str(&format!("    <p class=\"intro\">{}</p>\n", esc(intro)));
-        }
         if per_page > 1 {
             body.push_str("    <div class=\"figure-pair\">\n");
         }
@@ -224,7 +310,7 @@ fn figure_pages(doc: &mut Doc, name: &str, heading: &str, intro: &str, plots: &[
 }
 
 /// Splits table rows over pages (`rows_first` on the first page, `rows_next` after).
-fn table_pages(doc: &mut Doc, label: &str, heading: &str, intro: &str, class: &str, head: &str, rows: &[String], rows_first: usize, rows_next: usize) {
+fn table_pages(doc: &mut Doc, label: &str, heading: &str, _intro: &str, class: &str, head: &str, rows: &[String], rows_first: usize, rows_next: usize) {
     let mut start = 0;
     let mut first = true;
     loop {
@@ -232,17 +318,11 @@ fn table_pages(doc: &mut Doc, label: &str, heading: &str, intro: &str, class: &s
         let end = (start + take).min(rows.len());
         let mut body = String::new();
         body.push_str(&format!("    <h2>{}{}</h2>\n", esc(heading), if first { "" } else { " (continued)" }));
-        if first {
-            body.push_str(&format!("    <p class=\"intro\">{}</p>\n", esc(intro)));
-        }
         body.push_str(&format!("    <table class=\"{class}\">\n      <thead><tr>{head}</tr></thead>\n      <tbody>\n"));
         for r in &rows[start..end] {
             body.push_str(&format!("        {r}\n"));
         }
         body.push_str("      </tbody>\n    </table>\n");
-        if end < rows.len() {
-            body.push_str("    <p class=\"continued\">Continued on next page.</p>\n");
-        }
         doc.page(label, body);
         start = end;
         first = false;
@@ -271,20 +351,14 @@ pub fn render_html(c: &ReportContent) -> String {
         .as_ref()
         .and_then(|p| Path::new(p).file_stem().map(|x| x.to_string_lossy().into_owned()))
         .unwrap_or_else(|| "Data analysis".into());
-    let best_model = c.models.iter().map(|m| {
-        let mean = if m.metrics.is_empty() { 0.0 } else { m.metrics.iter().map(|x| x.vaf).sum::<f64>() / m.metrics.len() as f64 };
-        (m, mean)
-    }).max_by(|a, b| a.1.total_cmp(&b.1));
-    let top_pair = c.correlation_pairs.first();
     let label_of = |col: &str| c.correlation_labels.as_ref().map(|f| f(col)).unwrap_or_else(|| col.to_string());
 
     // ---- Sections (pages after the summary) --------------------------------
-    let mut results: Vec<(String, String, String)> = Vec::new();
 
     if let Some(meta) = c.metadata.as_ref().filter(|m| !m.is_empty()) {
         let label = doc.next_label("Metadata");
         let rows: Vec<String> = meta.iter().map(|(k, v)| format!("<tr><td>{}</td><td>{}</td></tr>", esc(k), esc(&meta_value(v)))).collect();
-        table_pages(&mut doc, &label, "File metadata", "Header information detected in the source file.", "kv", &th(&["Key", "Value"]), &rows, 11, 14);
+        table_pages(&mut doc, &label, "Metadata", "Header information detected in the source file.", "kv", &th(&["Key", "Value"]), &rows, 11, 14);
     }
 
     if let Some(stats) = c.stats.as_ref().filter(|s| !s.is_empty()) {
@@ -303,38 +377,35 @@ pub fn render_html(c: &ReportContent) -> String {
         table_pages(
             &mut doc,
             &label,
-            "Descriptive statistics",
+            "Statistics",
             "Per-signal statistics of the loaded (and, where applied, filtered) data.",
             "data",
-            &th(&["Signal", "Count", "Mean", "Std", "Min", "Q1", "Median", "Q3", "Max", "Skew", "Kurt."]),
+            &th(&["Signal", "Count", "Mean", "Std dev", "Min", "Q1", "Median", "Q3", "Max", "Skew", "Kurtosis"]),
             &rows,
             26,
             32,
         );
-        results.push(("Statistics".into(), format!("{} signals summarised", stats.len()), "Ranges and distributions documented".into()));
     }
 
-    figure_pages(&mut doc, "Signals", "Signal plots", "", &c.signal_plots, 1);
+    figure_pages(&mut doc, "Signals", "Signals", "", &c.signal_plots, 2);
 
     if !c.filters.is_empty() {
         let label = doc.next_label("Filters");
-        let rows: Vec<String> = c.filters.iter().map(|f| format!("<tr><td>{}</td><td>{}</td></tr>", esc(&f.signal), esc(&f.description))).collect();
-        table_pages(&mut doc, &label, "Applied filters", "Filter chains applied to the full data set (in order).", "", &th(&["Signal", "Filter chain"]), &rows, 11, 14);
-        results.push(("Filtering".into(), format!("{} signal(s) filtered", c.filters.len()), "Later analyses use the filtered signals".into()));
+        let rows: Vec<String> = c
+            .filters
+            .iter()
+            .map(|f| {
+                let flow = if f.blocks.is_empty() { esc(&f.description) } else { pipeline_svg(&f.source, &f.signal, &f.blocks) };
+                format!("<tr><td>{}</td><td>{flow}</td></tr>", esc(&f.signal))
+            })
+            .collect();
+        table_pages(&mut doc, &label, "Processing", "What was applied to each signal, in order, left to right.", "", &th(&["Signal", "Steps"]), &rows, 4, 5);
     }
 
     if let Some(plot) = &c.correlation_plot {
         let label = doc.next_label("Correlations");
-        let mut body = String::from("    <h2>Correlation analysis</h2>\n    <p class=\"intro\">Pearson correlation matrix of all signals (red = positive, grey = negative).</p>\n");
-        body.push_str(&figure(&Plot { title: "Correlation matrix".into(), svg: plot.clone(), caption: "Pearson correlation coefficient r for every signal pair.".into() }));
-        if let Some(p) = top_pair {
-            body.push_str(&format!(
-                "    <aside class=\"callout takeaway\"><strong>Strongest relation: {} ↔ {} (|r| = {:.3}).</strong></aside>\n",
-                esc(&label_of(&p.signal_a)),
-                esc(&label_of(&p.signal_b)),
-                p.pearson_r.abs()
-            ));
-        }
+        let mut body = String::from("    <h2>Correlation</h2>\n");
+        body.push_str(&figure(&Plot { title: "Correlation matrix".into(), svg: plot.clone(), caption: String::new() }));
         doc.page(&label, body);
         if !c.correlation_pairs.is_empty() {
             let rows: Vec<String> = c
@@ -351,10 +422,7 @@ pub fn render_html(c: &ReportContent) -> String {
                     )
                 })
                 .collect();
-            table_pages(&mut doc, &label, "Top correlated pairs", "Ranked by absolute Pearson correlation; lag from FFT cross-correlation (±300 s).", "data", &th(&["Signal A", "Signal B", "|r|", "Spearman", "Lag (s)"]), &rows, 22, 28);
-        }
-        if let Some(p) = top_pair {
-            results.push(("Correlations".into(), format!("|r| = {:.3} for {} ↔ {}", p.pearson_r.abs(), label_of(&p.signal_a), label_of(&p.signal_b)), "Candidate cause–effect pair to investigate".into()));
+            table_pages(&mut doc, &label, "Correlated pairs", "Ranked by absolute Pearson correlation; lag from FFT cross-correlation (±300 s).", "data", &th(&["Signal A", "Signal B", "|r|", "Spearman", "Lag (s)"]), &rows, 22, 28);
         }
     }
 
@@ -385,23 +453,18 @@ pub fn render_html(c: &ReportContent) -> String {
                 v
             })
             .collect();
-        table_pages(&mut doc, &label, "State-space models", "Identified discrete-time models in the library with per-output fit.", "data", &th(&["Model", "Method / output", "VAF %", "RMSE", "R²", "NRMSE %"]), &rows, 26, 32);
-        if let Some((m, vaf)) = best_model {
-            results.push(("System identification".into(), format!("Best model {} (mean VAF {vaf:.1} %)", m.name), if vaf >= 80.0 { "Model reproduces the measured dynamics".into() } else { "Fit is limited — refine order or I/O selection".to_string() }));
-        }
+        table_pages(&mut doc, &label, "Models", "Identified discrete-time models in the library with per-output fit.", "data", &th(&["Model", "Method / output", "VAF %", "RMSE", "R²", "NRMSE %"]), &rows, 26, 32);
     }
 
-    figure_pages(&mut doc, "Simulation", "Simulation results", "Measured outputs (solid) against the model simulation driven by the measured inputs (dashed).", &c.simulation_plots, 2);
+    figure_pages(&mut doc, "Simulation", "Simulation", "Measured outputs (solid) against the model simulation driven by the measured inputs (dashed).", &c.simulation_plots, 2);
     if !c.simulation_plots.is_empty() {
-        results.push(("Simulation".into(), format!("{} output trace(s) simulated", c.simulation_plots.len()), "Visual check of model behaviour".into()));
     }
     figure_pages(&mut doc, "Validation", "Validation", "", &c.validation_plots, 1);
     if !c.validation_plots.is_empty() {
-        results.push(("Validation".into(), format!("{} output(s) validated", c.validation_plots.len()), "Residual whiteness and normality checked".into()));
     }
 
     if !c.comparison_plots.is_empty() || !c.comparison_stats.is_empty() {
-        figure_pages(&mut doc, "Comparison", "File comparison", "Aligned overlays of the signals present in all compared files.", &c.comparison_plots, 2);
+        figure_pages(&mut doc, "Comparison", "Comparison", "Aligned overlays of the signals present in all compared files.", &c.comparison_plots, 2);
         if !c.comparison_stats.is_empty() {
             let label = if c.comparison_plots.is_empty() { doc.next_label("Comparison") } else { doc.pages.last().map(|p| p.0.clone()).unwrap_or_default() };
             let rows: Vec<String> = c
@@ -419,41 +482,8 @@ pub fn render_html(c: &ReportContent) -> String {
                     )
                 })
                 .collect();
-            table_pages(&mut doc, &label, "Comparison statistics", "Differences of each file to the reference file, interpolated on the reference time grid.", "data", &th(&["Signal", "File", "RMSE", "Max dev.", "R²", "Mean error"]), &rows, 24, 30);
-            let worst = c.comparison_stats.iter().max_by(|a, b| a.rmse.total_cmp(&b.rmse)).unwrap();
-            results.push(("Comparison".into(), format!("Largest RMSE: {} in {}", worst.signal, worst.file_name), "Check this signal for drift between runs".into()));
+            table_pages(&mut doc, &label, "Comparison", "Differences of each file to the reference file, interpolated on the reference time grid.", "data", &th(&["Signal", "File", "RMSE", "Max deviation", "R²", "Mean error"]), &rows, 24, 30);
         }
-    }
-
-    // ---- Results / next steps ---------------------------------------------
-    if !results.is_empty() {
-        let label = doc.next_label("Results");
-        let mut body = String::from("    <h2>Results</h2>\n    <p class=\"intro\">Outcome of each analysis step included in this report.</p>\n    <table>\n      <thead><tr><th scope=\"col\">Item</th><th scope=\"col\">Result / status</th><th scope=\"col\">Implication</th></tr></thead>\n      <tbody>\n");
-        for (item, res, imp) in results.iter().take(8) {
-            body.push_str(&format!("        <tr><td>{}</td><td>{}</td><td>{}</td></tr>\n", esc(item), esc(res), esc(imp)));
-        }
-        body.push_str("      </tbody>\n    </table>\n");
-        let mut steps: Vec<(&str, String)> = Vec::new();
-        match best_model {
-            Some((_, vaf)) if vaf < 80.0 => steps.push(("Refine the model", "Increase the order range or revisit the input/output selection".into())),
-            Some(_) if c.validation_plots.is_empty() => steps.push(("Validate the model", "Run residual analysis on the selected model".into())),
-            Some(_) => steps.push(("Confirm on new data", "Simulate the model on an independent test run".into())),
-            None => steps.push(("Identify a model", "Use System ID to capture the input/output dynamics".into())),
-        }
-        if c.filters.is_empty() {
-            steps.push(("Review filtering", "Check the auto-suggested filters for noisy signals".into()));
-        } else {
-            steps.push(("Document filters", "Keep the saved filter chains with this report".into()));
-        }
-        steps.push(("Share the findings", format!("Distribute {} to the project team", doc.doc_id)));
-        if results.len() <= 5 {
-            body.push_str("    <h3 class=\"spaced\">Next steps</h3>\n    <div class=\"steps\">\n");
-            for (i, (a, o)) in steps.iter().take(3).enumerate() {
-                body.push_str(&format!("      <div class=\"step\"><span class=\"eyebrow\">{:02}</span><h3>{}</h3><p class=\"small\">{}</p></div>\n", i + 1, esc(a), esc(o)));
-            }
-            body.push_str("    </div>\n");
-        }
-        doc.page(&label, body);
     }
 
     // ---- Cover and summary (built last, inserted first) ---------------------
@@ -465,20 +495,14 @@ pub fn render_html(c: &ReportContent) -> String {
     html.push_str("  </style>\n</head>\n<body>\n");
 
     let author = std::env::var("USERNAME").or_else(|_| std::env::var("USER")).unwrap_or_else(|_| "Data Analyzer".into());
-    let subtitle = if s.n_samples > 0 {
-        format!("{} · {} samples · {} signals · {:.3} Hz", s.file_type, s.n_samples, s.n_signals, s.sample_rate)
-    } else {
-        "Time-series analysis".into()
-    };
     let cover_fig = match &c.overview_plot {
-        Some(svg) => format!("    <figure class=\"spaced cover-figure\">\n      {}\n    </figure>\n", img_svg(svg, "Signal overview")),
+        Some(svg) => format!("    <figure class=\"spaced cover-figure\">\n      {}\n    </figure>\n", inline_svg(svg, "Signal overview")),
         None => String::new(),
     };
     let cover = format!(
         r#"    <div class="cover-band">
       <p class="eyebrow">Data analysis report</p>
       <h1>{}</h1>
-      <p class="cover-subtitle">{}</p>
     </div>
 {cover_fig}    <dl class="cover-meta">
       <div><dt>Author</dt><dd>{}</dd></div>
@@ -487,57 +511,30 @@ pub fn render_html(c: &ReportContent) -> String {
     </dl>
 "#,
         esc(&title),
-        esc(&subtitle),
         esc(&author),
         now.format("%d %B %Y"),
         esc(&doc.version)
     );
     html.push_str(&doc.render_page(&doc.doc_id, &cover, true, &logo));
 
-    // Summary
-    let mut summary = String::new();
-    let headline = match (best_model, top_pair) {
-        (Some((m, vaf)), _) => format!("Model {} explains {vaf:.1} % of the output variance", m.name),
-        (None, Some(p)) => format!("{} and {} are strongly related (|r| = {:.2})", label_of(&p.signal_a), label_of(&p.signal_b), p.pearson_r.abs()),
-        _ => format!("{} signals analysed over {}", s.n_signals, fmt_duration(s.duration)),
-    };
-    summary.push_str(&format!("    <h2>{}</h2>\n", esc(&headline)));
-    summary.push_str(&format!(
-        "    <p class=\"intro\">Analysis of {} recorded with {} and processed with the Data Analyzer.</p>\n",
-        esc(&c.source_file.clone().unwrap_or_else(|| "the loaded data".into())),
-        esc(&s.file_type)
-    ));
-    let third = match best_model {
-        Some((_, vaf)) => (format!("{vaf:.1} %"), "Best model mean VAF".to_string()),
-        None => (format!("{:.3} Hz", s.sample_rate), "Sample rate".to_string()),
-    };
-    summary.push_str(&format!(
-        "    <div class=\"cards\">\n      <div class=\"card\"><p class=\"metric\">{}</p><p class=\"small\">Samples</p></div>\n      <div class=\"card\"><p class=\"metric\">{}</p><p class=\"small\">Signals over {}</p></div>\n      <div class=\"card\"><p class=\"metric\">{}</p><p class=\"small\">{}</p></div>\n    </div>\n",
-        s.n_samples,
-        s.n_signals,
-        esc(&fmt_duration(s.duration)),
-        esc(&third.0),
-        esc(&third.1)
-    ));
-    if let Some(p) = c.signal_plots.first() {
-        summary.push_str(&figure(&Plot { title: p.title.clone(), svg: p.svg.clone(), caption: format!("Overview: {}", p.caption) }).replace("class=\"report-image\"", "class=\"report-image spaced\""));
+    // Data
+    let mut summary = String::from("    <h2>Data</h2>\n    <table class=\"kv\">\n      <tbody>\n");
+    let file = c
+        .source_file
+        .as_ref()
+        .map(|p| Path::new(p).file_name().map(|x| x.to_string_lossy().into_owned()).unwrap_or_else(|| p.clone()))
+        .unwrap_or_else(|| "Workspace".into());
+    for (k, v) in [
+        ("File", file),
+        ("Rows", s.n_samples.to_string()),
+        ("Signals", s.n_signals.to_string()),
+        ("Sample rate", format!("{:.3} Hz", s.sample_rate)),
+        ("Duration", fmt_duration(s.duration)),
+    ] {
+        summary.push_str(&format!("        <tr><td>{k}</td><td>{}</td></tr>\n", esc(&v)));
     }
-    let mut findings: Vec<String> = results.iter().take(3).map(|(i, r, _)| format!("{i}: {r}")).collect();
-    if findings.is_empty() {
-        findings.push(format!("{} signals over {}", s.n_signals, fmt_duration(s.duration)));
-    }
-    let sections: Vec<String> = doc.pages.iter().map(|p| p.0.clone()).fold(Vec::new(), |mut acc, l| {
-        if !acc.contains(&l) {
-            acc.push(l);
-        }
-        acc
-    });
-    summary.push_str(&format!(
-        "    <div class=\"columns spaced\">\n      <div><h3>Key findings</h3><ul>{}</ul></div>\n      <div><h3>Contents</h3><p class=\"small\">{}</p></div>\n    </div>\n",
-        findings.iter().map(|f| format!("<li>{}</li>", esc(f))).collect::<String>(),
-        esc(&sections.join(" · "))
-    ));
-    html.push_str(&doc.render_page("00 / Summary", &summary, false, &logo));
+    summary.push_str("      </tbody>\n    </table>\n");
+    html.push_str(&doc.render_page("00 / Data", &summary, false, &logo));
 
     for (label, body) in &doc.pages {
         html.push_str(&doc.render_page(label, body, false, &logo));

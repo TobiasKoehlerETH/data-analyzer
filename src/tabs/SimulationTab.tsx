@@ -53,7 +53,7 @@ export function SimulationTab() {
     [view],
   );
 
-  if (!dataset) return <EmptyState title="No data loaded">Load the measurement file the model's signals come from.</EmptyState>;
+  if (!dataset) return <EmptyState title="No data loaded" />;
 
   return (
     <div className="flex h-full flex-col gap-3">
@@ -82,7 +82,7 @@ export function SimulationTab() {
         {panels.length ? (
           <StackedChart panels={panels} xLabel="Time [s]" resetKey={view?.models.join("|")} />
         ) : (
-          <EmptyState title="No simulation yet">Pick a model from the library and click Simulate. Inputs and outputs are mean-removed and decimated exactly as during identification.</EmptyState>
+          <EmptyState title="Pick a model and simulate it" />
         )}
       </Panel>
       <StatusText tone={status.error ? "error" : "muted"}>{status.text}</StatusText>

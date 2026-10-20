@@ -1,34 +1,36 @@
 # Data Analyzer
 
-A local desktop workspace for exploring numeric datasets, comparing measurements and fitting models. Built with Tauri, Rust, React and Plotly.
+A local desktop app for exploring numeric measurement data, cleaning it step by step and fitting models. Built with Tauri, Rust, React and Plotly. Everything runs on your computer.
 
-![Data Analyzer statistics workspace showing a column-to-column scatter with a box selection, row plot, distribution and quartiles linked to the selection, and summary statistics](docs/images/data-analyzer.png)
+![Prepare: a signal's processing as a block diagram, with the input and output of a step on the chart](docs/images/prepare.png)
 
-*Statistics workspace with the bundled bench-log sample (`samples/sample_run3.txt`) and a linked selection.*
+**Data → Prepare → Explore → Analyse → Model → Report**
 
-- Import CSV, delimited text, Excel, Parquet, MAT, HDF5 and TDMS files into one workspace. Files keep their own time base and are aligned on a common time grid, with a time shift per file.
-- Clean and filter signals in **Prepare**: remove spikes, outliers and ranges, fill gaps, adjust values and add filters, with the original kept in gray, undo and reset.
-- Plot columns against row positions, time or another numeric column.
-- Fit curves from numeric charts using built-in or custom equations, coefficient bounds, exclusions, residuals and uncertainty estimates.
-- Explore linked scatter plots, distributions, row plots and summary statistics.
-- Compare the workspace's files, inspect spectra and correlations, and identify, simulate and validate state-space models on one Model page.
-- Save projects and reusable processing recipes.
-- Export reports, fit results and statistics.
+- **Data**: CSV, text, Excel, Parquet, MAT, HDF5 and TDMS files in one workspace. Each file keeps its own time base: take the time from a column or a fixed step per row, check rows against time, and line files up.
+- **Prepare**: process a signal as a row of blocks (clean, filter, adjust). Click a block to see its input and output, change it, move it or delete it.
+- **Explore**: plots, distributions and file comparison.
+- **Analyse**: spectrum, correlations and curve fitting.
+- **Model**: identify, store, simulate and validate state-space models.
+- **Report**: one HTML or PDF file with tables, charts and the processing diagram of each signal.
 
-Every chart navigates the same way: drag to zoom (a horizontal drag zooms X only), scroll to zoom, double-click to reset. The toolbar above each chart adds Pan, **Previous view**, Reset, a data-table view with CSV export, and PNG export. Stacked plots share their X axis.
+![Data: files, signals and the time map](docs/images/data.png)
 
-See [the analysis guide](docs/analysis-workspaces.md) for fitting and linked selections.
+![Plot](docs/images/plot.png)
+
+![Correlations](docs/images/correlations.png)
+
+See [the guide](docs/analysis-workspaces.md) for details.
 
 ## Run
 
-Install Node.js, Rust and the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your operating system. On Windows, Tauri requires the Microsoft C++ build tools and WebView2.
+Install Node.js, Rust and the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your system. On Windows, Tauri needs the Microsoft C++ build tools and WebView2.
 
 ```sh
 npm ci
 npm run app:dev
 ```
 
-Create a desktop build with `npm run app:build`. The application processes data locally; a Python server is not required.
+Build the installer with `npm run app:build`. A Python server is not needed.
 
 ## Verify
 
@@ -38,4 +40,4 @@ node --test tools/analysis.test.ts
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-The Rust tests cover import, filtering, spectra, correlation, fitting, system identification and validation. Numerical parity fixtures are included under `src-tauri/tests/fixtures`.
+The Rust tests cover import, processing, spectra, correlation, fitting, system identification and validation. Numerical reference fixtures are in `src-tauri/tests/fixtures`.

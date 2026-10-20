@@ -1,24 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen, open, save, message, isTauri } from "@/lib/platform";
-import {
-  AudioWaveform,
-  BrushCleaning,
-  ChartLine,
-  ChartScatter,
-  Database,
-  Cpu,
-  FileSpreadsheet,
-  FileText,
-  FolderOpen,
-  Grid3x3,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Scale,
-  Spline,
-} from "lucide-react";
-import logo from "@/assets/ap-logo.png";
+import { BrushCleaning, ChartLine, Cpu, Database, FileText, FolderOpen, Microscope, Plus, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Toaster } from "@/components/ui/sonner";
@@ -40,32 +24,40 @@ import { CurveFitTab } from "@/tabs/CurveFitTab";
 
 interface PageDef {
   label: string;
-  icon: typeof FolderOpen;
   component: () => React.ReactElement;
-  /** One-line instruction shown under the page title. */
+  /** One-line instruction shown beside the page tabs. */
   hint: string;
   needsData?: boolean;
 }
 
 const PAGES: Record<TabId, PageDef> = {
-  file: { label: "Workspace", icon: Database, component: FileTab, hint: "Add columns from any number of files as variables." },
-  prepare: { label: "Prepare", icon: BrushCleaning, component: PrepareTab, hint: "Clean and filter a signal. Drag a box to select, then remove or keep. The original stays in gray.", needsData: true },
-  timeseries: { label: "Plots", icon: ChartLine, component: TimeSeriesTab, hint: "Tick signals on the left to plot them. Drag to zoom, double-click to reset.", needsData: true },
-  statistics: { label: "Statistics", icon: ChartScatter, component: StatisticsTab, hint: "Pick a signal; drag on any chart to select rows and compare.", needsData: true },
-  compare: { label: "Compare files", icon: Scale, component: CompareTab, hint: "Overlay the workspace's files and line them up; shifts apply on every page." },
-  spectrum: { label: "Spectrum", icon: AudioWaveform, component: SpectrumTab, hint: "See which frequencies a signal contains. Drag the cutoff line, then add a low-pass there.", needsData: true },
-  correlation: { label: "Correlations", icon: Grid3x3, component: CorrelationTab, hint: "Find signals that move together. Click a cell or pair for details.", needsData: true },
-  curvefit: { label: "Curve fit", icon: Spline, component: CurveFitTab, hint: "Pick X and Y variables, choose a model and fit.", needsData: true },
-  model: { label: "Model", icon: Cpu, component: ModelTab, hint: "Identify, store, simulate and validate state-space models." },
-  report: { label: "Report", icon: FileText, component: ReportTab, hint: "Choose sections and export an A+P report as HTML or PDF." },
+  file: { label: "Data", component: FileTab, hint: "Add columns from any number of files as variables." },
+  prepare: { label: "Prepare", component: PrepareTab, hint: "Clean and filter one signal at a time. Every step is a block you can inspect, edit or delete.", needsData: true },
+  timeseries: { label: "Plot", component: TimeSeriesTab, hint: "Tick signals on the left to plot them. Drag to zoom, double-click to reset.", needsData: true },
+  statistics: { label: "Distribution", component: StatisticsTab, hint: "Pick a signal; drag on any chart to select rows and compare.", needsData: true },
+  compare: { label: "Compare files", component: CompareTab, hint: "Overlay the workspace's files and line them up; shifts apply everywhere." },
+  spectrum: { label: "Spectrum", component: SpectrumTab, hint: "See which frequencies a signal contains. Drag the cutoff line, then add a low-pass there.", needsData: true },
+  correlation: { label: "Correlations", component: CorrelationTab, hint: "Find signals that move together. Click a cell or pair for details.", needsData: true },
+  curvefit: { label: "Curve fit", component: CurveFitTab, hint: "Pick X and Y variables, choose a model and fit.", needsData: true },
+  model: { label: "Model", component: ModelTab, hint: "Identify, store, simulate and validate state-space models." },
+  report: { label: "Report", component: ReportTab, hint: "Choose sections and export the analysis as HTML or PDF." },
 };
 
-const STEPS: { label: string; pages: TabId[] }[] = [
-  { label: "Import", pages: ["file", "prepare"] },
-  { label: "Explore", pages: ["timeseries", "statistics", "compare"] },
-  { label: "Analyse", pages: ["spectrum", "correlation", "curvefit"] },
-  { label: "Model", pages: ["model"] },
-  { label: "Share", pages: ["report"] },
+interface Step {
+  id: string;
+  label: string;
+  icon: LucideIcon;
+  pages: TabId[];
+}
+
+/** The workflow, left to right. Steps with several pages show them as tabs underneath. */
+const STEPS: Step[] = [
+  { id: "data", label: "Data", icon: Database, pages: ["file"] },
+  { id: "prepare", label: "Prepare", icon: BrushCleaning, pages: ["prepare"] },
+  { id: "explore", label: "Explore", icon: ChartLine, pages: ["timeseries", "statistics", "compare"] },
+  { id: "analyse", label: "Analyse", icon: Microscope, pages: ["spectrum", "correlation", "curvefit"] },
+  { id: "model", label: "Model", icon: Cpu, pages: ["model"] },
+  { id: "report", label: "Report", icon: FileText, pages: ["report"] },
 ];
 const ORDER: TabId[] = STEPS.flatMap((s) => s.pages);
 
@@ -78,11 +70,15 @@ function formatEta(ms: number): string {
 function NeedsData({ onImport }: { onImport: () => void }) {
   return (
     <div className="flex h-full items-center justify-center">
-      <div className="ap-box flex w-[440px] flex-col items-start gap-4 p-8">
-        <span className="h-[3px] w-12 bg-ap-red" />
-        <h2 className="text-[26px] leading-tight text-ap-red">Workspace is empty</h2>
+      <div className="flex w-[420px] flex-col items-center gap-4 rounded-2xl border border-ap-line bg-white p-10 text-center shadow-[var(--ap-shadow)]">
+        <span className="flex size-12 items-center justify-center rounded-full bg-ap-red-soft text-ap-red">
+          <Database className="size-5" />
+        </span>
+        <div>
+          <h2 className="text-[18px]">No data yet</h2>
+        </div>
         <Button size="lg" onClick={onImport}>
-          <Database /> Add data
+          <Plus /> Add data
         </Button>
       </div>
     </div>
@@ -93,25 +89,13 @@ export default function App() {
   const { activeTab, setActiveTab, flash, progress, setProgress, dataset, models, refreshModels, showStatus } = useApp();
   const [now, setNow] = useState(Date.now());
   const [visited, setVisited] = useState(() => new Set<TabId>([activeTab]));
-  const [collapsed, setCollapsed] = useState(() => {
-    try {
-      return localStorage.getItem("sidebarCollapsed") === "1";
-    } catch {
-      return false;
-    }
-  });
-  const toggleSidebar = () =>
-    setCollapsed((c) => {
-      try {
-        localStorage.setItem("sidebarCollapsed", c ? "0" : "1");
-      } catch {
-        /* ignore */
-      }
-      return !c;
-    });
+  /** The page last open in each step, so switching steps returns to where you were. */
+  const [lastPage, setLastPage] = useState<Record<string, TabId>>({});
 
   useEffect(() => {
     setVisited((v) => (v.has(activeTab) ? v : new Set([...v, activeTab])));
+    const step = STEPS.find((s) => s.pages.includes(activeTab));
+    if (step) setLastPage((l) => (l[step.id] === activeTab ? l : { ...l, [step.id]: activeTab }));
   }, [activeTab]);
 
   useEffect(() => {
@@ -133,7 +117,7 @@ export default function App() {
     return () => clearInterval(id);
   }, [progress]);
 
-  /** Sends files to the Workspace import queue. */
+  /** Sends files to the Data page import queue. */
   const addFiles = (paths: string[]) => {
     if (!paths.length) return;
     setActiveTab("file");
@@ -178,9 +162,6 @@ export default function App() {
         e.preventDefault();
         const step = k === "pagedown" ? 1 : -1;
         setActiveTab(ORDER[(ORDER.indexOf(activeTab) + step + ORDER.length) % ORDER.length]);
-      } else if (k === "b") {
-        e.preventDefault();
-        toggleSidebar();
       } else if (k === "o") {
         e.preventDefault();
         openFiles();
@@ -221,145 +202,123 @@ export default function App() {
   });
 
   const eta = progress && progress.value > 2 ? formatEta(((now - progress.startedAt) * (100 - progress.value)) / progress.value) : "";
-  const page = PAGES[activeTab];
-  const stepIndex = STEPS.findIndex((s) => s.pages.includes(activeTab));
-  const fileName = dataset?.path.split(/[\\/]/).pop() ?? "";
+  const stepIndex = Math.max(
+    0,
+    STEPS.findIndex((s) => s.pages.includes(activeTab)),
+  );
+  const step = STEPS[stepIndex];
+  const dataName = useMemo(() => {
+    if (!dataset) return "";
+    return dataset.path === "Workspace" ? "Workspace" : (dataset.path.split(/[\\/]/).pop() ?? dataset.path);
+  }, [dataset]);
 
   return (
     <TooltipProvider delayDuration={400}>
       <div className="flex h-full flex-col">
-        <div className="flex min-h-0 flex-1">
-          {/* Sidebar: the workflow */}
-          <aside
-            className={cn(
-              "flex shrink-0 flex-col overflow-hidden border-r border-ap-line bg-white transition-[width] duration-200 ease-out motion-reduce:transition-none",
-              collapsed ? "w-[60px]" : "w-[232px]",
-            )}
-          >
-            <div className={cn("relative h-[86px] shrink-0 transition-[padding] duration-200", collapsed ? "px-[21px] pt-8" : "px-6 pt-6")}>
-              <img
-                src={logo}
-                alt="Angst+Pfister"
-                draggable={false}
-                className={cn("absolute top-6 left-6 w-[164px] max-w-none transition-opacity duration-150", collapsed ? "pointer-events-none opacity-0" : "opacity-100 delay-75")}
-              />
-              <span className={cn("absolute bottom-3 block h-[3px] bg-ap-red transition-all duration-200", collapsed ? "left-[18px] w-6" : "left-6 w-[50px]")} />
-            </div>
-            <nav className="flex min-h-0 flex-1 flex-col gap-3 overflow-x-hidden overflow-y-auto px-2 pt-2 pb-4">
-              {STEPS.map((step, si) => (
-                <div key={step.label}>
-                  <p
-                    className="mb-1 flex h-5 items-center gap-3 border-l-[3px] border-transparent px-3 text-[10.5px] font-bold tracking-[0.14em] whitespace-nowrap text-ap-bluegray uppercase"
-                  >
-                    <span
-                      className={cn(
-                        "flex size-4 shrink-0 items-center justify-center rounded-full text-[9.5px] tracking-normal",
-                        si === stepIndex ? "bg-ap-red text-white" : "bg-ap-bluegray-15 text-ap-bluegray",
-                      )}
-                    >
-                      {si + 1}
-                    </span>
-                    <span className={cn("transition-opacity duration-150", collapsed ? "w-0 opacity-0" : "opacity-100")}>{step.label}</span>
-                  </p>
-                  {step.pages.map((id) => {
-                    const p = PAGES[id];
-                    const Icon = p.icon;
-                    const active = id === activeTab;
-                    const locked = p.needsData && !dataset;
-                    const badge = id === "model" && models.length > 0 ? models.length : null;
-                    return (
-                      <button
-                        key={id}
-                        onClick={() => setActiveTab(id)}
-                        title={collapsed ? p.label : p.hint}
-                        className={cn(
-                          "group relative flex h-9 w-full items-center gap-3 border-l-[3px] px-3 text-left text-[13.5px] whitespace-nowrap transition-colors",
-                          active ? "border-ap-red bg-ap-bluegray-15 text-black" : "border-transparent hover:bg-[#f7f8f8] hover:text-ap-red",
-                          locked && !active && "text-[#9aa1a6]",
-                        )}
-                      >
-                        <Icon className={cn("size-4 shrink-0", active ? "text-ap-red" : locked ? "text-ap-bluegray-60" : "text-ap-bluegray")} strokeWidth={1.7} />
-                        <span className={cn("flex-1 truncate transition-opacity duration-150", collapsed ? "opacity-0" : "opacity-100")}>{p.label}</span>
-                        {badge !== null && (
-                          <span
-                            className={cn(
-                              "rounded-full bg-ap-bluegray-15 px-1.5 text-[10.5px] text-ap-bluegray tabular-nums transition-all",
-                              collapsed && "absolute top-0.5 right-1 bg-ap-red px-1 text-[9px] text-white",
-                            )}
-                          >
-                            {badge}
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              ))}
-            </nav>
-          </aside>
-
-          {/* Main */}
-          <main className="flex min-w-0 flex-1 flex-col">
-            <header className="flex h-[58px] shrink-0 items-center gap-4 border-b border-ap-line bg-white pr-4 pl-3">
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                onClick={toggleSidebar}
-                title={collapsed ? "Expand sidebar (Ctrl+B)" : "Collapse sidebar (Ctrl+B)"}
-                aria-label="Toggle sidebar"
-              >
-                {collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
-              </Button>
-              <h1 className="min-w-0 flex-1 truncate text-[20px] text-black" title={page.hint}>
-                {page.label}
-              </h1>
-              {dataset && activeTab !== "file" && (
+        {/* Top bar: brand, the workflow, the data in use */}
+        <header className="flex h-14 shrink-0 items-center gap-6 border-b border-ap-line bg-white px-5">
+          <span className="shrink-0 text-[15px] font-semibold tracking-tight">Data Analyzer</span>
+          <nav className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto" aria-label="Workflow">
+            {STEPS.map((s, si) => {
+              const active = si === stepIndex;
+              const locked = !dataset && s.pages.every((p) => PAGES[p].needsData);
+              const badge = s.id === "model" && models.length > 0 ? models.length : null;
+              const Icon = s.icon;
+              return (
                 <button
-                  onClick={() => setActiveTab("file")}
-                  className="flex max-w-[360px] items-center gap-2.5 border border-ap-line bg-white px-3 py-1.5 text-left hover:border-ap-red"
-                  title={`${dataset.path}\nClick to change the data`}
+                  key={s.id}
+                  onClick={() => setActiveTab(lastPage[s.id] ?? s.pages[0])}
+                  title={PAGES[s.pages[0]].hint}
+                  aria-current={active ? "step" : undefined}
+                  className={cn(
+                    "group relative flex h-9 items-center gap-2 rounded-lg px-3 text-[13.5px] whitespace-nowrap transition-colors",
+                    active ? "bg-ap-bluegray-15 font-semibold text-foreground" : "text-muted-foreground hover:bg-[#f6f7f9] hover:text-foreground",
+                    locked && !active && "opacity-55",
+                  )}
                 >
-                  <FileSpreadsheet className="size-4 shrink-0 text-ap-red" />
-                  <span className="min-w-0">
-                    <span className="block truncate text-[12.5px] leading-tight">{fileName}</span>
-                    <span className="block text-[11px] leading-tight text-muted-foreground tabular-nums">
-                      {dataset.n_samples.toLocaleString("en-US")} rows · {dataset.n_signals} signals
-                    </span>
+                  <span
+                    className={cn(
+                      "flex size-[18px] shrink-0 items-center justify-center rounded-full text-[10.5px] font-semibold",
+                      active ? "bg-ap-red text-white" : "bg-ap-bluegray-15 text-ap-bluegray",
+                    )}
+                  >
+                    {si + 1}
                   </span>
-                  
+                  <Icon className="hidden size-4 xl:block" strokeWidth={1.8} />
+                  {s.label}
+                  {badge !== null && <span className="rounded-full bg-ap-red px-1.5 text-[10.5px] font-semibold text-white">{badge}</span>}
                 </button>
-              )}
-            </header>
-            <div className="relative min-h-0 flex-1">
-              {ORDER.map((id) => {
-                if (id !== activeTab && !visited.has(id)) return null;
-                const P = PAGES[id];
-                const C = P.component;
-                const locked = P.needsData && !dataset;
-                return (
-                  <div key={id} className={cn("absolute inset-0 overflow-hidden p-4", id === activeTab ? "visible ap-workspace" : "invisible")}>
-                    <WorkspaceActive.Provider value={id === activeTab}>
-                      {locked ? <NeedsData onImport={() => setActiveTab("file")} /> : <C />}
-                    </WorkspaceActive.Provider>
-                  </div>
-                );
-              })}
+              );
+            })}
+          </nav>
+          <button
+            onClick={() => setActiveTab("file")}
+            className="flex max-w-[320px] shrink-0 items-center gap-2.5 max-lg:hidden rounded-lg border border-ap-line bg-white py-1.5 pr-3 pl-2.5 text-left hover:border-ap-bluegray-60"
+            title={dataset ? `${dataset.path}\nClick to manage the data` : "Add data"}
+          >
+            <span className={cn("flex size-7 shrink-0 items-center justify-center rounded-md", dataset ? "bg-ap-bluegray-15 text-ap-bluegray" : "bg-ap-red-soft text-ap-red")}>
+              {dataset ? <FolderOpen className="size-4" /> : <Plus className="size-4" />}
+            </span>
+            <span className="min-w-0">
+              <span className="block truncate text-[13px] leading-tight font-medium">{dataset ? dataName : "Add data"}</span>
+              <span className="block truncate text-[11.5px] leading-tight text-muted-foreground tabular-nums">
+                {dataset ? `${dataset.n_signals} signals · ${dataset.duration >= 100 ? Math.round(dataset.duration).toLocaleString("en-US") : Number(dataset.duration.toPrecision(3))} s` : "Nothing loaded"}
+              </span>
+            </span>
+          </button>
+        </header>
+
+        {/* Page tabs, only for steps with more than one page */}
+        {step.pages.length > 1 && (
+          <div className="flex h-12 shrink-0 items-center border-b border-ap-line bg-[#fafbfc] px-5">
+            <div role="tablist" className="flex items-center gap-0.5 rounded-lg bg-[#e8eaee] p-0.5">
+              {step.pages.map((id) => (
+                <button
+                  key={id}
+                  role="tab"
+                  aria-selected={id === activeTab}
+                  onClick={() => setActiveTab(id)}
+                  title={PAGES[id].hint}
+                  className={cn(
+                    "h-7 rounded-md px-3.5 text-[13px] whitespace-nowrap transition-colors",
+                    id === activeTab ? "bg-white font-semibold text-foreground shadow-[var(--ap-shadow-sm)]" : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {PAGES[id].label}
+                </button>
+              ))}
             </div>
-          </main>
-        </div>
+          </div>
+        )}
+
+        <main className="relative min-h-0 flex-1">
+          {ORDER.map((id) => {
+            if (id !== activeTab && !visited.has(id)) return null;
+            const P = PAGES[id];
+            const C = P.component;
+            const locked = P.needsData && !dataset;
+            return (
+              <div key={id} className={cn("absolute inset-0 overflow-hidden p-4", id === activeTab ? "visible ap-workspace" : "invisible")}>
+                <WorkspaceActive.Provider value={id === activeTab}>
+                  {locked ? <NeedsData onImport={() => setActiveTab("file")} /> : <C />}
+                </WorkspaceActive.Provider>
+              </div>
+            );
+          })}
+        </main>
 
         {/* Status bar */}
         {(flash || progress) && (
-        <footer className="flex h-7 shrink-0 items-center gap-3 border-t border-ap-line bg-white px-4 text-[11.5px]">
-          <span className="min-w-0 flex-1 truncate text-[#333]">{flash}</span>
-          {progress && (
-            <>
-              <span className="truncate text-muted-foreground">{progress.message}</span>
-              <Progress value={progress.value} className="h-1.5 w-[220px] [&>div]:bg-ap-red" />
-              <span className="w-20 text-right text-muted-foreground tabular-nums">{eta}</span>
-            </>
-          )}
-        </footer>
+          <footer className="flex h-8 shrink-0 items-center gap-3 border-t border-ap-line bg-white px-5 text-[12px]">
+            <span className="min-w-0 flex-1 truncate text-foreground">{flash}</span>
+            {progress && (
+              <>
+                <span className="truncate text-muted-foreground">{progress.message}</span>
+                <Progress value={progress.value} className="h-1.5 w-[220px] [&>div]:bg-ap-red" />
+                <span className="w-20 text-right text-muted-foreground tabular-nums">{eta}</span>
+              </>
+            )}
+          </footer>
         )}
       </div>
       <Toaster position="bottom-right" />
