@@ -10,6 +10,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::csv_parser::{parse_file_with, ImportOptions, ParseResult};
+use super::par;
 use super::dataset::{sample_rate_of, Dataset, SharedParts};
 use super::filters::{apply_steps, FilterStep};
 
@@ -78,9 +79,13 @@ fn downsample_blocks(n: usize, factor: f64) -> Result<Vec<(usize, usize)>, Strin
 }
 
 fn median_of(v: &mut [f64]) -> f64 {
-    v.sort_by(|a, b| a.total_cmp(b));
     let n = v.len();
-    if n % 2 == 1 { v[n / 2] } else { (v[n / 2 - 1] + v[n / 2]) / 2.0 }
+    let (below, mid, _) = v.select_nth_unstable_by(n / 2, |a, b| a.total_cmp(b));
+    if n % 2 == 1 {
+        *mid
+    } else {
+        (below.iter().copied().fold(f64::NEG_INFINITY, f64::max) + *mid) / 2.0
+    }
 }
 
 fn finite_stats(v: &[f64]) -> (f64, f64, f64, f64) {
@@ -101,25 +106,41 @@ fn finite_stats(v: &[f64]) -> (f64, f64, f64, f64) {
 fn hampel(v: &[f64], k: f64) -> Vec<usize> {
     let mut diffs: Vec<f64> = v.windows(2).map(|w| (w[1] - w[0]).abs()).filter(|d| d.is_finite()).collect();
     let noise = if diffs.is_empty() { 0.0 } else { 1.4826 * median_of(&mut diffs) / std::f64::consts::SQRT_2 };
-    let mut out = Vec::new();
-    for i in 0..v.len() {
-        if !v[i].is_finite() {
-            continue;
+    drop(diffs);
+    let chunks = par::chunks_for(v.len(), 50_000);
+    let per = v.len().div_ceil(chunks).max(1);
+    par::par_map(chunks, |c| {
+        let mut out = Vec::new();
+        let mut win = [0.0f64; 2 * HAMPEL_HALF + 1];
+        let mut dev = [0.0f64; 2 * HAMPEL_HALF + 1];
+        for i in (c * per)..((c + 1) * per).min(v.len()) {
+            if !v[i].is_finite() {
+                continue;
+            }
+            let lo = i.saturating_sub(HAMPEL_HALF);
+            let hi = (i + HAMPEL_HALF + 1).min(v.len());
+            let mut m = 0;
+            for x in &v[lo..hi] {
+                if x.is_finite() {
+                    win[m] = *x;
+                    m += 1;
+                }
+            }
+            if m < 3 {
+                continue;
+            }
+            let med = median_of(&mut win[..m]);
+            for j in 0..m {
+                dev[j] = (win[j] - med).abs();
+            }
+            let sigma = (1.4826 * median_of(&mut dev[..m])).max(noise);
+            if sigma > 0.0 && (v[i] - med).abs() > k * sigma {
+                out.push(i);
+            }
         }
-        let lo = i.saturating_sub(HAMPEL_HALF);
-        let hi = (i + HAMPEL_HALF + 1).min(v.len());
-        let mut win: Vec<f64> = v[lo..hi].iter().copied().filter(|x| x.is_finite()).collect();
-        if win.len() < 3 {
-            continue;
-        }
-        let med = median_of(&mut win);
-        let mut dev: Vec<f64> = win.iter().map(|x| (x - med).abs()).collect();
-        let sigma = (1.4826 * median_of(&mut dev)).max(noise);
-        if sigma > 0.0 && (v[i] - med).abs() > k * sigma {
-            out.push(i);
-        }
-    }
-    out
+        out
+    })
+    .concat()
 }
 
 /// Compact number for step labels ("12.5", "0.000125").
@@ -687,19 +708,46 @@ fn file_stem(path: &str) -> String {
     Path::new(path).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| path.to_string())
 }
 
+/// A time axis prepared for interpolation: its finite samples in time order and the largest
+/// step that is still bridged. Every signal of a file shares it, so it is built once.
+pub struct Axis<'a> {
+    t: std::borrow::Cow<'a, [f64]>,
+    order: Vec<usize>,
+    gap: f64,
+}
+
+impl<'a> Axis<'a> {
+    pub fn new(t: std::borrow::Cow<'a, [f64]>) -> Axis<'a> {
+        let mut order: Vec<usize> = (0..t.len()).filter(|&i| t[i].is_finite()).collect();
+        if !order.windows(2).all(|w| t[w[0]] <= t[w[1]]) {
+            order.sort_by(|&a, &b| t[a].total_cmp(&t[b]));
+        }
+        let mut steps: Vec<f64> = order.windows(2).map(|w| t[w[1]] - t[w[0]]).filter(|d| *d > 0.0).collect();
+        let gap = if steps.is_empty() { f64::INFINITY } else { 3.0 * median_of(&mut steps) };
+        Axis { t, order, gap }
+    }
+}
+
+/// The step of a uniform grid (None when the grid is not uniform).
+fn uniform_cell(grid: &[f64]) -> Option<f64> {
+    let cell = grid.windows(2).next().map(|w| w[1] - w[0]).unwrap_or(0.0);
+    let uniform = cell > 0.0 && grid.windows(2).all(|w| ((w[1] - w[0]) - cell).abs() <= 1e-6 * cell);
+    uniform.then_some(cell)
+}
+
 /// Linear interpolation of (t, v) onto `grid`. Samples further apart than three typical
 /// intervals are not bridged; points outside the source span are missing.
 pub fn interp_onto(t: &[f64], v: &[f64], grid: &[f64]) -> Vec<f64> {
-    let mut order: Vec<usize> = (0..t.len().min(v.len())).filter(|&i| t[i].is_finite()).collect();
-    if !order.windows(2).all(|w| t[w[0]] <= t[w[1]]) {
-        order.sort_by(|&a, &b| t[a].total_cmp(&t[b]));
-    }
+    let n = t.len().min(v.len());
+    interp_axis(&Axis::new(std::borrow::Cow::Borrowed(&t[..n])), v, grid, uniform_cell(grid))
+}
+
+fn interp_axis(axis: &Axis, v: &[f64], grid: &[f64], cell: Option<f64>) -> Vec<f64> {
+    let (t, order, gap) = (&axis.t, &axis.order, axis.gap);
     let mut out = vec![f64::NAN; grid.len()];
-    if order.is_empty() {
+    if order.is_empty() || v.len() < t.len() {
         return out;
     }
-    let mut steps: Vec<f64> = order.windows(2).map(|w| t[w[1]] - t[w[0]]).filter(|d| *d > 0.0).collect();
-    let gap = if steps.is_empty() { f64::INFINITY } else { 3.0 * median_of(&mut steps) };
     let mut k = 0;
     for (g, o) in grid.iter().zip(out.iter_mut()) {
         while k + 1 < order.len() && t[order[k + 1]] <= *g {
@@ -723,10 +771,7 @@ pub fn interp_onto(t: &[f64], v: &[f64], grid: &[f64]) -> Vec<f64> {
     // A grid at least twice as coarse as the data averages each grid cell (a boxcar
     // anti-alias filter) instead of picking single samples, so resampling does not alias.
     // Only uniform grids (the workspace's) qualify; points left missing above stay missing.
-    let cells: Vec<f64> = grid.windows(2).map(|w| w[1] - w[0]).collect();
-    let cell = cells.first().copied().unwrap_or(0.0);
-    let uniform = cell > 0.0 && cells.iter().all(|d| (d - cell).abs() <= 1e-6 * cell);
-    if uniform && gap.is_finite() && cell >= 2.0 * gap / 3.0 {
+    if let Some(cell) = cell.filter(|c| gap.is_finite() && *c >= 2.0 * gap / 3.0) {
         let h = cell / 2.0;
         let (mut lo, mut hi) = (0, 0);
         for (g, o) in grid.iter().zip(out.iter_mut()) {
@@ -1575,29 +1620,98 @@ impl Workspace {
         }
     }
 
-    /// A variable's pipeline output on the grid, reused until its values, time axis or the grid change.
-    fn aligned_arc(&mut self, idx: usize) -> Arc<Vec<f64>> {
-        let v = &self.vars[idx];
-        if matches!(v.kind, Kind::Derived { .. }) {
-            return v.data.clone();
-        }
-        let (time, shift) = match &v.kind {
+    /// What a cached aligned column depends on besides its values: the time axis and the file's shift.
+    fn column_key(&self, v: &Variable) -> (Option<Arc<Vec<f64>>>, u64) {
+        match &v.kind {
             Kind::Imported { source, .. } => match self.source(*source) {
                 Some(s) => (v.time.clone().or_else(|| Some(s.time.clone())), self.source_shift(s).to_bits()),
                 None => (None, 0),
             },
             Kind::Derived { .. } => (None, 0),
-        };
-        if let Some(e) = self.aligned_cache.get(&v.name) {
-            if Arc::ptr_eq(&e.values, &v.data) && Arc::ptr_eq(&e.grid, &self.grid) && same_time(&e.time, &time) && e.shift == shift {
-                return e.out.clone();
-            }
         }
-        let name = v.name.clone();
-        let values = v.data.clone();
-        let out = Arc::new(self.aligned(v, false));
-        self.aligned_cache.insert(name, AlignedColumn { values, time, grid: self.grid.clone(), shift, out: out.clone() });
-        out
+    }
+
+    /// The cached column of variable `idx` when nothing it depends on has changed.
+    fn cached_column(&self, idx: usize) -> Option<Arc<Vec<f64>>> {
+        let v = &self.vars[idx];
+        let e = self.aligned_cache.get(&v.name)?;
+        let (time, shift) = self.column_key(v);
+        (Arc::ptr_eq(&e.values, &v.data) && Arc::ptr_eq(&e.grid, &self.grid) && same_time(&e.time, &time) && e.shift == shift).then(|| e.out.clone())
+    }
+
+    /// A variable's pipeline output on the grid, reused until its values, time axis or the grid change.
+    fn aligned_arc(&mut self, idx: usize) -> Arc<Vec<f64>> {
+        if matches!(self.vars[idx].kind, Kind::Derived { .. }) {
+            return self.vars[idx].data.clone();
+        }
+        if let Some(out) = self.cached_column(idx) {
+            return out;
+        }
+        self.align_stale();
+        self.cached_column(idx).unwrap_or_else(|| Arc::new(self.aligned(&self.vars[idx], false)))
+    }
+
+    /// Puts every imported signal whose cached column is out of date onto the grid. The signals of
+    /// a file share one prepared time axis, and the work is spread over the cores.
+    fn align_stale(&mut self) {
+        let stale: Vec<usize> =
+            (0..self.vars.len()).filter(|&i| matches!(self.vars[i].kind, Kind::Imported { .. }) && self.cached_column(i).is_none()).collect();
+        if stale.is_empty() {
+            return;
+        }
+        let grid: &[f64] = &self.grid;
+        let outs: Vec<Arc<Vec<f64>>> = if self.align == Align::Row {
+            par::par_map(stale.len(), |j| {
+                let mut out = self.vars[stale[j]].data.to_vec();
+                out.resize(grid.len(), f64::NAN);
+                Arc::new(out)
+            })
+        } else {
+            // One axis per (file, own time axis).
+            let mut keys: Vec<(u32, usize, usize)> = Vec::new();
+            let mut which = Vec::with_capacity(stale.len());
+            for &i in &stale {
+                let v = &self.vars[i];
+                let Kind::Imported { source, .. } = &v.kind else { unreachable!() };
+                let ptr = v.time.as_ref().map_or(0, |t| Arc::as_ptr(t) as usize);
+                let k = match keys.iter().position(|(s, p, _)| s == source && *p == ptr) {
+                    Some(k) => k,
+                    None => {
+                        keys.push((*source, ptr, i));
+                        keys.len() - 1
+                    }
+                };
+                which.push(k);
+            }
+            let axes: Vec<Option<(Axis, bool)>> = par::par_map(keys.len(), |k| {
+                let (sid, _, rep) = keys[k];
+                let s = self.source(sid)?;
+                let t: Vec<f64> = match &self.vars[rep].time {
+                    Some(own) => {
+                        let shift = self.source_shift(s);
+                        own.iter().map(|x| x + shift).collect()
+                    }
+                    None => self.effective_time(s),
+                };
+                let same = t.as_slice() == grid;
+                Some((Axis::new(std::borrow::Cow::Owned(t)), same))
+            });
+            let cell = uniform_cell(grid);
+            par::par_map(stale.len(), |j| {
+                let values = &self.vars[stale[j]].data;
+                Arc::new(match &axes[which[j]] {
+                    None => vec![f64::NAN; grid.len()],
+                    Some((_, true)) => values.to_vec(),
+                    Some((axis, false)) => interp_axis(axis, values, grid, cell),
+                })
+            })
+        };
+        for (j, out) in stale.into_iter().zip(outs) {
+            let v = &self.vars[j];
+            let (time, shift) = self.column_key(v);
+            let entry = AlignedColumn { values: v.data.clone(), time, grid: self.grid.clone(), shift, out };
+            self.aligned_cache.insert(v.name.clone(), entry);
+        }
     }
 
     /// A text variable held onto the grid, reused like `aligned_arc`.
@@ -1640,6 +1754,7 @@ impl Workspace {
             self.grid_key = key;
             self.grid_times = times;
         }
+        self.align_stale();
         let mut inputs: HashMap<String, Arc<Vec<f64>>> = HashMap::new();
         for i in 0..self.vars.len() {
             if matches!(self.vars[i].kind, Kind::Imported { .. }) {
@@ -1707,11 +1822,11 @@ impl Workspace {
     /// Row-aligned dataset of all signals on the common grid (None without numeric signals).
     pub fn to_parse(&mut self) -> Option<ParseResult> {
         self.refresh();
-        let signals = self.signal_vars();
-        if signals.is_empty() {
+        let idx: Vec<usize> = (0..self.vars.len()).filter(|&i| !self.is_time_var(&self.vars[i].name)).collect();
+        if idx.is_empty() {
             return None;
         }
-        let columns: Vec<(String, Vec<f64>)> = signals.iter().map(|v| (v.name.clone(), self.aligned(v, false))).collect();
+        let columns: Vec<(String, Vec<f64>)> = idx.iter().map(|&i| (self.vars[i].name.clone(), self.aligned_arc(i).to_vec())).collect();
         let text_columns = self
             .texts
             .iter()

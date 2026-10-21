@@ -11,6 +11,7 @@ pub mod filters;
 pub mod formats;
 pub mod fitting;
 pub mod models;
+pub mod par;
 pub mod report;
 pub mod simulation;
 pub mod spectrum;

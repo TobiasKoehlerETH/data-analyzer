@@ -46,6 +46,16 @@ pub fn kurtosis(x: &[f64]) -> f64 {
     m4 / (m2 * m2) - 3.0
 }
 
+/// `percentile_sorted` without sorting: selects the two neighbouring values (the slice is reordered).
+fn percentile_select(v: &mut [f64], q: f64) -> f64 {
+    let pos = q / 100.0 * (v.len() - 1) as f64;
+    let (lo, hi) = (pos.floor() as usize, pos.ceil() as usize);
+    let (_, a, right) = v.select_nth_unstable_by(lo, |a, b| a.total_cmp(b));
+    let a = *a;
+    let b = if hi > lo { right.iter().copied().fold(f64::INFINITY, f64::min) } else { a };
+    a + (b - a) * (pos - lo as f64)
+}
+
 pub fn compute_descriptive_stats(signals: &[(String, Arc<Vec<f64>>)], cache: Option<&CacheManager>) -> Arc<Vec<StatRow>> {
     let key = CacheManager::make_key(ALL_SIGNALS, "descriptive_stats", &[]);
     if let Some(c) = cache {
@@ -58,18 +68,18 @@ pub fn compute_descriptive_stats(signals: &[(String, Arc<Vec<f64>>)], cache: Opt
         if clean.is_empty() {
             return None;
         }
-        let mut sorted = clean.clone();
-        sorted.sort_unstable_by(|a, b| a.total_cmp(b));
+        let (min, max) = clean.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
+        let mut work = clean.clone();
         Some(StatRow {
             signal: name.clone(),
             count: clean.len(),
             mean: mean(&clean),
             std: std(&clean),
-            min: sorted[0],
-            q1: percentile_sorted(&sorted, 25.0),
-            median: percentile_sorted(&sorted, 50.0),
-            q3: percentile_sorted(&sorted, 75.0),
-            max: sorted[sorted.len() - 1],
+            min,
+            q1: percentile_select(&mut work, 25.0),
+            median: percentile_select(&mut work, 50.0),
+            q3: percentile_select(&mut work, 75.0),
+            max,
             skew: skew(&clean),
             kurtosis: kurtosis(&clean),
         })

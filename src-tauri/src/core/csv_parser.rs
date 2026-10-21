@@ -125,6 +125,23 @@ pub fn detect_encoding(path: &Path) -> std::io::Result<String> {
     Ok(detect_encoding_bytes(&raw))
 }
 
+/// Like `decode_bytes`, but takes the buffer so UTF-8 text is not copied.
+fn decode_owned(raw: Vec<u8>, encoding: &str) -> String {
+    match encoding {
+        "utf-8" => String::from_utf8(raw).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
+        "utf-8-sig" => match String::from_utf8(raw) {
+            Ok(mut t) => {
+                if t.as_bytes().starts_with(&[0xEF, 0xBB, 0xBF]) {
+                    t.drain(..3);
+                }
+                t
+            }
+            Err(e) => decode_bytes(e.as_bytes(), encoding),
+        },
+        _ => decode_bytes(&raw, encoding),
+    }
+}
+
 pub fn decode_bytes(raw: &[u8], encoding: &str) -> String {
     match encoding {
         "utf-8-sig" => String::from_utf8_lossy(raw.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(raw)).into_owned(),
@@ -442,9 +459,14 @@ fn read_table(text: &str, spec: &TableSpec, delimiter: char, max_rows: Option<us
     for r in rows.iter_mut() {
         r.resize(ncol, String::new());
     }
-    // Disambiguate headers like pandas (empty → "Unnamed: i", duplicates → "x.1").
+    let headers = unique_headers(headers);
+    Ok(RawTable { headers, rows })
+}
+
+/// Disambiguates headers like pandas (empty → "Unnamed: i", duplicates → "x.1").
+fn unique_headers(headers: Vec<String>) -> Vec<String> {
     let mut seen: HashMap<String, usize> = HashMap::new();
-    let headers = headers
+    headers
         .into_iter()
         .enumerate()
         .map(|(i, h)| {
@@ -454,8 +476,169 @@ fn read_table(text: &str, spec: &TableSpec, delimiter: char, max_rows: Option<us
             *n += 1;
             name
         })
+        .collect()
+}
+
+/// A cell as a number: missing values become NaN, `None` when it is neither a number nor missing.
+fn cell_number(raw: &str, decimal_comma: bool) -> Option<f64> {
+    let t = raw.trim();
+    if let Ok(v) = t.parse::<f64>() {
+        return Some(v);
+    }
+    if is_na(t) {
+        return Some(f64::NAN);
+    }
+    parse_number(t, decimal_comma)
+}
+
+/// Splits one data line into `buf`; false when the row has more filled fields than columns.
+fn row_fields<'a>(line: &'a str, delimiter: char, quoting: bool, ncol: usize, buf: &mut Vec<std::borrow::Cow<'a, str>>) -> bool {
+    use std::borrow::Cow;
+    buf.clear();
+    if !quoting || !line.contains('"') {
+        buf.extend(line.split(delimiter).map(Cow::Borrowed));
+    } else {
+        buf.extend(split_line(line, delimiter, quoting).into_iter().map(Cow::Owned));
+    }
+    // pandas: on_bad_lines="warn" skips rows with too many fields, unless the extra fields are empty.
+    !(buf.len() > ncol && buf[ncol..].iter().any(|f| !f.trim().is_empty()))
+}
+
+/// What one chunk of lines gave: values per column while every cell so far was a number.
+struct Scan {
+    vals: Vec<Vec<f64>>,
+    numeric: Vec<bool>,
+    filled: Vec<bool>,
+    rows: usize,
+}
+
+fn scan_lines(lines: &[&str], ncol: usize, delimiter: char, quoting: bool, decimal_comma: bool, skip: &[bool]) -> Scan {
+    let mut sc = Scan {
+        vals: (0..ncol).map(|c| Vec::with_capacity(if skip[c] { 0 } else { lines.len() })).collect(),
+        numeric: vec![true; ncol],
+        filled: vec![false; ncol],
+        rows: 0,
+    };
+    let mut buf = Vec::with_capacity(ncol + 1);
+    for line in lines {
+        if !row_fields(line, delimiter, quoting, ncol, &mut buf) {
+            continue;
+        }
+        sc.rows += 1;
+        for c in 0..ncol {
+            if skip[c] {
+                continue;
+            }
+            if !sc.numeric[c] {
+                sc.vals[c].push(f64::NAN);
+                continue;
+            }
+            let cell = buf.get(c).map(|f| f.as_ref()).unwrap_or("");
+            match cell_number(cell, decimal_comma) {
+                Some(v) => {
+                    if !v.is_nan() || !is_na(cell.trim()) {
+                        sc.filled[c] = true;
+                    }
+                    sc.vals[c].push(v);
+                }
+                None => {
+                    sc.filled[c] = true;
+                    sc.numeric[c] = false;
+                    sc.vals[c].push(f64::NAN);
+                }
+            }
+        }
+    }
+    sc
+}
+
+/// The data block read column by column.
+struct Columns {
+    headers: Vec<String>,
+    n_rows: usize,
+    /// Columns with at least one value that is not missing, and not ignored.
+    cols: Vec<usize>,
+    /// Columns whose cells are all numbers (missing = NaN).
+    numeric: HashMap<usize, Vec<f64>>,
+    /// The other columns: trimmed text, "" where missing.
+    text: HashMap<usize, Vec<String>>,
+}
+
+/// Reads the data block straight into columns: numbers are parsed while splitting (on all cores),
+/// and only columns that turn out not to be numeric are kept as text.
+fn read_columns(text: &str, spec: &TableSpec, delimiter: char, quoting: bool, opts: &ImportOptions) -> Result<Columns, String> {
+    let decimal_comma = delimiter != ',';
+    if spec.no_header {
+        // The column count is only known after reading every row.
+        let table = read_table(text, spec, delimiter, None, quoting)?;
+        let (cols, numeric, _) = classify(&table, decimal_comma, opts);
+        let text_cols = cols
+            .iter()
+            .filter(|c| !numeric.contains_key(c))
+            .map(|&c| {
+                let col = table.rows.iter().map(|r| { let v = r[c].trim(); if is_na(v) { String::new() } else { v.to_string() } }).collect();
+                (c, col)
+            })
+            .collect();
+        return Ok(Columns { headers: table.headers.clone(), n_rows: table.rows.len(), cols, numeric, text: text_cols });
+    }
+    let mut iter = text.lines().enumerate().skip(spec.header_row).map(|(i, l)| (i, l.trim_end_matches('\r')));
+    let headers: Vec<String> = loop {
+        match iter.next() {
+            Some((_, l)) if l.trim().is_empty() => continue,
+            Some((_, l)) => break split_line(l, delimiter, quoting).into_iter().map(|s| s.trim().trim_matches('"').to_string()).collect(),
+            None => return Err("File contains no header row".into()),
+        }
+    };
+    let headers = unique_headers(headers);
+    let ncol = headers.len();
+    let lines: Vec<&str> = iter
+        .filter(|(i, l)| *i >= spec.data_start && !l.trim().is_empty() && (spec.skip_rows.is_empty() || !spec.skip_rows.contains(i)))
+        .map(|(_, l)| l)
         .collect();
-    Ok(RawTable { headers, rows })
+    let skip: Vec<bool> = (0..ncol).map(|c| opts.skip_columns.contains(&c)).collect();
+
+    let workers = if lines.len() < 20_000 { 1 } else { std::thread::available_parallelism().map_or(4, |c| c.get()).min(8) };
+    let per = lines.len().div_ceil(workers).max(1);
+    let mut scans: Vec<Scan> = std::thread::scope(|s| {
+        let handles: Vec<_> = lines
+            .chunks(per)
+            .map(|ch| {
+                let skip = &skip;
+                s.spawn(move || scan_lines(ch, ncol, delimiter, quoting, decimal_comma, skip))
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+    let n_rows: usize = scans.iter().map(|s| s.rows).sum();
+    let cols: Vec<usize> = (0..ncol).filter(|&c| !skip[c] && scans.iter().any(|s| s.filled[c])).collect();
+    let mut numeric = HashMap::new();
+    for &c in &cols {
+        if scans.iter().all(|s| s.numeric[c]) {
+            let mut v = Vec::with_capacity(n_rows);
+            for sc in scans.iter_mut() {
+                v.append(&mut sc.vals[c]);
+            }
+            numeric.insert(c, v);
+        }
+    }
+    drop(scans);
+    // Text columns: read their cells again, keeping the same rows.
+    let want: Vec<usize> = cols.iter().copied().filter(|c| !numeric.contains_key(c)).collect();
+    let mut text_cols: HashMap<usize, Vec<String>> = want.iter().map(|&c| (c, Vec::with_capacity(n_rows))).collect();
+    if !want.is_empty() {
+        let mut buf = Vec::with_capacity(ncol + 1);
+        for line in &lines {
+            if !row_fields(line, delimiter, quoting, ncol, &mut buf) {
+                continue;
+            }
+            for &c in &want {
+                let v = buf.get(c).map(|f| f.trim()).unwrap_or("");
+                text_cols.get_mut(&c).unwrap().push(if is_na(v) { String::new() } else { v.to_string() });
+            }
+        }
+    }
+    Ok(Columns { headers, n_rows, cols, numeric, text: text_cols })
 }
 
 /// Splits the first lines into cells for the import-settings grid.
@@ -611,7 +794,7 @@ fn detect(path: &Path, sheet: Option<&str>, opts: &ImportOptions) -> Result<Dete
     }
     let raw = std::fs::read(path).map_err(|e| format!("Cannot read {}: {e}", path.display()))?;
     let encoding = detect_encoding_bytes(&raw);
-    let mut text = decode_bytes(&raw, &encoding);
+    let mut text = decode_owned(raw, &encoding);
     let mut head = head_lines(&text, HEAD_LINES);
     let (is_raser, metadata) = detect_raser_format(&head);
     let forced = opts.delimiter.as_deref().filter(|d| !d.is_empty() && *d != "auto");
@@ -625,7 +808,19 @@ fn detect(path: &Path, sheet: Option<&str>, opts: &ImportOptions) -> Result<Dete
     let want_ws = delimiter == ' ' || (forced.is_none() && !is_raser && !delimiter_consistent(delimiter, &head) && looks_whitespace_delimited(&head));
     if want_ws {
         // Normalise runs of blanks to single tabs.
-        text = text.lines().map(|l| l.split_whitespace().collect::<Vec<_>>().join("\t")).collect::<Vec<_>>().join("\n");
+        let mut out = String::with_capacity(text.len());
+        for (i, l) in text.lines().enumerate() {
+            if i > 0 {
+                out.push('\n');
+            }
+            for (k, w) in l.split_whitespace().enumerate() {
+                if k > 0 {
+                    out.push('\t');
+                }
+                out.push_str(w);
+            }
+        }
+        text = out;
         head = head_lines(&text, HEAD_LINES);
         delimiter = '\t';
         delimiter_desc = "whitespace".into();
@@ -691,12 +886,17 @@ fn classify(table: &RawTable, decimal_comma: bool, opts: &ImportOptions) -> (Vec
             numeric.insert(c, vals);
         }
     }
-    let ts_col = match opts.time_column {
+    let ts_col = time_column(&cols, &numeric, &table.headers, opts);
+    (cols, numeric, ts_col)
+}
+
+/// The time axis: the column the user picked, else a column named like time, else a leading text column.
+fn time_column<V>(cols: &[usize], numeric: &HashMap<usize, V>, headers: &[String], opts: &ImportOptions) -> Option<usize> {
+    match opts.time_column {
         Some(k) if k < 0 => None,
         Some(k) => Some(k as usize).filter(|k| cols.contains(k)),
-        None => cols.iter().copied().find(|&c| is_time_name(&table.headers[c])).or_else(|| cols.first().copied().filter(|c| !numeric.contains_key(c))),
-    };
-    (cols, numeric, ts_col)
+        None => cols.iter().copied().find(|&c| is_time_name(&headers[c])).or_else(|| cols.first().copied().filter(|c| !numeric.contains_key(c))),
+    }
 }
 
 /// A non-numeric column whose values are mostly not numbers (labels, states, IDs).
@@ -768,13 +968,9 @@ pub fn parse_file_with(path: &Path, sheet: Option<&str>, opts: &ImportOptions) -
     let det = detect(path, sheet, opts)?;
     let mut metadata = det.metadata.clone();
     let spec = table_spec(&det, opts);
-    let table = read_table(&det.text, &spec, det.delimiter, None, det.quoting)?;
-    let n_rows = table.rows.len();
-    let ncol = table.headers.len();
+    let Columns { headers, n_rows, cols, mut numeric, text: mut text_values } = read_columns(&det.text, &spec, det.delimiter, det.quoting, opts)?;
     let decimal_comma = det.delimiter != ',';
-
-    let (cols, mut numeric, mut ts_col) = classify(&table, decimal_comma, opts);
-    let _ = ncol;
+    let mut ts_col = time_column(&cols, &numeric, &headers, opts);
     let mut time: Option<Vec<f64>> = None;
     let mut time_origin: Option<f64> = None;
     if let Some(c) = ts_col {
@@ -782,7 +978,8 @@ pub fn parse_file_with(path: &Path, sheet: Option<&str>, opts: &ImportOptions) -
             // Numeric time column (seconds) is used as the time axis directly.
             time = Some(vals.clone());
         } else {
-            let parsed: Vec<Option<NaiveDateTime>> = table.rows.iter().map(|r| parse_timestamp(&r[c])).collect();
+            let empty = Vec::new();
+            let parsed: Vec<Option<NaiveDateTime>> = text_values.get(&c).unwrap_or(&empty).iter().map(|v| parse_timestamp(v)).collect();
             let ok = parsed.iter().filter(|p| p.is_some()).count();
             if ok as f64 > parsed.len() as f64 * 0.5 {
                 let epoch = parsed.iter().flatten().next().copied();
@@ -803,7 +1000,8 @@ pub fn parse_file_with(path: &Path, sheet: Option<&str>, opts: &ImportOptions) -
         if Some(c) == ts_col || numeric.contains_key(&c) {
             continue;
         }
-        let values: Vec<&str> = table.rows.iter().map(|r| r[c].trim()).filter(|s| !is_na(s)).collect();
+        let Some(all) = text_values.remove(&c) else { continue };
+        let values: Vec<&str> = all.iter().map(|s| s.as_str()).filter(|s| !s.is_empty()).collect();
         let num_ok = values.iter().filter(|s| parse_number(s, decimal_comma).is_some()).count();
         if (num_ok as f64) / (n_rows.max(1) as f64) < 0.5 {
             let mut uniq: Vec<String> = Vec::new();
@@ -816,14 +1014,8 @@ pub fn parse_file_with(path: &Path, sheet: Option<&str>, opts: &ImportOptions) -
                 }
             }
             if !uniq.is_empty() {
-                text_columns.push((
-                    table.headers[c].clone(),
-                    table.rows.iter().map(|r| { let v = r[c].trim(); if is_na(v) { String::new() } else { v.to_string() } }).collect(),
-                ));
-                metadata.insert(
-                    format!("column_{}", table.headers[c]),
-                    Value::Array(uniq.into_iter().map(Value::String).collect()),
-                );
+                metadata.insert(format!("column_{}", headers[c]), Value::Array(uniq.into_iter().map(Value::String).collect()));
+                text_columns.push((headers[c].clone(), all));
             }
         }
     }
@@ -831,12 +1023,12 @@ pub fn parse_file_with(path: &Path, sheet: Option<&str>, opts: &ImportOptions) -
     let columns = cols
         .iter()
         .filter(|&&c| Some(c) != ts_col)
-        .filter_map(|&c| numeric.remove(&c).map(|v| (table.headers[c].clone(), v)))
+        .filter_map(|&c| numeric.remove(&c).map(|v| (headers[c].clone(), v)))
         .collect();
 
     Ok(ParseResult {
         columns,
-        time_column: ts_col.map(|c| table.headers[c].clone()),
+        time_column: ts_col.map(|c| headers[c].clone()),
         time,
         time_origin,
         text_columns,
@@ -1079,6 +1271,40 @@ mod import_option_tests {
         assert_eq!(r.time.as_ref().unwrap()[0], 0.0);
         let prev = preview_file(&p, None).unwrap();
         assert_eq!(prev.rows[0][1], "99.0");
+        std::fs::remove_file(p).ok();
+    }
+
+    #[test]
+    fn a_long_file_is_read_in_parallel_with_the_same_result() {
+        // 50 000 rows: enough to be split over several threads. Row 31 000 has a stray extra field
+        // (skipped like pandas does); every 7th "b" is missing; "label" is text; "empty" has no values.
+        let mut text = String::from("Time (s),a,b,label,empty,\"q\"\n");
+        let mut kept = Vec::new();
+        for i in 0..50_000usize {
+            if i == 31_000 {
+                text.push_str("x,1,2,L,,q,EXTRA\n");
+                continue;
+            }
+            let b = if i % 7 == 0 { String::new() } else { format!("{}", i * 2) };
+            text.push_str(&format!("{},{},{},{},,\"{}\"\n", i as f64 * 0.01, i, b, if i % 2 == 0 { "even" } else { "odd" }, i));
+            kept.push(i);
+        }
+        let p = write_temp("parallel.csv", &text);
+        let r = parse_file(&p, None).unwrap();
+        assert_eq!(r.n_rows, 49_999);
+        let names: Vec<&str> = r.columns.iter().map(|c| c.0.as_str()).collect();
+        assert_eq!(names, ["a", "b", "q"], "the empty column is dropped, the label is text");
+        let a = &r.columns[0].1;
+        assert!(kept.iter().enumerate().all(|(row, i)| a[row] == *i as f64), "rows stay in order across threads");
+        let b = &r.columns[1].1;
+        assert!(b[0].is_nan() && b[1] == 2.0 && b[7].is_nan() && b[8] == 16.0);
+        assert_eq!(r.text_columns.len(), 1);
+        assert_eq!(r.text_columns[0].1[0], "even");
+        assert_eq!(r.text_columns[0].1[1], "odd");
+        assert_eq!(r.text_columns[0].1.len(), 49_999);
+        let t = r.time.unwrap();
+        assert_eq!(t.len(), 49_999);
+        assert!((t[49_998] - 499.99).abs() < 1e-9);
         std::fs::remove_file(p).ok();
     }
 

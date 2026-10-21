@@ -1,5 +1,6 @@
 //! Correlation analysis: Pearson/Spearman matrix, FFT-based cross-correlation and ranking.
 
+use super::par::par_map;
 use serde::Serialize;
 use std::sync::Arc;
 
@@ -95,24 +96,6 @@ pub fn corrcoef_pairwise(cols: &[&[f64]]) -> Vec<Vec<f64>> {
     r
 }
 
-/// `f(0..n)` on all cores, a few items at a time (each item may hold large temporaries).
-fn par_map<T: Send>(n: usize, f: impl Fn(usize) -> T + Sync) -> Vec<T> {
-    let workers = std::thread::available_parallelism().map_or(4, |c| c.get()).min(8);
-    let mut out = Vec::with_capacity(n);
-    let mut start = 0;
-    while start < n {
-        let end = (start + workers).min(n);
-        let f = &f;
-        let batch: Vec<T> = std::thread::scope(|s| {
-            let handles: Vec<_> = (start..end).map(|i| s.spawn(move || f(i))).collect();
-            handles.into_iter().map(|h| h.join().unwrap()).collect()
-        });
-        out.extend(batch);
-        start = end;
-    }
-    out
-}
-
 /// Spearman matrix over the rows where both signals of a pair are valid (ranks are taken on those rows).
 /// Signals without missing values are ranked once, in parallel, and reused by every pair.
 pub fn spearman_pairwise(cols: &[Vec<f64>]) -> Vec<Vec<f64>> {
@@ -146,18 +129,19 @@ pub fn spearman_pairwise(cols: &[Vec<f64>]) -> Vec<Vec<f64>> {
 /// scipy.stats.rankdata(method="average")
 pub fn rankdata(x: &[f64]) -> Vec<f64> {
     let n = x.len();
-    let mut idx: Vec<usize> = (0..n).collect();
-    idx.sort_by(|&a, &b| x[a].total_cmp(&x[b]));
+    // Sorting (value, row) pairs keeps the comparisons in cache; ties are averaged below.
+    let mut idx: Vec<(f64, usize)> = x.iter().copied().zip(0..n).collect();
+    idx.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
     let mut ranks = vec![0.0; n];
     let mut i = 0;
     while i < n {
         let mut j = i;
-        while j + 1 < n && x[idx[j + 1]] == x[idx[i]] {
+        while j + 1 < n && idx[j + 1].0 == idx[i].0 {
             j += 1;
         }
         let r = (i + j) as f64 / 2.0 + 1.0;
         for k in i..=j {
-            ranks[idx[k]] = r;
+            ranks[idx[k].1] = r;
         }
         i = j + 1;
     }
