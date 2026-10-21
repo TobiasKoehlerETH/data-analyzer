@@ -136,12 +136,13 @@ export function PrepareTab() {
       id: "values",
       yLabel: label,
       series: [
-        ...(edited
+        // Counting rows, a before/after pair with different row counts cannot be laid over each other.
+        ...(edited && !(xMode === "row" && before.length !== after.length)
           ? [
               { name: names[0], color: INK.original, width: 1.4, data: pairs(before, xBefore) },
               { name: names[1], color: seriesColor(0), data: pairs(after, xAfter) },
             ]
-          : [{ name: label, color: seriesColor(0), data: pairs(vec.edited, xAfter) }]),
+          : [{ name: probe ? names[1] : label, color: seriesColor(0), data: pairs(after, xAfter) }]),
         ...(preview && draft ? [{ name: `Preview: ${blockInfo(draft).title}`, color: seriesColor(1), data: pairs(preview.values, preview.time ? toX(preview.time) : xAfter) }] : []),
       ],
     };
@@ -153,15 +154,19 @@ export function PrepareTab() {
     });
     if (!diff.some((d) => d !== null && d !== 0)) return [main];
     return [main, { id: "change", yLabel: probe ? "Output − input" : "Edited − original", hLines: [{ y: 0 }], series: [{ name: "Change", color: seriesColor(1), width: 1, data: pairs(diff, xAfter) }] }];
-  }, [vec, toX, label, edited, preview, draft, probe, block]);
+  }, [vec, toX, xMode, label, edited, preview, draft, probe, block]);
+
+  // The rows a new step works on: the edited signal's (fewer than the file's after a downsample).
+  const rows = useMemo(() => (probe ? probe.output_time : vec?.edited_time) ?? time, [probe, vec, time]);
 
   const nyquist = useMemo(() => {
-    const dts = time.slice(1, 2001).map((t, i) => t - time[i]).filter((d) => d > 0).sort((a, b) => a - b);
+    const t = vec?.edited_time ?? time;
+    const dts = t.slice(1, 2001).map((x, i) => x - t[i]).filter((d) => d > 0).sort((a, b) => a - b);
     return dts.length ? 0.5 / dts[Math.floor(dts.length / 2)] : 1;
-  }, [time]);
+  }, [time, vec]);
 
   /** Chart x → time on the aligned axis (the axis may show dates or row numbers). */
-  const xToTime = (xv: number) => (xMode === "row" ? (time[Math.min(time.length - 1, Math.max(0, Math.round(xv) - 1))] ?? 0) : dateAxis ? xv / 1000 - origin! : xv);
+  const xToTime = (xv: number) => (xMode === "row" ? (rows[Math.min(rows.length - 1, Math.max(0, Math.round(xv) - 1))] ?? 0) : dateAxis ? xv / 1000 - origin! : xv);
   const rangeDefault: [number, number] = useMemo(() => {
     if (!time.length) return [0, 1];
     if (viewRange) {
@@ -171,7 +176,7 @@ export function PrepareTab() {
     const [t0, t1] = [time[0], time[time.length - 1]];
     return [round(t0), round(t0 + (t1 - t0) * 0.1)];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewRange, time, xMode, origin]);
+  }, [viewRange, time, rows, xMode, origin]);
 
   const fmtTime = (t: number) => (origin !== null ? new Date((origin + t) * 1000).toISOString().slice(11, 23) : `${Number(t.toPrecision(5))} s`);
 

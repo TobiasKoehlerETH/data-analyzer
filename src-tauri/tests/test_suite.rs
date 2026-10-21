@@ -202,6 +202,25 @@ fn force_and_sensor_have_the_same_length_after_downsampling_and_correlate() {
 }
 
 #[test]
+fn row_view_counts_each_signals_own_rows_after_a_downsample() {
+    let Some((d, _)) = suite() else { return };
+    let mut ws = Workspace::default();
+    load(&mut ws, &d, "force_100hz.csv", &ImportOptions::default(), &["Time (min)", "Force (N)"]);
+    load(&mut ws, &d, "sensor_10hz.csv", &ImportOptions::default(), &["Time (s)", "Counts"]);
+    ws.set_time_unit(ws.source_info()[0].id, 60.0).unwrap();
+    ws.edit("Force (N)", Edit::FillGaps).unwrap();
+    ws.edit("Force (N)", Edit::Downsample(10.0)).unwrap();
+    ws.set_align(Align::Row, None).unwrap();
+    let p = ws.to_parse().unwrap();
+    assert_eq!(p.n_rows, 3000, "no empty tail from the old 30 000 rows");
+    let (f, c) = (col(&p, "Force (N)"), col(&p, "Counts"));
+    assert!(f.iter().all(|v| v.is_finite()) && c.iter().all(|v| v.is_finite()));
+    assert!(corrcoef_pairwise(&[f, c])[0][1] > 0.97);
+    ws.undo("Force (N)").unwrap();
+    assert_eq!(ws.to_parse().unwrap().n_rows, 30000, "undo brings the file's rows back");
+}
+
+#[test]
 fn correlation_matrix_matches_the_known_relationships() {
     let Some((d, m)) = suite() else { return };
     let truth = &m["files"]["correlations.csv"];

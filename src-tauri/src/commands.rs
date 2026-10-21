@@ -354,7 +354,10 @@ pub async fn workspace_vectors(state: AppStateRef<'_>, names: Vec<String>, range
         let mut variables = std::collections::BTreeMap::new();
         for name in names {
             let v = ws.get(&name).ok_or_else(|| format!("Variable not found: {name}"))?;
-            let original = ws.aligned(v, true);
+            // On a row axis the imported values keep the file's rows, whatever the grid is.
+            let by_rows = row && matches!(v.kind, crate::core::workspace::Kind::Imported { .. });
+            let original = if by_rows { v.original.to_vec() } else { ws.aligned(v, true) };
+            let (i0, i1) = if by_rows { window_of(&original, range, true) } else { (i0, i1) };
             let idx = minmax_indices(&original, i0, i1, max_points.unwrap_or(4000).max(100));
             variables.insert(
                 name,
@@ -638,14 +641,23 @@ fn window_of(t: &[f64], range: Option<[f64; 2]>, row: bool) -> (usize, usize) {
 #[tauri::command]
 pub fn get_series(state: AppStateRef<'_>, columns: Vec<String>, range: Option<[f64; 2]>, max_points: usize, row: Option<bool>) -> CmdResult<SeriesResponse> {
     let row = row.unwrap_or(false);
+    // On a row axis every signal counts its own rows (1 to its length), not the common grid's.
+    let own: std::collections::HashMap<String, std::sync::Arc<Vec<f64>>> = if row {
+        let ws = state.workspace.lock().unwrap();
+        columns.iter().filter_map(|c| ws.get(c).filter(|v| matches!(v.kind, crate::core::workspace::Kind::Imported { .. })).map(|v| (c.clone(), v.data.clone()))).collect()
+    } else {
+        Default::default()
+    };
     with_data(&state, |d| {
         let t = &d.time;
         let (i0, i1) = window_of(t, range, row);
         let series = columns
             .iter()
             .filter_map(|c| {
-                d.get_signal(c).map(|y| {
-                    let (j0, j1) = extend_to_finite(&y, i0, i1);
+                let mine = own.get(c);
+                mine.cloned().or_else(|| d.get_signal(c)).map(|y| {
+                    let (a, b) = if mine.is_some() { window_of(&y, range, true) } else { (i0, i1) };
+                    let (j0, j1) = extend_to_finite(&y, a, b);
                     let idx = minmax_indices(&y, j0, j1, max_points.max(100));
                     let x = idx.iter().map(|&(i, _)| if row { (i + 1) as f64 } else { t[i] }).collect();
                     let y = idx.iter().map(|&(i, ok)| if ok { y[i] } else { f64::NAN }).collect();

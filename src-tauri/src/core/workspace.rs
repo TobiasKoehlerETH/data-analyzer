@@ -1536,6 +1536,9 @@ impl Workspace {
     /// Everything the grid depends on, as a comparable key (plus the time axes it names).
     fn grid_signature(&self) -> (String, Vec<Arc<Vec<f64>>>) {
         let mut key = format!("{:?}|{:?}", self.align, self.grid_step.map(f64::to_bits));
+        if self.align == Align::Row {
+            key.push_str(&format!("|rows:{}", self.row_count()));
+        }
         let mut times = Vec::new();
         for s in self.used_sources() {
             key.push_str(&format!("|{}:{}:{}:{}", s.id, Arc::as_ptr(&s.time) as usize, self.source_shift(s).to_bits(), s.n_rows));
@@ -1544,14 +1547,32 @@ impl Workspace {
         (key, times)
     }
 
+    /// Rows on a by-row axis: the longest signal (a downsampled signal has fewer rows than its file).
+    fn row_count(&self) -> usize {
+        let longest = self.signal_vars().iter().filter(|v| matches!(v.kind, Kind::Imported { .. })).map(|v| v.data.len()).max();
+        longest.unwrap_or_else(|| self.used_sources().iter().map(|s| s.n_rows).max().unwrap_or(0))
+    }
+
     /// Common grid for the current sources: a source's own time when only one is involved
     /// (or all share it), otherwise a uniform grid over the union at the finest step.
     fn make_grid(&self) -> Vec<f64> {
         let used = self.used_sources();
         if self.align == Align::Row {
-            let n = used.iter().map(|s| s.n_rows).max().unwrap_or(0);
+            let n = self.row_count();
             if used.len() == 1 {
-                let mut t = self.effective_time(used[0]);
+                // Rows of a signal that was downsampled keep that signal's own times (so rates stay right).
+                let own = self
+                    .signal_vars()
+                    .into_iter()
+                    .find(|v| matches!(v.kind, Kind::Imported { .. }) && v.data.len() == n && v.time.as_ref().is_some_and(|t| t.len() == n));
+                let mut t: Vec<f64> = match own.and_then(|v| v.time.as_ref()) {
+                    Some(own) => {
+                        let shift = self.source_shift(used[0]);
+                        own.iter().map(|x| x + shift).collect()
+                    }
+                    None => self.effective_time(used[0]),
+                };
+                t.truncate(n);
                 let step = if t.len() >= 2 { t[t.len() - 1] - t[t.len() - 2] } else { 1.0 };
                 while t.len() < n {
                     let last = t.last().copied().unwrap_or(-step);
@@ -2447,9 +2468,54 @@ mod tests {
         ws.set_align(Align::Row, None).unwrap();
         let p = ws.to_parse().unwrap();
         let col = &p.columns[0].1;
-        assert_eq!(col.iter().filter(|y| y.is_finite()).count(), 4, "rows 1 to 4 hold the signal");
-        assert!(col[..4].iter().all(|y| y.is_finite()) && col[4..].iter().all(|y| y.is_nan()));
+        assert_eq!(col.len(), 4, "the rows are the downsampled signal's, without an empty tail");
+        assert!(col.iter().all(|y| y.is_finite()));
+        assert_eq!(p.n_rows, 4);
+        // Its rows are 3 s apart, so the rate (and a spectrum) is a third of the file's.
+        let ds = ws.to_dataset("w").unwrap();
+        assert!((ds.sample_rate - 1.0 / 3.0).abs() < 1e-9, "rate {}", ds.sample_rate);
+        // Undo brings the file's rows back.
+        ws.undo("x").unwrap();
+        assert_eq!(ws.to_parse().unwrap().columns[0].1.len(), 12);
         std::fs::remove_file(f).ok();
+    }
+
+    #[test]
+    fn by_row_alignment_with_a_longer_signal_keeps_its_rows() {
+        let f = ramp_file("ds_row_mixed.csv", 12, 1.0);
+        let mut ws = Workspace::default();
+        import(&mut ws, &f, &["time", "x"]);
+        let copy = ws.duplicate("x").unwrap();
+        ws.edit("x", Edit::Downsample(3.0)).unwrap();
+        ws.set_align(Align::Row, None).unwrap();
+        let p = ws.to_parse().unwrap();
+        let (x, c) = (&p.columns.iter().find(|c| c.0 == "x").unwrap().1, &p.columns.iter().find(|c| c.0 == copy).unwrap().1);
+        assert_eq!((x.len(), c.len()), (12, 12), "the longer signal sets the rows");
+        assert!(x[..4].iter().all(|y| y.is_finite()) && x[4..].iter().all(|y| y.is_nan()));
+        assert!(c.iter().all(|y| y.is_finite()));
+        // Row 2 of the downsampled signal is the mean of rows 4 to 6 of the file.
+        assert!((x[1] - (c[3] + c[4] + c[5]) / 3.0).abs() < 1e-9);
+        std::fs::remove_file(f).ok();
+    }
+
+    #[test]
+    fn by_row_alignment_of_two_files_follows_the_longest_signal() {
+        let a = ramp_file("ds_row_a.csv", 100, 0.1);
+        let b = write("ds_row_b.csv", &format!("time,y
+{}", (0..10).map(|i| format!("{},{}
+", i, i)).collect::<String>()));
+        let mut ws = Workspace::default();
+        import(&mut ws, &a, &["time", "x"]);
+        import(&mut ws, &b, &["time", "y"]);
+        ws.set_align(Align::Row, None).unwrap();
+        assert_eq!(ws.to_parse().unwrap().n_rows, 100);
+        // Downsampling the long one to the short one's length leaves 10 rows for both.
+        ws.edit("x", Edit::Downsample(10.0)).unwrap();
+        let p = ws.to_parse().unwrap();
+        assert_eq!(p.n_rows, 10);
+        assert!(p.columns.iter().all(|c| c.1.len() == 10 && c.1.iter().all(|v| v.is_finite())));
+        std::fs::remove_file(a).ok();
+        std::fs::remove_file(b).ok();
     }
 
     #[test]
