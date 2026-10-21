@@ -15,6 +15,27 @@ pub fn window_indices(t: &[f64], range: Option<(f64, f64)>) -> (usize, usize) {
     }
 }
 
+/// Widens [i0, i1) to the nearest valid sample on each side. A signal with most rows missing
+/// (a downsampled one) can have no valid sample inside a zoomed window; the line that crosses
+/// it still needs the valid samples just outside.
+pub fn extend_to_finite(y: &[f64], i0: usize, i1: usize) -> (usize, usize) {
+    let (mut a, mut b) = (i0.min(y.len()), i1.min(y.len()));
+    while a > 0 {
+        a -= 1;
+        if y[a].is_finite() {
+            break;
+        }
+    }
+    while b < y.len() {
+        let valid = y[b].is_finite();
+        b += 1;
+        if valid {
+            break;
+        }
+    }
+    (a, b)
+}
+
 /// Peak-preserving decimation of `y` over `x` in [i0, i1) to at most `max_points` points.
 pub fn minmax(x: &[f64], y: &[f64], i0: usize, i1: usize, max_points: usize) -> (Vec<f64>, Vec<f64>) {
     let i1 = i1.min(x.len());
@@ -76,6 +97,17 @@ pub fn stride(n: usize, max_points: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_window_between_two_sparse_points_still_reaches_them() {
+        let mut y = vec![f64::NAN; 100];
+        y[10] = 1.0;
+        y[90] = 2.0;
+        assert_eq!(extend_to_finite(&y, 40, 60), (10, 91), "reaches the valid samples on both sides");
+        assert_eq!(extend_to_finite(&y, 0, 5), (0, 11), "nothing before the start, the next one after");
+        let dense = vec![1.0; 10];
+        assert_eq!(extend_to_finite(&dense, 3, 6), (2, 7), "a dense signal gains one sample each side");
+    }
 
     #[test]
     fn keeps_spike() {

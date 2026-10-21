@@ -12,7 +12,7 @@ use crate::core::compare::{CompareManager, CompareStatistics};
 use crate::core::correlation::{compute_correlation_matrix, compute_cross_correlation, compute_lagged_correlations, CorrelationPair};
 use crate::core::csv_parser::{preview_file_with, ImportOptions, PreviewResult};
 use crate::core::dataset::{Dataset, DatasetInfo};
-use crate::core::downsample::{minmax, minmax_indices, window_indices};
+use crate::core::downsample::{extend_to_finite, minmax, minmax_indices, window_indices};
 use crate::core::dsp::{decimate, mean, searchsorted, std};
 use crate::core::filters::{suggest_filters, FilterStep};
 use crate::core::models::{ModelSummary, OutputMetrics, StateSpaceResult};
@@ -374,6 +374,8 @@ pub async fn workspace_vectors(state: AppStateRef<'_>, names: Vec<String>, range
 pub struct VariableSamples {
     /// The variable's own sample times on the aligned axis (no interpolation).
     time: Vec<f64>,
+    /// The time of each row of `edited` (shorter than `time` after a downsample).
+    edited_time: Vec<f64>,
     original: Vec<f64>,
     edited: Vec<f64>,
     edits: Vec<String>,
@@ -391,7 +393,8 @@ pub async fn workspace_variable(state: AppStateRef<'_>, name: String) -> CmdResu
         let v = ws.get(&name).ok_or_else(|| format!("Variable not found: {name}"))?;
         let shift = ws.shift_of(v);
         Ok(VariableSamples {
-            time: ws.local_time(v).iter().map(|t| t + shift).collect(),
+            time: ws.base_time(v).iter().map(|t| t + shift).collect(),
+            edited_time: ws.local_time(v).iter().map(|t| t + shift).collect(),
             original: v.original.to_vec(),
             edited: v.data.to_vec(),
             edits: v.edits.clone(),
@@ -418,10 +421,12 @@ pub async fn workspace_pipeline(state: AppStateRef<'_>, name: String) -> CmdResu
 
 #[derive(Serialize)]
 pub struct StageValues {
-    /// Values entering block `index`.
+    /// Values entering block `index`, and the time of each.
     input: Vec<f64>,
-    /// Values leaving it.
+    input_time: Vec<f64>,
+    /// Values leaving it, and the time of each.
     output: Vec<f64>,
+    output_time: Vec<f64>,
 }
 
 /// The values on both sides of block `index` (for probing one block on the plot).
@@ -430,7 +435,9 @@ pub async fn workspace_stage(state: AppStateRef<'_>, name: String, index: usize)
     let st = state.inner().clone();
     blocking(move || {
         let ws = st.workspace.lock().unwrap();
-        Ok(StageValues { input: ws.stage_values(&name, index)?, output: ws.stage_values(&name, index + 1)? })
+        let (input, input_time) = ws.stage_values(&name, index)?;
+        let (output, output_time) = ws.stage_values(&name, index + 1)?;
+        Ok(StageValues { input, input_time, output, output_time })
     })
     .await
 }
@@ -450,11 +457,24 @@ pub async fn workspace_step(app: AppHandle, state: AppStateRef<'_>, name: String
     .await
 }
 
+/// What a step would produce: the values and, when it changes the number of rows, their time.
+#[derive(Serialize)]
+pub struct PreviewValues {
+    values: Vec<f64>,
+    time: Option<Vec<f64>>,
+}
+
 /// A step applied to the current values without committing it (Prepare's live preview).
 #[tauri::command]
-pub async fn workspace_preview(state: AppStateRef<'_>, name: String, edit: Edit) -> CmdResult<Vec<f64>> {
+pub async fn workspace_preview(state: AppStateRef<'_>, name: String, edit: Edit) -> CmdResult<PreviewValues> {
     let st = state.inner().clone();
-    blocking(move || st.workspace.lock().unwrap().preview(&name, &edit)).await
+    blocking(move || {
+        let ws = st.workspace.lock().unwrap();
+        let (values, time) = ws.preview(&name, &edit)?;
+        let shift = ws.get(&name).map(|v| ws.shift_of(v)).unwrap_or(0.0);
+        Ok(PreviewValues { values, time: time.map(|t| t.into_iter().map(|x| x + shift).collect()) })
+    })
+    .await
 }
 
 /// Drops results computed on a workspace that is being replaced.
@@ -625,7 +645,8 @@ pub fn get_series(state: AppStateRef<'_>, columns: Vec<String>, range: Option<[f
             .iter()
             .filter_map(|c| {
                 d.get_signal(c).map(|y| {
-                    let idx = minmax_indices(&y, i0, i1, max_points.max(100));
+                    let (j0, j1) = extend_to_finite(&y, i0, i1);
+                    let idx = minmax_indices(&y, j0, j1, max_points.max(100));
                     let x = idx.iter().map(|&(i, _)| if row { (i + 1) as f64 } else { t[i] }).collect();
                     let y = idx.iter().map(|&(i, ok)| if ok { y[i] } else { f64::NAN }).collect();
                     SeriesData { column: c.clone(), x, y }
@@ -853,7 +874,7 @@ pub async fn correlation_pair(state: AppStateRef<'_>, a: String, b: String) -> C
         let (lags, corr) = compute_cross_correlation(&sa, &sb, Some(max_lag));
         let lagf: Vec<f64> = lags.iter().map(|v| *v as f64).collect();
         let (lags_ds, corr_ds) = minmax(&lagf, &corr, 0, lagf.len(), 6000);
-        let r = crate::core::correlation::corrcoef(&[&sa, &sb])[0][1];
+        let r = crate::core::correlation::pearson_pair(&sa, &sb);
         Ok(PairAnalysis { label_a: la, label_b: lb, scatter, lags: lags_ds, corr: corr_ds, pearson_r: r })
     })
     .await

@@ -22,10 +22,10 @@ export function PrepareTab() {
   const [error, setError] = useState("");
   /** Step whose input and output the plot shows (null = original vs final). */
   const [block, setBlock] = useState<number | null>(null);
-  const [probe, setProbe] = useState<{ input: (number | null)[]; output: (number | null)[] } | null>(null);
+  const [probe, setProbe] = useState<{ input: (number | null)[]; input_time: number[]; output: (number | null)[]; output_time: number[] } | null>(null);
   /** A step being set up: previewed on the plot until it is added. */
   const [draft, setDraft] = useState<VariableEdit | null>(null);
-  const [preview, setPreview] = useState<number[] | null>(null);
+  const [preview, setPreview] = useState<{ values: number[]; time: number[] | null } | null>(null);
   const [suggestions, setSuggestions] = useState<{ reason: string; step: VariableEdit }[]>([]);
   const [viewRange, setViewRange] = useState<[number, number] | null>(null);
   /** Rows of every other signal, for downsampling to another signal's length. */
@@ -117,17 +117,20 @@ export function PrepareTab() {
   const time = useMemo(() => vec?.time ?? [], [vec]);
   const origin = vec?.time_origin ?? null;
   const dateAxis = xMode === "time" && origin !== null;
-  const x = useMemo(
-    () => (xMode === "row" ? time.map((_, i) => i + 1) : dateAxis ? time.map((t) => (origin! + t) * 1000) : time),
-    [time, xMode, dateAxis, origin],
+  /** Chart x of each row: its position (Row), or its time. Every series has its own rows. */
+  const toX = useMemo(
+    () => (times: number[]) => (xMode === "row" ? times.map((_, i) => i + 1) : dateAxis ? times.map((t) => (origin! + t) * 1000) : times),
+    [xMode, dateAxis, origin],
   );
   const edited = !!vec && vec.edits.length > 0;
 
   const panels: ChartPanel[] = useMemo(() => {
     if (!vec) return [];
-    const pairs = (v: (number | null)[]) => v.map((y, i) => [x[i] ?? null, finite(y) ? y : null] as [number | null, number | null]);
+    const pairs = (v: (number | null)[], xs: number[]) => v.map((y, i) => [xs[i] ?? null, finite(y) ? y : null] as [number | null, number | null]);
     const before = probe ? probe.input : vec.original;
     const after = probe ? probe.output : vec.edited;
+    const xBefore = toX(probe ? probe.input_time : vec.time);
+    const xAfter = toX(probe ? probe.output_time : vec.edited_time);
     const names = probe ? [`Before step ${block! + 1}`, `After step ${block! + 1}`] : ["Original", "Edited"];
     const main: ChartPanel = {
       id: "values",
@@ -135,21 +138,22 @@ export function PrepareTab() {
       series: [
         ...(edited
           ? [
-              { name: names[0], color: INK.muted, data: pairs(before) },
-              { name: names[1], color: seriesColor(0), data: pairs(after) },
+              { name: names[0], color: INK.original, width: 1.4, data: pairs(before, xBefore) },
+              { name: names[1], color: seriesColor(0), data: pairs(after, xAfter) },
             ]
-          : [{ name: label, color: seriesColor(0), data: pairs(vec.edited) }]),
-        ...(preview && draft ? [{ name: `Preview: ${blockInfo(draft).title}`, color: seriesColor(1), data: pairs(preview) }] : []),
+          : [{ name: label, color: seriesColor(0), data: pairs(vec.edited, xAfter) }]),
+        ...(preview && draft ? [{ name: `Preview: ${blockInfo(draft).title}`, color: seriesColor(1), data: pairs(preview.values, preview.time ? toX(preview.time) : xAfter) }] : []),
       ],
     };
-    if (!edited) return [main];
+    // A step that changes the number of rows (downsample) has no row-by-row difference to show.
+    if (!edited || before.length !== after.length) return [main];
     const diff = after.map((b, i) => {
       const a = before[i];
       return finite(a) && finite(b) ? b - a : null;
     });
     if (!diff.some((d) => d !== null && d !== 0)) return [main];
-    return [main, { id: "change", yLabel: probe ? "Output − input" : "Edited − original", hLines: [{ y: 0 }], series: [{ name: "Change", color: seriesColor(1), data: pairs(diff) }] }];
-  }, [vec, x, label, edited, preview, draft, probe, block]);
+    return [main, { id: "change", yLabel: probe ? "Output − input" : "Edited − original", hLines: [{ y: 0 }], series: [{ name: "Change", color: seriesColor(1), width: 1, data: pairs(diff, xAfter) }] }];
+  }, [vec, toX, label, edited, preview, draft, probe, block]);
 
   const nyquist = useMemo(() => {
     const dts = time.slice(1, 2001).map((t, i) => t - time[i]).filter((d) => d > 0).sort((a, b) => a - b);
@@ -259,7 +263,7 @@ export function PrepareTab() {
           rangeDefault={rangeDefault}
           lengths={lengths}
           ownName={column ?? ""}
-          ownLength={vec?.original.length ?? 0}
+          ownLength={vec?.edited.length ?? 0}
           onRemove={(i) => step("remove", i)}
           onMove={(i, to) => step("move", i, { to })}
           onReplace={(i, edit) => step("replace", i, { edit })}

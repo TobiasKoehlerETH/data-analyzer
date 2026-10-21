@@ -112,6 +112,7 @@ export function effectText(s: StageInfo): string {
   if (s.removed) parts.push(`−${s.removed.toLocaleString("en-US")} removed`);
   if (s.filled) parts.push(`+${s.filled.toLocaleString("en-US")} filled`);
   if (s.changed) parts.push(`${s.changed.toLocaleString("en-US")} changed`);
+  if (parts.length === 0 && s.label.startsWith("downsample")) return `${s.rows.toLocaleString("en-US")} rows`;
   return parts.join(" · ") || "no change";
 }
 

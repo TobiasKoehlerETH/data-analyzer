@@ -137,6 +137,8 @@ export type VariableEdit =
 /** What one pipeline block did to the values it received. */
 export interface StageInfo {
   label: string;
+  /** Rows after this step. */
+  rows: number;
   /** The step itself (times on the aligned axis). */
   step: VariableEdit;
   /** Missing samples after this block. */
@@ -159,7 +161,10 @@ export interface Pipeline {
 
 /** One variable at its own samples (no interpolation), times on the aligned axis. */
 export interface VariableSamples {
+  /** The time of each imported row. */
   time: number[];
+  /** The time of each row of `edited` (fewer rows than `time` after a downsample). */
+  edited_time: number[];
   original: (number | null)[];
   edited: (number | null)[];
   edits: string[];
@@ -427,10 +432,11 @@ export const api = {
   workspaceSetFormula: (name: string, formula: string) => invoke<WorkspaceView>("workspace_set_formula", { name, formula }),
   workspaceVariable: (name: string) => invoke<VariableSamples>("workspace_variable", { name }),
   /** Values a step would produce, without adding it (times on the aligned axis). */
-  workspacePreview: (name: string, edit: VariableEdit) => invoke<number[]>("workspace_preview", { name, edit }),
+  workspacePreview: (name: string, edit: VariableEdit) => invoke<{ values: number[]; time: number[] | null }>("workspace_preview", { name, edit }),
   workspacePipeline: (name: string) => invoke<Pipeline>("workspace_pipeline", { name }),
   /** Values entering and leaving block `index` of the pipeline. */
-  workspaceStage: (name: string, index: number) => invoke<{ input: (number | null)[]; output: (number | null)[] }>("workspace_stage", { name, index }),
+  workspaceStage: (name: string, index: number) =>
+    invoke<{ input: (number | null)[]; input_time: number[]; output: (number | null)[]; output_time: number[] }>("workspace_stage", { name, index }),
   workspaceStep: (name: string, action: "remove" | "move" | "replace", index: number, opts: { to?: number; edit?: VariableEdit } = {}) =>
     invoke<WorkspaceView>("workspace_step", { name, action, index, to: opts.to ?? null, edit: opts.edit ?? null }),
   recipeSave: (path: string, name: string, names: string[] | null) => invoke<Recipe>("recipe_save", { path, name, names }),

@@ -70,7 +70,7 @@ export function SpectrumTab() {
     // With processing steps, the imported signal's PSD recedes to gray behind the current one.
     const series: ChartSeries[] = view.psd_original
       ? [
-          { name: "Original", color: INK.muted, data: positive(view.psd_original) },
+          { name: "Original", color: INK.original, width: 1.4, data: positive(view.psd_original) },
           { name: "Edited", color: seriesColor(0), data: positive(view.psd) },
         ]
       : [{ name: "PSD", color: seriesColor(0), data: positive(view.psd) }];

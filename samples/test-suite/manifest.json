@@ -1,0 +1,219 @@
+{
+  "generator": "tools/make-test-dataset.mjs",
+  "seed": 20260302,
+  "files": {
+    "force_100hz.csv": {
+      "tests": [
+        "time column in minutes (set unit: minutes)",
+        "despike",
+        "fill gaps",
+        "low-pass / notch (12 Hz)",
+        "text column group-by",
+        "downsample",
+        "high-pass (drift)"
+      ],
+      "rows": 30000,
+      "rate_hz": 100,
+      "time_unit": "minutes",
+      "duration_s": 300,
+      "cycles": 6,
+      "peak_force_N": 200,
+      "spike_rows_zero_based": [
+        2500,
+        5800,
+        9100,
+        12400,
+        15700,
+        19000,
+        22300,
+        25600
+      ],
+      "spike_sizes_N": [
+        35,
+        -40,
+        45,
+        -50,
+        55,
+        -60,
+        65,
+        -70
+      ],
+      "gap_rows_zero_based": [
+        15000,
+        15299
+      ],
+      "interference_hz": 12,
+      "interference_amp_N": 0.4,
+      "drift_N_per_s": 0.004,
+      "noise_sigma_N": 0.25
+    },
+    "sensor_10hz.csv": {
+      "tests": [
+        "different rate than force_100hz (same length / downsample to match)",
+        "lag correlation with force",
+        "calibration scatter",
+        "time in seconds"
+      ],
+      "rows": 3000,
+      "rate_hz": 10,
+      "counts_per_N": 60,
+      "counts_offset": 3500,
+      "lag_s": 0.5,
+      "noise_sigma_counts": 6
+    },
+    "run_a.csv, run_b.csv, run_c.csv": {
+      "tests": [
+        "compare files",
+        "align by shift / click / trigger",
+        "signal mapping",
+        "RMSE against the reference"
+      ],
+      "rows": 1200,
+      "rate_hz": 20,
+      "step_at_s": {
+        "run_a": 10,
+        "run_b": 12.5,
+        "run_c": 15
+      },
+      "pressure_from_to_bar": [
+        1,
+        5
+      ],
+      "time_constant_s": 3,
+      "trigger": "Pressure crosses 3 bar rising: run_b is 2.5 s and run_c 5 s later than run_a"
+    },
+    "clock_log.csv": {
+      "tests": [
+        "timestamp column (date axis)",
+        "align by clock time",
+        "row <-> time map shows time of day"
+      ],
+      "rows": 3600,
+      "rate_hz": 1,
+      "starts": "2026-03-02 08:00:00.000",
+      "temp_b_lags_temp_a_s": 120,
+      "period_s": 1800
+    },
+    "vibration_no_time.txt": {
+      "tests": [
+        "whitespace-delimited text with comment lines",
+        "no time column: fixed step per row",
+        "spectrum peaks",
+        "notch / band-pass",
+        "Welch PSD"
+      ],
+      "rows": 20000,
+      "rate_hz": 50,
+      "step_s": 0.02,
+      "accx_peaks_hz": {
+        "3": 1,
+        "12": 0.25,
+        "7.5": 0.5
+      },
+      "accy_peaks_hz": {
+        "18": 0.4,
+        "7.5": 1
+      },
+      "noise_sigma": 0.1
+    },
+    "european_hours.csv": {
+      "tests": [
+        "semicolon delimiter and decimal comma",
+        "time column in hours (set unit: hours)",
+        "non-ASCII header (°C)"
+      ],
+      "rows": 121,
+      "step_h": 0.016666666666666666,
+      "duration_s": 7200,
+      "temp_from_to_C": [
+        20,
+        25
+      ]
+    },
+    "system_id.csv": {
+      "tests": [
+        "state-space identification (MIMO)",
+        "simulate",
+        "validate (residuals, ACF)",
+        "model library",
+        "report: Models/Simulation/Validation"
+      ],
+      "rows": 12000,
+      "rate_hz": 10,
+      "model": "y1[k+1] = 0.9 y1[k] + 0.1 u1[k] + 0.02 u2[k];  y2[k+1] = 0.85 y2[k] + 0.05 y1[k] + 0.15 u2[k]",
+      "order": 2,
+      "expected_vaf_percent_at_least": 90,
+      "measurement_noise_sigma": 0.01
+    },
+    "fit_targets.csv": {
+      "tests": [
+        "curve fit: linear, exponential decay, Gaussian, sine",
+        "fit statistics and bands",
+        "exclude points"
+      ],
+      "rows": 1000,
+      "x_from_to": [
+        0,
+        10
+      ],
+      "noise_sigma": 0.02,
+      "linear": {
+        "a": 2.5,
+        "b": 1
+      },
+      "exp_decay": {
+        "a": 5,
+        "b": 2,
+        "c": 0.5,
+        "equation": "a*exp(-x/b)+c"
+      },
+      "gaussian": {
+        "a": 3,
+        "b": 5,
+        "c": 1.2,
+        "d": 0.2,
+        "equation": "a*exp(-((x-b)/c)^2)+d"
+      },
+      "sine": {
+        "amplitude": 1.5,
+        "frequency_hz": 0.4,
+        "phase": 0.5,
+        "offset": 2
+      }
+    },
+    "correlations.csv": {
+      "tests": [
+        "correlation matrix (Pearson / Spearman)",
+        "choose signals",
+        "pair scatter and lag (30 s)",
+        "constant column -> no correlation",
+        "partly missing column (pairwise)"
+      ],
+      "rows": 2000,
+      "rate_hz": 1,
+      "lag_samples": 30,
+      "pearson_with_base": {
+        "linear": 0.9993,
+        "lagged": 0.8386,
+        "monotonic": 0.6897,
+        "anti": -1,
+        "noise": 0.0015,
+        "gappy": 1
+      },
+      "spearman_with_base": {
+        "monotonic": 1
+      },
+      "note": "flat is constant: its correlation is undefined; gappy has 25% of its rows missing"
+    },
+    "many_columns.csv": {
+      "tests": [
+        "40 signals",
+        "grouping by name and unit",
+        "signal lists, search, plotting many signals"
+      ],
+      "rows": 5000,
+      "rate_hz": 10,
+      "signals": 40
+    }
+  }
+}

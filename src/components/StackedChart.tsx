@@ -8,6 +8,8 @@ export interface ChartSeries {
   color: string;
   data: [number | null, number | null][];
   dashed?: boolean;
+  /** Line width in px; dense lines default thinner so noise reads as texture, not a solid block. */
+  width?: number;
   type?: "line" | "scatter" | "bar";
 }
 
@@ -270,15 +272,22 @@ export function StackedChart({
             marker: markerStyle(xs.length, s.color),
           });
         } else {
-          const d = decimate(xs, ys, Math.max(MAX_POINTS, target), view);
+          // A downsampled signal keeps one value per block and the rest are missing. Isolated points
+          // would draw nothing, so such a series connects its valid points and marks them.
+          const valid = (y: number | null) => y !== null && Number.isFinite(y);
+          const sparse = ys.length > 8 && ys.filter(valid).length < ys.length * 0.5;
+          const sx = sparse ? xs.filter((_, i) => valid(ys[i])) : xs;
+          const sy = sparse ? ys.filter(valid) : ys;
+          const d = decimate(sx, sy, Math.max(MAX_POINTS, target), view);
           data.push({
             ...common,
             type: "scatter",
-            mode: "lines",
+            mode: sparse ? "lines+markers" : "lines",
             x: d.x,
             y: d.y,
             connectgaps: false,
-            line: { color: s.color, width: LINE_WIDTH, dash: s.dashed ? "dash" : "solid", shape: "linear" },
+            ...(sparse ? { marker: { color: s.color, size: 4, line: { width: 0 } } } : {}),
+            line: { color: s.color, width: s.width ?? (d.x.length > 1500 ? 1.4 : LINE_WIDTH), dash: s.dashed ? "dash" : "solid", shape: "linear" },
           });
         }
       });

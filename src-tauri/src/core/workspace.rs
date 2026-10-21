@@ -65,6 +65,18 @@ pub enum Edit {
     Downsample(f64),
 }
 
+/// The row ranges of a downsample: `rows / factor` equal blocks (the factor may be fractional).
+fn downsample_blocks(n: usize, factor: f64) -> Result<Vec<(usize, usize)>, String> {
+    if !(factor > 1.0) || !factor.is_finite() {
+        return Err("The downsample factor must be greater than 1.".into());
+    }
+    let m = ((n as f64 / factor).round() as usize).max(1);
+    if m >= n {
+        return Err("The factor is too small to remove any rows.".into());
+    }
+    Ok((0..m).map(|b| (b * n / m, (b + 1) * n / m)).collect())
+}
+
 fn median_of(v: &mut [f64]) -> f64 {
     v.sort_by(|a, b| a.total_cmp(b));
     let n = v.len();
@@ -122,6 +134,14 @@ fn plural(n: usize, word: &str) -> String {
 }
 
 impl Edit {
+    /// The time of the rows this step leaves, for a step that changes the number of rows.
+    pub fn new_time(&self, t: &[f64]) -> Option<Vec<f64>> {
+        match self {
+            Edit::Downsample(f) => downsample_blocks(t.len(), *f).ok().map(|blocks| blocks.iter().map(|&(lo, hi)| t[(lo + hi) / 2]).collect()),
+            _ => None,
+        }
+    }
+
     /// How the step reads in a block diagram: family, title and parameter lines.
     pub fn block(&self) -> (&'static str, String, Vec<String>) {
         let range = |a: &f64, b: &f64| vec![format!("{} → {}", num(a.min(*b)), num(a.max(*b)))];
@@ -284,26 +304,16 @@ impl Edit {
                 (out, format!("fill {}", plural(filled, "gap value")))
             }
             Edit::Downsample(f) => {
-                let n = v.len();
-                if !(*f > 1.0) || !f.is_finite() {
-                    return Err("The downsample factor must be greater than 1.".into());
-                }
-                let m = ((n as f64 / f).round() as usize).max(1);
-                if m >= n {
-                    return Err("The factor is too small to remove any rows.".into());
-                }
-                let mut out = vec![f64::NAN; n];
-                let mut kept = 0usize;
-                for b in 0..m {
-                    let (lo, hi) = (b * n / m, (b + 1) * n / m);
-                    let finite: Vec<f64> = v[lo..hi].iter().copied().filter(|x| x.is_finite()).collect();
-                    if finite.is_empty() {
-                        continue;
-                    }
-                    out[(lo + hi) / 2] = finite.iter().sum::<f64>() / finite.len() as f64;
-                    kept += 1;
-                }
-                (out, format!("downsample ÷{} ({} points)", num(*f), kept))
+                let blocks = downsample_blocks(v.len(), *f)?;
+                let out: Vec<f64> = blocks
+                    .iter()
+                    .map(|&(lo, hi)| {
+                        let (sum, n) = v[lo..hi].iter().filter(|x| x.is_finite()).fold((0.0, 0usize), |(s, n), x| (s + x, n + 1));
+                        if n == 0 { f64::NAN } else { sum / n as f64 }
+                    })
+                    .collect();
+                let label = format!("downsample ÷{} ({} rows)", num(*f), out.len());
+                (out, label)
             }
             Edit::Filter(step) => {
                 let fs = sample_rate_of(t);
@@ -337,16 +347,34 @@ fn nearest_samples(t: &[f64], times: &[f64]) -> Vec<usize> {
         .collect()
 }
 
-/// Applies `steps` to `original` in order. Returns the result and one label per step.
-pub fn replay(original: &[f64], steps: &[Edit], t: &[f64]) -> Result<(Vec<f64>, Vec<String>), String> {
+/// The result of running a pipeline.
+pub struct Replayed {
+    pub data: Vec<f64>,
+    pub labels: Vec<String>,
+    /// The time of each row after the steps, when a step changed the number of rows (None = unchanged).
+    pub time: Option<Vec<f64>>,
+}
+
+/// Applies `steps` to `original` in order, following the time of the rows through steps that change them.
+pub fn replay_t(original: &[f64], steps: &[Edit], t: &[f64]) -> Result<Replayed, String> {
     let mut data = original.to_vec();
     let mut labels = Vec::with_capacity(steps.len());
+    let mut time: Option<Vec<f64>> = None;
     for (i, s) in steps.iter().enumerate() {
-        let (d, label) = s.apply_stored(&data, t).map_err(|e| format!("Step {} failed: {e}", i + 1))?;
+        let tt: &[f64] = time.as_deref().unwrap_or(t);
+        let (d, label) = s.apply_stored(&data, tt).map_err(|e| format!("Step {} failed: {e}", i + 1))?;
+        if let Some(nt) = s.new_time(tt) {
+            time = Some(nt);
+        }
         data = d;
         labels.push(label);
     }
-    Ok((data, labels))
+    Ok(Replayed { data, labels, time })
+}
+
+/// Applies `steps` to `original` in order. Returns the result and one label per step.
+pub fn replay(original: &[f64], steps: &[Edit], t: &[f64]) -> Result<(Vec<f64>, Vec<String>), String> {
+    replay_t(original, steps, t).map(|r| (r.data, r.labels))
 }
 
 // ---------------------------------------------------------------------------
@@ -413,6 +441,8 @@ pub struct Variable {
     pub edits: Vec<String>,
     /// Why a derived variable could not be evaluated.
     pub error: Option<String>,
+    /// The time of each row of `data` when a step (downsample) changed the rows; None = the file's time.
+    pub time: Option<Arc<Vec<f64>>>,
 }
 
 /// A text column (labels, states, IDs) used for grouping.
@@ -448,6 +478,8 @@ pub struct StageInfo {
     pub label: String,
     /// The step itself, on the aligned time axis.
     pub step: Edit,
+    /// Rows after this block.
+    pub rows: usize,
     /// Missing samples after this block.
     pub missing: usize,
     /// Samples that were valid before and are missing now.
@@ -884,12 +916,17 @@ impl Workspace {
         self.sources.iter().any(|s| s.time_var.as_deref() == Some(name))
     }
 
-    /// Time base a variable's steps work in: its source's time, or the grid for derived ones.
-    pub fn local_time(&self, v: &Variable) -> Arc<Vec<f64>> {
+    /// The time of the file's rows (or the grid for derived signals): where a pipeline starts.
+    pub fn base_time(&self, v: &Variable) -> Arc<Vec<f64>> {
         match &v.kind {
             Kind::Imported { source, .. } => self.source(*source).map(|s| s.time.clone()).unwrap_or_default(),
             Kind::Derived { .. } => self.grid.clone(),
         }
+    }
+
+    /// The time of each row of the variable's current values (shorter after a downsample).
+    pub fn local_time(&self, v: &Variable) -> Arc<Vec<f64>> {
+        v.time.clone().unwrap_or_else(|| self.base_time(v))
     }
 
     /// Shift from a variable's own time to the aligned (displayed) time.
@@ -919,7 +956,7 @@ impl Workspace {
     fn add_var(&mut self, name: &str, kind: Kind, data: Vec<f64>) -> String {
         let name = self.unique_name(name);
         let data = Arc::new(data);
-        self.vars.push(Variable { name: name.clone(), kind, original: data.clone(), data, steps: vec![], edits: vec![], error: None });
+        self.vars.push(Variable { name: name.clone(), kind, original: data.clone(), data, steps: vec![], edits: vec![], error: None, time: None });
         name
     }
 
@@ -1038,11 +1075,15 @@ impl Workspace {
     /// Re-runs a variable's pipeline from its original values.
     fn rebuild_var(&mut self, name: &str) -> Result<(), String> {
         let v = self.get(name).ok_or("Variable not found.")?;
-        let t = self.local_time(v);
-        let (data, labels) = replay(&v.original, &v.steps, &t)?;
+        let t = self.base_time(v);
+        let r = replay_t(&v.original, &v.steps, &t)?;
+        if r.time.is_some() && matches!(v.kind, Kind::Derived { .. }) {
+            return Err("Downsample is not available for formula signals.".into());
+        }
         let v = self.get_mut(name)?;
-        v.data = Arc::new(data);
-        v.edits = labels;
+        v.data = Arc::new(r.data);
+        v.edits = r.labels;
+        v.time = r.time.map(Arc::new);
         self.refresh_time(name);
         Ok(())
     }
@@ -1062,35 +1103,56 @@ impl Workspace {
     pub fn edit(&mut self, name: &str, edit: Edit) -> Result<(), String> {
         let v = self.get(name).ok_or("Variable not found.")?;
         let edit = edit.shifted(-self.shift_of(v));
+        self.push_step(name, edit)
+    }
+
+    /// Applies a step (in the variable's own time) to its current values and appends it.
+    fn push_step(&mut self, name: &str, edit: Edit) -> Result<(), String> {
+        let v = self.get(name).ok_or("Variable not found.")?;
+        if matches!(edit, Edit::Downsample(_)) && matches!(v.kind, Kind::Derived { .. }) {
+            return Err("Downsample is not available for formula signals.".into());
+        }
         let t = self.local_time(v);
         let (data, label) = edit.apply(&v.data, &t)?;
+        let new_time = edit.new_time(&t);
         let v = self.get_mut(name)?;
         v.data = Arc::new(data);
+        if let Some(nt) = new_time {
+            v.time = Some(Arc::new(nt));
+        }
         v.steps.push(edit);
         v.edits.push(label);
         self.refresh_time(name);
         Ok(())
     }
 
-    /// The values `edit` would produce, without adding it (live previews).
-    pub fn preview(&self, name: &str, edit: &Edit) -> Result<Vec<f64>, String> {
+    /// The values `edit` would produce, without adding it (live previews), and their time when the
+    /// step changes the number of rows. Times are in the variable's own base.
+    pub fn preview(&self, name: &str, edit: &Edit) -> Result<(Vec<f64>, Option<Vec<f64>>), String> {
         let v = self.get(name).ok_or("Variable not found.")?;
         let edit = edit.shifted(-self.shift_of(v));
-        Ok(edit.apply(&v.data, &self.local_time(v))?.0)
+        let t = self.local_time(v);
+        Ok((edit.apply(&v.data, &t)?.0, edit.new_time(&t)))
     }
 
     /// The pipeline block by block, with what each block changed.
     pub fn pipeline(&self, name: &str) -> Result<Pipeline, String> {
         let v = self.get(name).ok_or("Variable not found.")?;
-        let t = self.local_time(v);
+        let base = self.base_time(v);
         let shift = self.shift_of(v);
         let mut data = v.original.to_vec();
+        let mut time: Option<Vec<f64>> = None;
         let missing = data.iter().filter(|x| !x.is_finite()).count();
         let mut stages = Vec::with_capacity(v.steps.len());
         for (i, s) in v.steps.iter().enumerate() {
-            let (next, label) = s.apply_stored(&data, &t).map_err(|e| format!("Step {} failed: {e}", i + 1))?;
+            let tt: &[f64] = time.as_deref().unwrap_or(&base);
+            let (next, label) = s.apply_stored(&data, tt).map_err(|e| format!("Step {} failed: {e}", i + 1))?;
+            if let Some(nt) = s.new_time(tt) {
+                time = Some(nt);
+            }
             let (mut removed, mut filled, mut changed, mut sq) = (0usize, 0usize, 0usize, 0.0f64);
-            for (a, b) in data.iter().zip(&next) {
+            // A step that changes the number of rows has no row-by-row comparison.
+            for (a, b) in data.iter().zip(&next).filter(|_| next.len() == data.len()) {
                 match (a.is_finite(), b.is_finite()) {
                     (true, false) => removed += 1,
                     (false, true) => filled += 1,
@@ -1104,6 +1166,7 @@ impl Workspace {
             stages.push(StageInfo {
                 label,
                 step: s.shifted(shift),
+                rows: next.len(),
                 missing: next.iter().filter(|x| !x.is_finite()).count(),
                 removed,
                 filled,
@@ -1120,10 +1183,14 @@ impl Workspace {
     }
 
     /// The values after the first `count` blocks (0 = the imported values).
-    pub fn stage_values(&self, name: &str, count: usize) -> Result<Vec<f64>, String> {
+    pub fn stage_values(&self, name: &str, count: usize) -> Result<(Vec<f64>, Vec<f64>), String> {
         let v = self.get(name).ok_or("Variable not found.")?;
         let count = count.min(v.steps.len());
-        Ok(replay(&v.original, &v.steps[..count], &self.local_time(v))?.0)
+        let base = self.base_time(v);
+        let r = replay_t(&v.original, &v.steps[..count], &base)?;
+        let shift = self.shift_of(v);
+        let t = r.time.unwrap_or_else(|| base.to_vec());
+        Ok((r.data, t.iter().map(|x| x + shift).collect()))
     }
 
     /// Swaps in a new step list and rebuilds; the old list comes back if the new one fails.
@@ -1492,7 +1559,14 @@ impl Workspace {
                     out.resize(self.grid.len(), f64::NAN);
                     return out;
                 }
-                let t = self.effective_time(s);
+                // A downsampled signal has its own, shorter rows; the imported values keep the file's.
+                let t: Vec<f64> = match v.time.as_ref().filter(|_| !original) {
+                    Some(own) => {
+                        let shift = self.source_shift(s);
+                        own.iter().map(|x| x + shift).collect()
+                    }
+                    None => self.effective_time(s),
+                };
                 if t.as_slice() == self.grid.as_slice() {
                     return values.to_vec();
                 }
@@ -1509,7 +1583,7 @@ impl Workspace {
         }
         let (time, shift) = match &v.kind {
             Kind::Imported { source, .. } => match self.source(*source) {
-                Some(s) => (Some(s.time.clone()), self.source_shift(s).to_bits()),
+                Some(s) => (v.time.clone().or_else(|| Some(s.time.clone())), self.source_shift(s).to_bits()),
                 None => (None, 0),
             },
             Kind::Derived { .. } => (None, 0),
@@ -1579,6 +1653,9 @@ impl Workspace {
                 Kind::Derived { formula } => {
                     let result = evaluate(formula, &inputs, &self.grid).and_then(|o| {
                         let (d, labels) = replay(&o, &v.steps, &self.grid)?;
+                        if d.len() != o.len() {
+                            return Err("Downsample is not available for formula signals.".to_string());
+                        }
                         Ok((o, d, labels))
                     });
                     let n = self.grid.len();
@@ -1851,15 +1928,7 @@ impl Workspace {
 
     /// Adds a step given in the variable's own time base (recipes and projects).
     fn edit_local(&mut self, name: &str, edit: Edit) -> Result<(), String> {
-        let v = self.get(name).ok_or("Variable not found.")?;
-        let t = self.local_time(v);
-        let (data, label) = edit.apply(&v.data, &t)?;
-        let v = self.get_mut(name)?;
-        v.data = Arc::new(data);
-        v.steps.push(edit);
-        v.edits.push(label);
-        self.refresh_time(name);
-        Ok(())
+        self.push_step(name, edit)
     }
 
     // -- Projects -------------------------------------------------------------
@@ -1966,6 +2035,7 @@ impl Workspace {
                                     steps: vec![],
                                     edits: vec![],
                                     error: None,
+                                    time: None,
                                 });
                             }
                             None => warnings.push(format!("{}: column '{column}' is missing.", file_name(&ps.path))),
@@ -1993,6 +2063,7 @@ impl Workspace {
                         steps: pv.steps.clone(),
                         edits: vec![],
                         error: None,
+                        time: None,
                     });
                     ordered.push(pv.name.clone());
                 }
@@ -2100,21 +2171,6 @@ mod tests {
     }
 
     #[test]
-    fn downsample_averages_blocks_and_can_match_another_length() {
-        let v: Vec<f64> = (1..=7).map(f64::from).collect();
-        let (out, label) = Edit::Downsample(3.0).apply(&v, &[0.0; 7]).unwrap();
-        let kept: Vec<(usize, f64)> = out.iter().enumerate().filter(|(_, x)| x.is_finite()).map(|(i, x)| (i, *x)).collect();
-        assert_eq!(kept, vec![(1, 2.0), (5, 5.5)], "blocks [1 2 3] and [4 5 6 7], at their middle rows");
-        assert!(label.contains("2 points"));
-        // To the length of a 4-row variable: 10 rows / 4 = factor 2.5, exactly 4 points left.
-        let long: Vec<f64> = (0..10).map(f64::from).collect();
-        let (out, _) = Edit::Downsample(10.0 / 4.0).apply(&long, &[0.0; 10]).unwrap();
-        assert_eq!(out.iter().filter(|x| x.is_finite()).count(), 4);
-        assert!(Edit::Downsample(1.0).apply(&long, &[0.0; 10]).is_err());
-        assert!(Edit::Downsample(0.5).apply(&long, &[0.0; 10]).is_err());
-    }
-
-    #[test]
     fn a_100_hz_and_a_10_hz_file_end_up_the_same_length() {
         let force: String = std::iter::once("time,force\n".to_string()).chain((0..1000).map(|i| format!("{},{}\n", i as f64 * 0.01, i))).collect();
         let sensor: String = std::iter::once("time,sensor\n".to_string()).chain((0..100).map(|i| format!("{},{}\n", i as f64 * 0.1, i))).collect();
@@ -2151,6 +2207,159 @@ mod tests {
         reopened.to_parse();
         assert_eq!(reopened.time_map(0, Some(3), None).unwrap().time, 120.0);
         std::fs::remove_file(a).ok();
+    }
+
+    fn ramp_file(name: &str, rows: usize, dt: f64) -> String {
+        let body: String = (0..rows).map(|i| format!("{},{}\n", i as f64 * dt, i as f64 * dt * 10.0)).collect();
+        write(name, &format!("time,x\n{body}"))
+    }
+
+    #[test]
+    fn downsample_gives_a_shorter_signal_with_its_own_rows() {
+        let f = ramp_file("ds_a.csv", 10, 1.0);
+        let mut ws = Workspace::default();
+        import(&mut ws, &f, &["time", "x"]);
+        ws.edit("x", Edit::Downsample(2.5)).unwrap();
+        let v = ws.get("x").unwrap();
+        assert_eq!(v.data.len(), 4, "10 rows / 2.5 = 4 rows, exactly");
+        assert_eq!(v.original.len(), 10, "the imported values are untouched");
+        let t = ws.local_time(v);
+        assert_eq!(t.len(), 4, "one time per row");
+        // Blocks [0,2) [2,5) [5,7) [7,10): the mean sits at the block's middle row.
+        assert_eq!(t.as_slice(), &[1.0, 3.0, 6.0, 8.0]);
+        let expect = [5.0, 30.0, 55.0, 80.0]; // means of x = 10·t over each block
+        for (a, b) in v.data.iter().zip(expect) {
+            assert!((a - b).abs() < 1e-9, "{a} vs {b}");
+        }
+        assert_eq!(ws.info().iter().find(|i| i.name == "x").unwrap().len, 4, "the list shows the new length");
+        std::fs::remove_file(f).ok();
+    }
+
+    #[test]
+    fn steps_after_a_downsample_work_on_the_new_rows() {
+        let f = ramp_file("ds_b.csv", 1000, 0.01);
+        let mut ws = Workspace::default();
+        import(&mut ws, &f, &["time", "x"]);
+        ws.edit("x", Edit::Downsample(10.0)).unwrap();
+        // Later steps see the new sample rate: 100 Hz / 10 = 10 Hz.
+        let rate = sample_rate_of(&ws.local_time(ws.get("x").unwrap()));
+        assert!((rate - 10.0).abs() < 1e-6, "{rate} Hz");
+        let lp = |c: f64| {
+            let mut p = serde_json::Map::new();
+            p.insert("cutoff".into(), serde_json::json!(c));
+            p.insert("order".into(), serde_json::json!(2));
+            Edit::Filter(FilterStep { filter_type: crate::core::filters::FilterType::Lowpass, params: p, enabled: true })
+        };
+        ws.edit("x", lp(1.0)).unwrap();
+        // A range is given in time and cuts the downsampled rows.
+        ws.edit("x", Edit::ClearRange((0.0, 2.0))).unwrap();
+        let v = ws.get("x").unwrap();
+        let t = ws.local_time(v);
+        assert_eq!((v.data.len(), t.len()), (100, 100));
+        assert!(v.data.iter().zip(t.iter()).all(|(y, t)| (*t > 2.0) == y.is_finite() || *t <= 2.0 && !y.is_finite()), "rows up to 2 s are missing");
+        // The pipeline view reports the rows after each block.
+        let p = ws.pipeline("x").unwrap();
+        assert_eq!(p.rows, 100);
+        assert_eq!(p.stages[0].rows, 100);
+        std::fs::remove_file(f).ok();
+    }
+
+    #[test]
+    fn undo_and_reset_bring_the_rows_back() {
+        let f = ramp_file("ds_c.csv", 40, 1.0);
+        let mut ws = Workspace::default();
+        import(&mut ws, &f, &["time", "x"]);
+        ws.edit("x", Edit::Downsample(4.0)).unwrap();
+        assert_eq!(ws.get("x").unwrap().data.len(), 10);
+        ws.undo("x").unwrap();
+        let v = ws.get("x").unwrap();
+        assert_eq!((v.data.len(), ws.local_time(v).len()), (40, 40));
+        ws.edit("x", Edit::Downsample(4.0)).unwrap();
+        ws.reset("x").unwrap();
+        assert_eq!(ws.get("x").unwrap().data.len(), 40);
+        // Deleting the step from the middle of a pipeline re-runs the rest on the right rows.
+        ws.edit("x", Edit::Downsample(2.0)).unwrap();
+        ws.edit("x", Edit::Offset(1.0)).unwrap();
+        ws.remove_step("x", 0).unwrap();
+        assert_eq!(ws.get("x").unwrap().data.len(), 40);
+        std::fs::remove_file(f).ok();
+    }
+
+    #[test]
+    fn a_downsampled_signal_is_saved_and_reopened_with_its_rows() {
+        let f = ramp_file("ds_d.csv", 60, 1.0);
+        let mut ws = Workspace::default();
+        import(&mut ws, &f, &["time", "x"]);
+        ws.edit("x", Edit::Downsample(3.0)).unwrap();
+        let (reopened, warnings) = Workspace::from_project(&ws.to_project(), None);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let (a, b) = (ws.get("x").unwrap(), reopened.get("x").unwrap());
+        assert_eq!(b.data.len(), 20);
+        assert_eq!(a.data.as_slice(), b.data.as_slice());
+        assert_eq!(ws.local_time(a).as_slice(), reopened.local_time(b).as_slice());
+        std::fs::remove_file(f).ok();
+    }
+
+    #[test]
+    fn a_downsampled_signal_lines_up_with_a_faster_file_on_the_grid() {
+        // x = 10·t at 100 Hz, downsampled by 4, next to a 30 Hz file: the two files' grid is the fine one.
+        let f = ramp_file("ds_e.csv", 400, 0.01);
+        let g = ramp_file("ds_e2.csv", 120, 1.0 / 30.0);
+        let mut ws = Workspace::default();
+        import(&mut ws, &f, &["time", "x"]);
+        let names = ws.import(&g, None, &ImportOptions::default(), &["x".to_string()], None).unwrap().0;
+        ws.edit("x", Edit::Downsample(4.0)).unwrap();
+        let p = ws.to_parse().unwrap();
+        let col = &p.columns.iter().find(|(n, _)| n == "x").unwrap().1;
+        let t = p.time.as_ref().unwrap();
+        // Between its first and last kept rows the line is the ramp itself.
+        let checked = col.iter().zip(t.iter()).filter(|(y, t)| y.is_finite() && **t > 0.1 && **t < 3.8).count();
+        assert!(checked > 300, "{checked} rows");
+        for (y, t) in col.iter().zip(t.iter()).filter(|(y, t)| y.is_finite() && **t > 0.1 && **t < 3.8) {
+            assert!((y - 10.0 * t).abs() < 0.2, "x({t}) = {y}");
+        }
+        assert_eq!(names.len(), 1);
+        std::fs::remove_file(f).ok();
+        std::fs::remove_file(g).ok();
+    }
+
+    #[test]
+    fn by_row_alignment_counts_the_new_rows() {
+        let f = ramp_file("ds_f.csv", 12, 1.0);
+        let mut ws = Workspace::default();
+        import(&mut ws, &f, &["time", "x"]);
+        ws.edit("x", Edit::Downsample(3.0)).unwrap();
+        ws.set_align(Align::Row, None).unwrap();
+        let p = ws.to_parse().unwrap();
+        let col = &p.columns[0].1;
+        assert_eq!(col.iter().filter(|y| y.is_finite()).count(), 4, "rows 1 to 4 hold the signal");
+        assert!(col[..4].iter().all(|y| y.is_finite()) && col[4..].iter().all(|y| y.is_nan()));
+        std::fs::remove_file(f).ok();
+    }
+
+    #[test]
+    fn downsample_refuses_bad_factors_and_formula_signals() {
+        let f = ramp_file("ds_g.csv", 20, 1.0);
+        let mut ws = Workspace::default();
+        import(&mut ws, &f, &["time", "x"]);
+        for bad in [1.0, 0.5, -2.0, f64::NAN, 1.01] {
+            assert!(ws.edit("x", Edit::Downsample(bad)).is_err(), "factor {bad}");
+        }
+        assert_eq!(ws.get("x").unwrap().data.len(), 20, "a refused step changes nothing");
+        ws.add_derived("y", "x * 2").unwrap();
+        assert!(ws.edit("y", Edit::Downsample(2.0)).is_err());
+        std::fs::remove_file(f).ok();
+    }
+
+    #[test]
+    fn downsample_averages_around_missing_values() {
+        let v = vec![1.0, f64::NAN, 3.0, f64::NAN, f64::NAN, f64::NAN, 7.0, 9.0];
+        let (out, _) = Edit::Downsample(2.0).apply(&v, &[0.0; 8]).unwrap();
+        assert_eq!(out.len(), 4);
+        assert_eq!(out[0], 1.0);
+        assert_eq!(out[1], 3.0);
+        assert!(out[2].is_nan(), "a block with nothing valid stays missing");
+        assert_eq!(out[3], 8.0);
     }
 
     #[test]

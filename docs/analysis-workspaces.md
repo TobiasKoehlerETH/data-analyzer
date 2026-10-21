@@ -21,7 +21,7 @@ Prepare processes one signal as a row of blocks: **Source → steps → Output**
 - Click a block to see its input (gray) and output on the chart, change its settings, move it or delete it. Each block shows what it did: samples removed, filled or moved.
 - **Undo** removes the last step. **Reset** returns to the imported values.
 
-**Offset** adds a typed value or subtracts the first data point. **Downsample** divides the rows by a factor, or by whatever matches the length of another signal: the rows are split into blocks, each block's average is kept at its middle row, and the other rows become missing (add **Fill gaps** to interpolate them).
+**Offset** adds a typed value or subtracts the first data point. **Downsample** divides the rows by a factor, or by whatever matches the length of another signal. The rows are split into equal blocks and each block becomes one row holding its average, with the time of the block's middle. The signal gets its own, shorter rows: Row mode and the list on the Data page show the new length, and later steps (filters, ranges) work at the new sample rate. The imported values keep the original rows. Undo, Reset and saved projects bring the rows back or keep them. Formula signals cannot be downsampled.
 
 Removed values become missing. Rows are never deleted, so every signal stays aligned. Deleting or editing a step re-runs the steps after it. A step that finds nothing to do passes the values through.
 

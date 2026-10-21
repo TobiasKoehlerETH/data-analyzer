@@ -52,6 +52,97 @@ pub fn corrcoef(cols: &[&[f64]]) -> Vec<Vec<f64>> {
     r
 }
 
+/// Pearson r of two columns over the rows where both values are valid (NaN when fewer than two
+/// rows remain or a column is constant there).
+pub fn pearson_pair(a: &[f64], b: &[f64]) -> f64 {
+    let (mut n, mut sa, mut sb) = (0.0, 0.0, 0.0);
+    for (x, y) in a.iter().zip(b) {
+        if x.is_finite() && y.is_finite() {
+            n += 1.0;
+            sa += x;
+            sb += y;
+        }
+    }
+    if n < 2.0 {
+        return f64::NAN;
+    }
+    let (ma, mb) = (sa / n, sb / n);
+    let (mut saa, mut sbb, mut sab) = (0.0, 0.0, 0.0);
+    for (x, y) in a.iter().zip(b) {
+        if x.is_finite() && y.is_finite() {
+            let (dx, dy) = (x - ma, y - mb);
+            saa += dx * dx;
+            sbb += dy * dy;
+            sab += dx * dy;
+        }
+    }
+    let v = sab / (saa.sqrt() * sbb.sqrt());
+    if v.is_nan() { v } else { v.clamp(-1.0, 1.0) }
+}
+
+/// Pearson matrix that uses, for each pair, only the rows where both signals are valid. Signals from
+/// files that overlap only partly (or that were cleaned) therefore still correlate.
+pub fn corrcoef_pairwise(cols: &[&[f64]]) -> Vec<Vec<f64>> {
+    let k = cols.len();
+    let rows = par_map(k, |i| (i..k).map(|j| pearson_pair(cols[i], cols[j])).collect::<Vec<f64>>());
+    let mut r = vec![vec![0.0; k]; k];
+    for (i, row) in rows.iter().enumerate() {
+        for (d, v) in row.iter().enumerate() {
+            r[i][i + d] = *v;
+            r[i + d][i] = *v;
+        }
+    }
+    r
+}
+
+/// `f(0..n)` on all cores, a few items at a time (each item may hold large temporaries).
+fn par_map<T: Send>(n: usize, f: impl Fn(usize) -> T + Sync) -> Vec<T> {
+    let workers = std::thread::available_parallelism().map_or(4, |c| c.get()).min(8);
+    let mut out = Vec::with_capacity(n);
+    let mut start = 0;
+    while start < n {
+        let end = (start + workers).min(n);
+        let f = &f;
+        let batch: Vec<T> = std::thread::scope(|s| {
+            let handles: Vec<_> = (start..end).map(|i| s.spawn(move || f(i))).collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        out.extend(batch);
+        start = end;
+    }
+    out
+}
+
+/// Spearman matrix over the rows where both signals of a pair are valid (ranks are taken on those rows).
+/// Signals without missing values are ranked once, in parallel, and reused by every pair.
+pub fn spearman_pairwise(cols: &[Vec<f64>]) -> Vec<Vec<f64>> {
+    let k = cols.len();
+    let complete: Vec<bool> = cols.iter().map(|c| c.iter().all(|v| v.is_finite())).collect();
+    let ranks: Vec<Option<Vec<f64>>> = par_map(k, |i| complete[i].then(|| rankdata(&cols[i])));
+    let pair = |i: usize, j: usize| -> f64 {
+        if let (Some(a), Some(b)) = (&ranks[i], &ranks[j]) {
+            return pearson_pair(a, b);
+        }
+        let (mut a, mut b) = (Vec::new(), Vec::new());
+        for (x, y) in cols[i].iter().zip(&cols[j]) {
+            if x.is_finite() && y.is_finite() {
+                a.push(*x);
+                b.push(*y);
+            }
+        }
+        if a.len() < 2 { f64::NAN } else { pearson_pair(&rankdata(&a), &rankdata(&b)) }
+    };
+    let rows: Vec<Vec<f64>> = par_map(k, |i| (i..k).map(|j| pair(i, j)).collect());
+    let mut r = vec![vec![0.0; k]; k];
+    for (i, row) in rows.iter().enumerate() {
+        for (d, v) in row.iter().enumerate() {
+            r[i][i + d] = *v;
+            r[i + d][i] = *v;
+        }
+    }
+    r
+}
+
 /// scipy.stats.rankdata(method="average")
 pub fn rankdata(x: &[f64]) -> Vec<f64> {
     let n = x.len();
@@ -86,28 +177,25 @@ pub fn compute_correlation_matrix(
     let columns: Vec<String> = signals.iter().map(|(n, _)| n.clone()).collect();
     let n = columns.len();
     let refs: Vec<&[f64]> = signals.iter().map(|(_, d)| d.as_slice()).collect();
-    let pearson = corrcoef(&refs);
+    // Complete data keeps the numpy.corrcoef path; missing values switch to pairwise-complete rows.
+    let has_gaps = refs.iter().any(|c| c.iter().any(|v| !v.is_finite()));
+    let pearson = if has_gaps { corrcoef_pairwise(&refs) } else { corrcoef(&refs) };
 
-    // Spearman on (sub-sampled) ranks; NaNs propagate as in scipy.
+    // Spearman on (sub-sampled) ranks.
     let rows = refs.first().map(|r| r.len()).unwrap_or(0);
     let sub_idx: Vec<usize> = if rows > 20000 {
         (0..20000).map(|i| ((i as f64) * (rows - 1) as f64 / 19999.0) as usize).collect()
     } else {
         (0..rows).collect()
     };
-    let ranked: Vec<Vec<f64>> = refs
-        .iter()
-        .map(|c| {
-            let sub: Vec<f64> = sub_idx.iter().map(|&i| c[i]).collect();
-            if sub.iter().any(|v| v.is_nan()) {
-                vec![f64::NAN; sub.len()]
-            } else {
-                rankdata(&sub)
-            }
-        })
-        .collect();
-    let rrefs: Vec<&[f64]> = ranked.iter().map(|v| v.as_slice()).collect();
-    let spearman = corrcoef(&rrefs);
+    let subs: Vec<Vec<f64>> = refs.iter().map(|c| sub_idx.iter().map(|&i| c[i]).collect()).collect();
+    let spearman = if subs.iter().any(|s| s.iter().any(|v| !v.is_finite())) {
+        spearman_pairwise(&subs)
+    } else {
+        let ranked: Vec<Vec<f64>> = subs.iter().map(|s| rankdata(s)).collect();
+        let rrefs: Vec<&[f64]> = ranked.iter().map(|v| v.as_slice()).collect();
+        corrcoef(&rrefs)
+    };
 
     let mut pairs = Vec::with_capacity(n * n.saturating_sub(1) / 2);
     for i in 0..n {
@@ -173,6 +261,22 @@ pub fn compute_lagged_correlations(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn missing_rows_are_skipped_pair_by_pair() {
+        let a: Vec<f64> = (0..100).map(f64::from).collect();
+        let mut b: Vec<f64> = a.iter().map(|x| 2.0 * x + 1.0).collect();
+        for v in b.iter_mut().skip(90) {
+            *v = f64::NAN;
+        }
+        let m = corrcoef_pairwise(&[&a, &b]);
+        assert!((m[0][1] - 1.0).abs() < 1e-12, "{}", m[0][1]);
+        assert!(corrcoef(&[&a, &b])[0][1].is_nan(), "the plain version is spoiled by one gap");
+        let s = spearman_pairwise(&[a.clone(), b.clone()]);
+        assert!((s[0][1] - 1.0).abs() < 1e-12);
+        assert!(pearson_pair(&a, &[1.0; 100]).is_nan(), "a constant column has no correlation");
+    }
+
 
     fn sig(v: Vec<f64>) -> Arc<Vec<f64>> {
         Arc::new(v)

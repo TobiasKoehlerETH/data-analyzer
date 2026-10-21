@@ -45,3 +45,6 @@ sample_data.csv
 
 # Generated reports
 reports/
+
+# generated stress data (node tools/make-test-dataset.mjs --stress)
+samples/stress/

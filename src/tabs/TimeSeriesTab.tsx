@@ -37,8 +37,8 @@ export function TimeSeriesTab() {
     const initial = dataset?.signals.slice(0, 1).map((s) => s.column) ?? [];
     setSelected(initial);
     setSlots(Object.fromEntries(initial.map((c, i) => [c, i])));
-    // Timestamped data opens on a date axis; everything else on row numbers.
-    setXColumn(dataset?.time_origin != null ? "__time" : "__row");
+    // Time-series data opens on its time axis (dates for timestamps, seconds otherwise).
+    setXColumn("__time");
   }, [dataset?.path, dataset?.sheet]);
 
   const select = (cols: string[]) => {
@@ -198,7 +198,7 @@ export function TimeSeriesTab() {
         const original = originalOn && overlay.includes(c) ? originals[c] : undefined;
         return [
           // The imported values recede to gray behind the edited signal.
-          ...(original ? [{ name: `${name} · original`, color: INK.muted, data: zip(original.x, original.y) }] : []),
+          ...(original ? [{ name: `${name} · original`, color: INK.original, width: 1.4, data: zip(original.x, original.y) }] : []),
           {
             name,
             color: seriesColor(slots[c] ?? 0),

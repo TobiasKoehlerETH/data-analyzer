@@ -20,13 +20,15 @@ export const seriesColor = (i: number) => PALETTE[Math.min(i, PALETTE.length - 1
 
 export const INK = {
   surface: "#ffffff",
-  primary: "#0b0b0b",
-  secondary: "#52514e",
-  muted: "#898781",
-  grid: "#e1e0d9",
-  axis: "#c3c2b7",
+  primary: "#0f1216",
+  secondary: "#4a525c",
+  muted: "#6b7380",
+  grid: "#eceef2",
+  axis: "#c5cbd3",
   /** De-emphasis for marks outside the current selection or fit range. */
-  faded: "#d6d5cf",
+  faded: "#d6dae0",
+  /** The imported values behind a processed signal. */
+  original: "#b4bac3",
 };
 
 export const FONT = '"Inter Variable",Inter,"Segoe UI",system-ui,-apple-system,sans-serif';
@@ -82,7 +84,7 @@ export function esc(s: string): string {
 
 export function axis(title?: string, extra: Figure = {}): Figure {
   return {
-    title: title ? { text: esc(title), standoff: 8, font: { size: 12, color: INK.secondary } } : undefined,
+    title: title ? { text: esc(title), standoff: 10, font: { size: 12.5, color: INK.secondary } } : undefined,
     showgrid: true,
     gridcolor: INK.grid,
     gridwidth: 1,
@@ -95,7 +97,7 @@ export function axis(title?: string, extra: Figure = {}): Figure {
     ticks: "outside",
     ticklen: 4,
     tickcolor: INK.axis,
-    tickfont: { size: 11, color: INK.muted },
+    tickfont: { size: 12, color: INK.muted },
     automargin: true,
     hoverformat: ".6~g",
     ...extra,

@@ -216,8 +216,7 @@ export default function App() {
     <TooltipProvider delayDuration={400}>
       <div className="flex h-full flex-col">
         {/* Top bar: brand, the workflow, the data in use */}
-        <header className="flex h-14 shrink-0 items-center gap-6 border-b border-ap-line bg-white px-5">
-          <span className="shrink-0 text-[15px] font-semibold tracking-tight">Data Analyzer</span>
+        <header className="flex h-14 shrink-0 items-center gap-6 border-b border-ap-line bg-white px-4">
           <nav className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto" aria-label="Workflow">
             {STEPS.map((s, si) => {
               const active = si === stepIndex;

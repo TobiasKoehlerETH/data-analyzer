@@ -41,3 +41,5 @@ cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
 The Rust tests cover import, processing, spectra, correlation, fitting, system identification and validation. Numerical reference fixtures are in `src-tauri/tests/fixtures`.
+
+`samples/test-suite` holds synthetic files with known contents (spikes, gaps, tones, model coefficients); the tests check the results against its `manifest.json`. For a stress test with million-row files, see [samples/test-suite/README.md](samples/test-suite/README.md).
