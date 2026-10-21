@@ -1,29 +1,49 @@
 import { useEffect, useMemo, useState } from "react";
 import { EmptyState, Panel, Segmented, StatusText } from "@/components/common";
+import { ListChecks } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Plot } from "@/components/Plot";
 import { StackedChart, type ChartPanel } from "@/components/StackedChart";
-import { api, errorText, type CorrelationView, type PairAnalysis } from "@/lib/api";
+import { api, errorText, type Align, type CorrelationView, type PairAnalysis } from "@/lib/api";
 import { DIVERGING, INK, axis, baseLayout, esc, seriesColor, zip } from "@/lib/chart";
 import { useApp } from "@/lib/store";
 
 /** Which signals move together: a matrix to read at a glance, then one pair in detail. */
 export function CorrelationTab() {
-  const { dataset, dataVersion, activeTab } = useApp();
+  const { dataset, dataVersion, activeTab, setDataset } = useApp();
   const [result, setResult] = useState<CorrelationView | null>(null);
   const [method, setMethod] = useState<"pearson" | "spearman">("pearson");
   const [pair, setPair] = useState<PairAnalysis | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  /** Signals in the matrix; null = all of them. */
+  const [chosen, setChosen] = useState<string[] | null>(null);
+  /** Set when the files run at different rates: the slower files are then interpolated on the common grid. */
+  const [mixed, setMixed] = useState<{ step: number; align: Align } | null>(null);
+
+  useEffect(() => {
+    if (activeTab !== "correlation") return;
+    api
+      .workspaceView()
+      .then((w) => {
+        const rates = w.sources.map((x) => x.sample_rate).filter((r) => r > 0 && Number.isFinite(r));
+        const differ = rates.length > 1 && Math.max(...rates) / Math.min(...rates) > 1.05;
+        setMixed(differ && w.grid_step === null && w.align !== "row" ? { step: Number((1 / Math.min(...rates)).toPrecision(6)), align: w.align } : null);
+      })
+      .catch(() => setMixed(null));
+  }, [activeTab, dataVersion]);
 
   useEffect(() => {
     setResult(null);
     setPair(null);
+    setChosen(null);
   }, [dataset?.path]);
 
-  const compute = async () => {
+  const compute = async (cols: string[] | null = chosen) => {
     setBusy(true);
     try {
-      const r = await api.correlationCompute();
+      const r = await api.correlationCompute(cols);
       setResult(r);
       setError("");
     } catch (e) {
@@ -104,14 +124,70 @@ export function CorrelationTab() {
         className="min-w-0 flex-[3]"
         bodyClassName="p-1"
         actions={
-          <Segmented
-            value={method}
-            onChange={setMethod}
-            options={[
-              { value: "pearson", label: "Pearson", hint: "Linear relationships" },
-              { value: "spearman", label: "Spearman", hint: "Any steadily rising or falling relationship" },
-            ]}
-          />
+          <>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="outline" title="Choose which signals are correlated">
+                  <ListChecks /> {chosen ? `${chosen.length} of ${dataset?.signals.length ?? 0}` : "All signals"}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="max-h-80 w-64 overflow-y-auto">
+                <DropdownMenuItem
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    setChosen(null);
+                    compute(null);
+                  }}
+                >
+                  All signals
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                {(dataset?.signals ?? []).map((sg) => {
+                  const on = chosen === null || chosen.includes(sg.column);
+                  return (
+                    <DropdownMenuCheckboxItem
+                      key={sg.column}
+                      checked={on}
+                      onSelect={(e) => e.preventDefault()}
+                      onCheckedChange={(v) => {
+                        const all = (dataset?.signals ?? []).map((x) => x.column);
+                        const current = chosen ?? all;
+                        const next = v ? all.filter((c) => c === sg.column || current.includes(c)) : current.filter((c) => c !== sg.column);
+                        if (next.length < 2) {
+                          setError("Choose at least two signals.");
+                          return;
+                        }
+                        setError("");
+                        const value = next.length === all.length ? null : next;
+                        setChosen(value);
+                        compute(value);
+                      }}
+                    >
+                      {sg.label}
+                    </DropdownMenuCheckboxItem>
+                  );
+                })}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            {mixed && (
+              <Button
+                size="sm"
+                variant="outline"
+                title="The files run at different rates, so the slower signals are interpolated. Use the slowest file's time step so every signal has the same number of real samples."
+                onClick={() => api.workspaceSetAlign(mixed.align, mixed.step).then((v) => setDataset(v.dataset)).catch((e) => setError(errorText(e)))}
+              >
+                Same length
+              </Button>
+            )}
+            <Segmented
+              value={method}
+              onChange={setMethod}
+              options={[
+                { value: "pearson", label: "Pearson", hint: "Linear relationships" },
+                { value: "spearman", label: "Spearman", hint: "Any steadily rising or falling relationship" },
+              ]}
+            />
+          </>
         }
       >
         {heatmap ? (

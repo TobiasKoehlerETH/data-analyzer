@@ -271,6 +271,12 @@ pub async fn workspace_rename(app: AppHandle, state: AppStateRef<'_>, old: Strin
 }
 
 /// Makes `name` its source's time axis (`time = true`) or reverts that source to row numbers.
+/// Sets the unit of a file's time column, as seconds per unit (60 = minutes).
+#[tauri::command]
+pub async fn workspace_set_time_unit(app: AppHandle, state: AppStateRef<'_>, id: u32, scale: f64) -> CmdResult<WorkspaceView> {
+    ws_change(app, state, move |ws| ws.set_time_unit(id, scale).map(|_| Default::default())).await
+}
+
 /// Sets (or clears) a file's seconds-per-row conversion factor.
 #[tauri::command]
 pub async fn workspace_set_row_step(app: AppHandle, state: AppStateRef<'_>, id: u32, step: Option<f64>) -> CmdResult<WorkspaceView> {
@@ -777,11 +783,19 @@ fn pair_dtos(d: &Dataset, pairs: &[CorrelationPair]) -> Vec<PairDto> {
 }
 
 #[tauri::command]
-pub async fn correlation_compute(state: AppStateRef<'_>) -> CmdResult<CorrelationView> {
+pub async fn correlation_compute(state: AppStateRef<'_>, columns: Option<Vec<String>>) -> CmdResult<CorrelationView> {
     let st = state.inner().clone();
     blocking(move || {
-        let signals = with_data(&st, |d| Ok(d.all_signals()))?;
-        let result = compute_correlation_matrix(&signals, Some(&st.cache));
+        let mut signals = with_data(&st, |d| Ok(d.all_signals()))?;
+        // A chosen subset (in dataset order). Its result is not cached: the cache key does not name the signals.
+        let subset = columns.is_some();
+        if let Some(cols) = &columns {
+            signals.retain(|(name, _)| cols.contains(name));
+            if signals.len() < 2 {
+                return Err("Choose at least two signals.".into());
+            }
+        }
+        let result = compute_correlation_matrix(&signals, if subset { None } else { Some(&st.cache) });
         // Keep lags from a previous lag analysis of the same matrix (cached result semantics).
         let mut res = result.as_ref().clone();
         if let Some(prev) = st.correlation.lock().unwrap().as_ref() {

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  ArrowDownToLine,
   ArrowUpDown,
   AudioWaveform,
+  ArrowDownToLine,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -26,7 +26,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { NumberInput } from "@/components/common";
+import { NumberInput, Segmented } from "@/components/common";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { FilterParams } from "@/components/FilterParams";
 import type { FilterType, Pipeline, StageInfo, VariableEdit } from "@/lib/api";
 import { defaultStep, filterTitle } from "@/lib/filters";
@@ -73,6 +74,8 @@ export function blockInfo(step: VariableEdit, fmtTime: (t: number) => string = g
       return { kind: "clean", icon: Zap, title: "Remove spikes", params: [`Hampel, k = ${g(step.value)}σ`] };
     case "fill_gaps":
       return { kind: "clean", icon: Spline, title: "Fill gaps", params: ["linear"] };
+    case "downsample":
+      return { kind: "adjust", icon: ArrowDownToLine, title: "Downsample", params: [`÷ ${g(step.value)}`] };
     case "filter": {
       const f = step.value;
       const p = f.params;
@@ -97,7 +100,7 @@ export function blockInfo(step: VariableEdit, fmtTime: (t: number) => string = g
     case "demean":
       return { kind: "adjust", icon: Minus, title: "Remove mean", params: [] };
     case "zero_start":
-      return { kind: "adjust", icon: ArrowDownToLine, title: "Start at zero", params: [] };
+      return { kind: "adjust", icon: ArrowUpDown, title: "Offset", params: ["− first point"] };
     case "invert":
       return { kind: "adjust", icon: FlipVertical2, title: "Invert sign", params: ["× −1"] };
   }
@@ -196,6 +199,10 @@ interface Props {
   nyquist: number;
   /** Starting range for "Remove range" and "Keep range" (what is on screen). */
   rangeDefault: [number, number];
+  /** Rows of the other signals, and of this one, for "downsample to the length of …". */
+  lengths: Record<string, number>;
+  ownName: string;
+  ownLength: number;
   onRemove: (i: number) => void;
   onMove: (i: number, to: number) => void;
   onReplace: (i: number, step: VariableEdit) => void;
@@ -226,6 +233,7 @@ export function PipelineDiagram(p: Props) {
   const sel = selected !== null ? stages[selected] : undefined;
   const dirty = !!sel && !!editing && JSON.stringify(editing) !== JSON.stringify(sel.step);
   const draftInfo = draft ? blockInfo(draft, fmtTime) : null;
+  const sizes = { lengths: p.lengths, ownName: p.ownName, ownLength: p.ownLength };
 
   const addItem = (label: string, icon: ReactNode, c: AddChoice) => (
     <DropdownMenuItem key={label} onSelect={() => p.onAdd(c)}>
@@ -323,9 +331,9 @@ export function PipelineDiagram(p: Props) {
                   <DropdownMenuSubContent className="w-52">
                     {addItem("Offset", <ArrowUpDown />, ASK({ op: "offset", value: 0 }))}
                     {addItem("Gain", <Maximize2 />, ASK({ op: "scale", value: 1 }))}
+                    {addItem("Downsample", <ArrowDownToLine />, ASK({ op: "downsample", value: 2 }))}
                     <DropdownMenuSeparator />
                     {addItem("Remove mean", <Minus />, NOW({ op: "demean" }))}
-                    {addItem("Start at zero", <ArrowDownToLine />, NOW({ op: "zero_start" }))}
                     {addItem("Normalize 0–1", <Scaling />, NOW({ op: "normalize" }))}
                     {addItem("Z-score", <Sigma />, NOW({ op: "zscore" }))}
                     {addItem("Invert sign", <FlipVertical2 />, NOW({ op: "invert" }))}
@@ -360,7 +368,7 @@ export function PipelineDiagram(p: Props) {
             <p className="text-[14px] font-semibold">{draftInfo?.title}</p>
           </div>
           <div className="flex min-w-[220px] flex-1 flex-wrap items-end gap-x-4 gap-y-1.5">
-            <StepEditor step={draft} onChange={onDraftChange} nyquist={nyquist} />
+            <StepEditor step={draft} onChange={onDraftChange} nyquist={nyquist} sizes={sizes} />
           </div>
           <div className="flex items-center gap-2">
             <Button variant="ghost" onClick={() => onDraftChange(null)}>
@@ -380,7 +388,7 @@ export function PipelineDiagram(p: Props) {
             <p className="text-[14px] font-semibold">{infos[selected!].title}</p>
           </div>
           <div className="flex min-w-[220px] flex-1 flex-wrap items-end gap-x-4 gap-y-1.5">
-            <StepEditor step={editing} onChange={setEditing} nyquist={nyquist} />
+            <StepEditor step={editing} onChange={setEditing} nyquist={nyquist} sizes={sizes} />
           </div>
           <div className="flex items-center gap-1.5">
             {dirty && (
@@ -417,8 +425,66 @@ function useStepCopy(step: VariableEdit | undefined): [VariableEdit | null, (s: 
 }
 
 /** Editable settings of one step; steps without settings say so. */
-function StepEditor({ step, onChange, nyquist }: { step: VariableEdit; onChange: (s: VariableEdit) => void; nyquist: number }) {
+interface Sizes {
+  lengths: Record<string, number>;
+  ownName: string;
+  ownLength: number;
+}
+
+/** Downsample by a factor, or to the length of another signal (the factor is worked out from it). */
+function DownsampleEditor({ factor, onChange, sizes }: { factor: number; onChange: (s: VariableEdit) => void; sizes: Sizes }) {
+  const [mode, setMode] = useState<"factor" | "match">("factor");
+  const [target, setTarget] = useState("");
+  const shorter = Object.entries(sizes.lengths).filter(([name, len]) => name !== sizes.ownName && len > 0 && len < sizes.ownLength);
+  return (
+    <>
+      <Segmented
+        value={mode}
+        onChange={setMode}
+        options={[
+          { value: "factor", label: "Factor" },
+          { value: "match", label: "Match a signal", hint: "Downsample to the number of rows of another signal" },
+        ]}
+      />
+      {mode === "factor" ? (
+        <label className="flex items-center gap-2 text-[12.5px] text-muted-foreground">
+          Divide rows by
+          <NumberInput className="w-28" value={factor} min={1.01} step={1} onChange={(value) => onChange({ op: "downsample", value })} />
+          <span className="tabular-nums">→ {Math.max(1, Math.round(sizes.ownLength / factor)).toLocaleString("en-US")} rows</span>
+        </label>
+      ) : shorter.length === 0 ? (
+        <p className="text-[12.5px] text-muted-foreground">No signal with fewer rows.</p>
+      ) : (
+        <label className="flex items-center gap-2 text-[12.5px] text-muted-foreground">
+          Same length as
+          <Select
+            value={target || undefined}
+            onValueChange={(name) => {
+              setTarget(name);
+              onChange({ op: "downsample", value: sizes.ownLength / sizes.lengths[name] });
+            }}
+          >
+            <SelectTrigger className="h-8 w-56">
+              <SelectValue placeholder="Choose a signal" />
+            </SelectTrigger>
+            <SelectContent className="max-h-72">
+              {shorter.map(([name, len]) => (
+                <SelectItem key={name} value={name}>
+                  {name} · {len.toLocaleString("en-US")} rows
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </label>
+      )}
+    </>
+  );
+}
+
+function StepEditor({ step, onChange, nyquist, sizes }: { step: VariableEdit; onChange: (s: VariableEdit) => void; nyquist: number; sizes: Sizes }) {
   switch (step.op) {
+    case "downsample":
+      return <DownsampleEditor factor={step.value} onChange={onChange} sizes={sizes} />;
     case "filter":
       return (
         <div className="min-w-[240px] flex-1">
@@ -426,18 +492,37 @@ function StepEditor({ step, onChange, nyquist }: { step: VariableEdit; onChange:
         </div>
       );
     case "offset":
+    case "zero_start":
+      return (
+        <>
+          <Segmented
+            value={step.op === "offset" ? "value" : "first"}
+            onChange={(v) => onChange(v === "first" ? { op: "zero_start" } : { op: "offset", value: 0 })}
+            options={[
+              { value: "value", label: "Value" },
+              { value: "first", label: "First point", hint: "Subtract the first data point" },
+            ]}
+          />
+          {step.op === "offset" && (
+            <label className="flex items-center gap-2 text-[12.5px] text-muted-foreground">
+              Add
+              <NumberInput className="w-32" value={step.value} step={0.1} onChange={(value) => onChange({ op: "offset", value })} />
+            </label>
+          )}
+        </>
+      );
     case "scale":
     case "despike":
       return (
         <label className="flex items-center gap-2 text-[12.5px] text-muted-foreground">
-          {step.op === "offset" ? "Add" : step.op === "scale" ? "Multiply by" : "Threshold"}
+          {step.op === "scale" ? "Multiply by" : "Threshold"}
           <NumberInput
             className="w-32"
             value={step.value}
             step={step.op === "despike" ? 0.5 : 0.1}
             min={step.op === "despike" ? 1 : undefined}
             suffix={step.op === "despike" ? "σ" : undefined}
-            onChange={(value) => onChange({ op: step.op as "offset" | "scale" | "despike", value })}
+            onChange={(value) => onChange({ op: step.op as "scale" | "despike", value })}
           />
         </label>
       );

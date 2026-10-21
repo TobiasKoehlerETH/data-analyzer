@@ -6,7 +6,7 @@ The top bar follows the workflow: **Data → Prepare → Explore → Analyse →
 
 Add files, a folder of runs, or drop them on the window. Each file keeps its own time base and shows its signals with a small trend line.
 
-**Time from** sets where a file's time comes from: one of its columns, or **Fixed step per row** (seconds per row). The ruler below shows rows against time at five points. **Row** and **Time** convert one into the other. Files with clock timestamps show the time of day.
+**Time from** sets where a file's time comes from: one of its columns, or **Fixed step per row** (seconds per row). A time column is read in **seconds, minutes, hours or days**; choose the unit it is given in. The ruler below shows rows against time at five points. **Row** and **Time** convert one into the other. Files with clock timestamps show the time of day.
 
 With several files, **Line up files** combines them **By time**, **By clock time** or **By row**. **Shift** moves one file in time. **Resample to** sets the common time step (0 keeps the finest step; a coarser step averages instead of aliasing). The common grid has at most 1,000,000 rows.
 
@@ -16,10 +16,12 @@ A signal's menu has **Prepare**, **Rename**, **Duplicate**, **Reset to original*
 
 Prepare processes one signal as a row of blocks: **Source → steps → Output**.
 
-- **Add step** offers **Clean** (spikes, gaps, range), **Filter** (low-pass, high-pass, band-pass, band-stop, notch, moving average, median, Savitzky–Golay, exponential average), **Adjust** (offset, gain, remove mean, start at zero, normalize, z-score, invert) and **Suggest filters**.
+- **Add step** offers **Clean** (spikes, gaps, range), **Filter** (low-pass, high-pass, band-pass, band-stop, notch, moving average, median, Savitzky–Golay, exponential average), **Adjust** (offset, gain, downsample, remove mean, normalize, z-score, invert) and **Suggest filters**.
 - A new step is previewed on the chart before it is added.
 - Click a block to see its input (gray) and output on the chart, change its settings, move it or delete it. Each block shows what it did: samples removed, filled or moved.
 - **Undo** removes the last step. **Reset** returns to the imported values.
+
+**Offset** adds a typed value or subtracts the first data point. **Downsample** divides the rows by a factor, or by whatever matches the length of another signal: the rows are split into blocks, each block's average is kept at its middle row, and the other rows become missing (add **Fill gaps** to interpolate them).
 
 Removed values become missing. Rows are never deleted, so every signal stays aligned. Deleting or editing a step re-runs the steps after it. A step that finds nothing to do passes the values through.
 
@@ -32,7 +34,7 @@ Removed values become missing. Rows are never deleted, so every signal stays ali
 ## Analyse
 
 - **Spectrum**: FFT and power density (Welch). Drag the cutoff line and press **Add low-pass** to add a filter step at that frequency.
-- **Correlations**: Pearson or Spearman matrix. Click a cell to see the scatter and lag for that pair.
+- **Correlations**: Pearson or Spearman matrix. Choose which signals are included. Click a cell to see the scatter and lag for that pair. Signals from files at different rates are put on one time grid (slower ones interpolated); **Same length** uses the slowest file's step instead, so every signal has the same number of real samples. The Data page has the same button.
 - **Curve fit**: pick X and Y, a model and **Fit**. Click a point to leave it out. **Advanced** has X range, coefficient start values, bounds, fixed coefficients, centering and robust (Huber) fitting. Confidence bands are approximate (normal 1.96 multiplier), not prediction intervals. Built-in models: linear, quadratic, cubic, exponential, exponential decay, power, logarithmic, Gaussian, Lorentzian, sigmoid, sine, or a custom equation in `x` with up to eight coefficients.
 
 ## Model

@@ -59,6 +59,10 @@ pub enum Edit {
     FillGaps,
     /// One digital filter (lowpass, notch, …) at the variable's sample rate.
     Filter(FilterStep),
+    /// Block average: the rows are split into `rows / factor` equal blocks; each block's mean
+    /// sits at its middle row and every other row becomes missing. The factor may be fractional
+    /// (a variable of another length gives `rows / its rows`).
+    Downsample(f64),
 }
 
 fn median_of(v: &mut [f64]) -> f64 {
@@ -134,6 +138,7 @@ impl Edit {
             Edit::ClearPoints(t) => ("clean", "Remove points".into(), vec![plural(t.len(), "point")]),
             Edit::Despike(k) => ("clean", "Remove spikes".into(), vec![format!("Hampel, k = {}σ", num(*k))]),
             Edit::FillGaps => ("clean", "Fill gaps".into(), vec!["linear".into()]),
+            Edit::Downsample(f) => ("adjust", "Downsample".into(), vec![format!("÷ {}", num(*f))]),
             Edit::Filter(step) => {
                 let d = step.describe();
                 let mut parts = d.split(", ").map(str::to_string);
@@ -278,6 +283,28 @@ impl Edit {
                 }
                 (out, format!("fill {}", plural(filled, "gap value")))
             }
+            Edit::Downsample(f) => {
+                let n = v.len();
+                if !(*f > 1.0) || !f.is_finite() {
+                    return Err("The downsample factor must be greater than 1.".into());
+                }
+                let m = ((n as f64 / f).round() as usize).max(1);
+                if m >= n {
+                    return Err("The factor is too small to remove any rows.".into());
+                }
+                let mut out = vec![f64::NAN; n];
+                let mut kept = 0usize;
+                for b in 0..m {
+                    let (lo, hi) = (b * n / m, (b + 1) * n / m);
+                    let finite: Vec<f64> = v[lo..hi].iter().copied().filter(|x| x.is_finite()).collect();
+                    if finite.is_empty() {
+                        continue;
+                    }
+                    out[(lo + hi) / 2] = finite.iter().sum::<f64>() / finite.len() as f64;
+                    kept += 1;
+                }
+                (out, format!("downsample ÷{} ({} points)", num(*f), kept))
+            }
             Edit::Filter(step) => {
                 let fs = sample_rate_of(t);
                 (apply_steps(v, std::iter::once(step), fs)?, format!("filter: {}", step.describe()))
@@ -347,8 +374,22 @@ pub struct Source {
     pub offset: f64,
     /// Seconds per row, when the time comes from a conversion factor instead of a time column.
     pub row_step: Option<f64>,
+    /// Seconds per unit of the time column (1 = seconds, 60 = minutes, 3600 = hours, 86400 = days).
+    pub time_scale: f64,
     /// Name suffix for variables from batch imports ("Pressure · run3").
     pub suffix: Option<String>,
+}
+
+impl Source {
+    /// Time in seconds of a column that holds this file's time in its own unit.
+    fn scaled(&self, data: &Arc<Vec<f64>>) -> Arc<Vec<f64>> {
+        if self.time_scale == 1.0 { data.clone() } else { Arc::new(data.iter().map(|t| t * self.time_scale).collect()) }
+    }
+
+    /// Row i at i units, for a file without a time column.
+    fn index_time(&self) -> Arc<Vec<f64>> {
+        Arc::new((0..self.n_rows).map(|i| i as f64 * self.time_scale).collect())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -472,6 +513,8 @@ pub struct SourceInfo {
     pub offset: f64,
     /// Seconds per row when the time comes from a conversion factor.
     pub row_step: Option<f64>,
+    /// Seconds per unit of the time column.
+    pub time_scale: f64,
     pub start: Option<f64>,
     pub duration: f64,
     pub sample_rate: f64,
@@ -532,6 +575,12 @@ pub struct ProjectSource {
     pub time_var: Option<String>,
     #[serde(default)]
     pub row_step: Option<f64>,
+    #[serde(default = "one")]
+    pub time_scale: f64,
+}
+
+fn one() -> f64 {
+    1.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -919,6 +968,7 @@ impl Workspace {
             time_var: None,
             offset: 0.0,
             row_step: None,
+            time_scale: 1.0,
             suffix: suffix.clone(),
         };
         let label = |c: &str| match &suffix {
@@ -1003,7 +1053,7 @@ impl Workspace {
         let data = v.data.clone();
         if let Some(s) = self.sources.iter_mut().find(|s| s.time_var.as_deref() == Some(name)) {
             if data.len() == s.n_rows {
-                s.time = data;
+                s.time = s.scaled(&data);
             }
         }
     }
@@ -1205,7 +1255,7 @@ impl Workspace {
         for s in &mut self.sources {
             if s.time_var.as_ref().is_some_and(|t| names.contains(t)) {
                 s.time_var = None;
-                s.time = Arc::new((0..s.n_rows).map(|i| i as f64).collect());
+                s.time = s.index_time();
                 s.origin = None;
             }
         }
@@ -1275,12 +1325,12 @@ impl Workspace {
             if s.time_column.as_deref() != Some(column.as_str()) {
                 s.origin = None;
             }
-            s.time = data;
+            s.time = s.scaled(&data);
             s.time_var = Some(name.to_string());
             s.row_step = None;
         } else if s.time_var.as_deref() == Some(name) {
             s.time_var = None;
-            s.time = Arc::new((0..s.n_rows).map(|i| i as f64).collect());
+            s.time = s.index_time();
             s.origin = None;
         }
         Ok(())
@@ -1302,7 +1352,7 @@ impl Workspace {
             }
             None => {
                 s.row_step = None;
-                s.time = Arc::new((0..s.n_rows).map(|i| i as f64).collect());
+                s.time = s.index_time();
                 // Go back to the file's own time column when it is still around.
                 let column = s.time_column.clone();
                 let var = self.vars.iter().find(|v| matches!(&v.kind, Kind::Imported { source, column: c } if *source == id && Some(c) == column.as_ref())).map(|v| v.name.clone());
@@ -1310,6 +1360,24 @@ impl Workspace {
                     let _ = self.set_time(&name, true);
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// The unit a file's time column is given in, as seconds per unit (60 for minutes).
+    pub fn set_time_unit(&mut self, id: u32, scale: f64) -> Result<(), String> {
+        if !(scale > 0.0) || !scale.is_finite() {
+            return Err("The time unit must be a positive number of seconds.".into());
+        }
+        let time_var = self.sources.iter().find(|s| s.id == id).ok_or("File not found.")?.time_var.clone();
+        let data = time_var.and_then(|n| self.get(&n).map(|v| v.data.clone()));
+        let s = self.sources.iter_mut().find(|s| s.id == id).ok_or("File not found.")?;
+        s.time_scale = scale;
+        if s.row_step.is_none() {
+            s.time = match data {
+                Some(d) if d.len() == s.n_rows => s.scaled(&d),
+                _ => s.index_time(),
+            };
         }
         Ok(())
     }
@@ -1681,6 +1749,7 @@ impl Workspace {
                     origin: s.origin,
                     offset: s.offset,
                     row_step: s.row_step,
+                    time_scale: s.time_scale,
                     start,
                     duration: match (start, end) {
                         (Some(a), Some(b)) => b - a,
@@ -1812,6 +1881,7 @@ impl Workspace {
                     suffix: s.suffix.clone(),
                     time_var: s.time_var.clone(),
                     row_step: s.row_step,
+                    time_scale: s.time_scale,
                 })
                 .collect(),
             variables: self
@@ -1867,12 +1937,13 @@ impl Workspace {
                 sheet: ps.sheet.clone(),
                 options: ps.options.clone(),
                 n_rows,
-                time: Arc::new(time.clone()),
+                time: Arc::new(time.iter().map(|t| t * ps.time_scale.max(f64::MIN_POSITIVE)).collect()),
                 origin: parsed.time_origin,
                 time_column: parsed.time_column.clone(),
                 time_var: None,
                 offset: ps.offset,
                 row_step: ps.row_step.filter(|k| *k > 0.0 && k.is_finite()),
+                time_scale: if ps.time_scale > 0.0 && ps.time_scale.is_finite() { ps.time_scale } else { 1.0 },
                 suffix: ps.suffix.clone(),
             });
             ws.next_source = ws.next_source.max(ps.id + 1);
@@ -2025,6 +2096,60 @@ mod tests {
         assert!(ws.set_row_step(0, Some(0.0)).is_err());
         ws.set_row_step(0, None).unwrap();
         assert_eq!(ws.time_map(0, Some(4), None).unwrap().time, 15.0, "back to the time column");
+        std::fs::remove_file(a).ok();
+    }
+
+    #[test]
+    fn downsample_averages_blocks_and_can_match_another_length() {
+        let v: Vec<f64> = (1..=7).map(f64::from).collect();
+        let (out, label) = Edit::Downsample(3.0).apply(&v, &[0.0; 7]).unwrap();
+        let kept: Vec<(usize, f64)> = out.iter().enumerate().filter(|(_, x)| x.is_finite()).map(|(i, x)| (i, *x)).collect();
+        assert_eq!(kept, vec![(1, 2.0), (5, 5.5)], "blocks [1 2 3] and [4 5 6 7], at their middle rows");
+        assert!(label.contains("2 points"));
+        // To the length of a 4-row variable: 10 rows / 4 = factor 2.5, exactly 4 points left.
+        let long: Vec<f64> = (0..10).map(f64::from).collect();
+        let (out, _) = Edit::Downsample(10.0 / 4.0).apply(&long, &[0.0; 10]).unwrap();
+        assert_eq!(out.iter().filter(|x| x.is_finite()).count(), 4);
+        assert!(Edit::Downsample(1.0).apply(&long, &[0.0; 10]).is_err());
+        assert!(Edit::Downsample(0.5).apply(&long, &[0.0; 10]).is_err());
+    }
+
+    #[test]
+    fn a_100_hz_and_a_10_hz_file_end_up_the_same_length() {
+        let force: String = std::iter::once("time,force\n".to_string()).chain((0..1000).map(|i| format!("{},{}\n", i as f64 * 0.01, i))).collect();
+        let sensor: String = std::iter::once("time,sensor\n".to_string()).chain((0..100).map(|i| format!("{},{}\n", i as f64 * 0.1, i))).collect();
+        let (f, s) = (write("hz100.csv", &force), write("hz10.csv", &sensor));
+        let mut ws = Workspace::default();
+        import(&mut ws, &f, &["time", "force"]);
+        import(&mut ws, &s, &["time", "sensor"]);
+        let fine = ws.to_parse().unwrap();
+        assert_eq!(fine.columns[0].1.len(), fine.columns[1].1.len(), "one shared grid either way");
+        // The slower file's step: the 100 Hz signal is averaged down to the 10 Hz grid.
+        ws.set_align(Align::Time, Some(0.1)).unwrap();
+        let p = ws.to_parse().unwrap();
+        let (a, b) = (&p.columns[0].1, &p.columns[1].1);
+        assert_eq!(a.len(), b.len());
+        assert!((99..=100).contains(&a.len()), "{} rows", a.len());
+        let mid = a.len() / 2;
+        assert!((a[mid] - mid as f64 * 10.0).abs() < 6.0, "the 100 Hz signal is the average of its block, not a single sample");
+        std::fs::remove_file(f).ok();
+        std::fs::remove_file(s).ok();
+    }
+
+    #[test]
+    fn a_time_column_in_minutes_can_be_read_as_minutes() {
+        let a = write("minutes.csv", "time,x\n0,1\n1,2\n2,3\n3,4\n");
+        let mut ws = Workspace::default();
+        import(&mut ws, &a, &["time", "x"]);
+        assert_eq!(ws.time_map(0, Some(3), None).unwrap().time, 2.0, "read as seconds");
+        ws.set_time_unit(0, 60.0).unwrap();
+        assert_eq!(ws.time_map(0, Some(3), None).unwrap().time, 120.0, "read as minutes");
+        assert!(ws.set_time_unit(0, 0.0).is_err());
+        // The unit survives saving and opening a project.
+        let (mut reopened, warnings) = Workspace::from_project(&ws.to_project(), None);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        reopened.to_parse();
+        assert_eq!(reopened.time_map(0, Some(3), None).unwrap().time, 120.0);
         std::fs::remove_file(a).ok();
     }
 

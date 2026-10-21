@@ -40,6 +40,7 @@ async fn dispatch(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String>
         "workspace_view" => ok(c::workspace_view(st())),
         "workspace_remove" => { args!(a; names: Vec<String>); ok(c::workspace_remove(app.clone(), st(), names).await?) }
         "workspace_rename" => { args!(a; old: String, new: String); ok(c::workspace_rename(app.clone(), st(), old, new).await?) }
+        "workspace_set_time_unit" => { args!(a; id: u32, scale: f64); ok(c::workspace_set_time_unit(app.clone(), st(), id, scale).await?) }
         "workspace_set_row_step" => { args!(a; id: u32, step: Option<f64>); ok(c::workspace_set_row_step(app.clone(), st(), id, step).await?) }
         "workspace_set_time" => { args!(a; name: String, time: bool); ok(c::workspace_set_time(app.clone(), st(), name, time).await?) }
         "workspace_import_batch" => { args!(a; paths: Vec<String>, folder: Option<String>, columns: Option<Vec<String>>); ok(c::workspace_import_batch(app.clone(), st(), paths, folder, columns).await?) }
@@ -74,7 +75,7 @@ async fn dispatch(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String>
         "filter_suggest" => { args!(a; column: String); ok(c::filter_suggest(st(), column).await?) }
         "filter_describe" => { args!(a; steps: Vec<FilterStep>); ok(c::filter_describe(steps)) }
         "spectrum" => { args!(a; column: String, nperseg: usize); ok(c::spectrum(st(), column, nperseg).await?) }
-        "correlation_compute" => ok(c::correlation_compute(st()).await?),
+        "correlation_compute" => { args!(a; columns: Option<Vec<String>>); ok(c::correlation_compute(st(), columns).await?) }
         "correlation_pair" => { args!(a; a: String, b: String); ok(c::correlation_pair(st(), a, b).await?) }
         "correlation_lags" => ok(c::correlation_lags(st()).await?),
         "sysid_auto_decimation" => { args!(a; columns: Vec<String>); ok(c::sysid_auto_decimation(st(), columns).await?) }

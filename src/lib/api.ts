@@ -94,6 +94,8 @@ export interface SourceInfo {
   offset: number;
   /** Seconds per row when the time comes from a conversion factor instead of a time column. */
   row_step: number | null;
+  /** Seconds per unit of the time column (60 = minutes). */
+  time_scale: number;
   start: number | null;
   duration: number;
   sample_rate: number;
@@ -123,6 +125,8 @@ export type VariableEdit =
   | { op: "offset"; value: number }
   | { op: "scale"; value: number }
   | { op: "despike"; value: number }
+  /** Block average: rows / value points are kept (a fractional value matches another length). */
+  | { op: "downsample"; value: number }
   /** Time ranges on the aligned axis (inclusive). */
   | { op: "clear_range" | "keep_range"; value: [number, number] }
   /** Sample times on the aligned axis. */
@@ -413,6 +417,7 @@ export const api = {
   workspaceImportBatch: (paths: string[], folder: string | null, columns: string[] | null) =>
     invoke<WorkspaceView>("workspace_import_batch", { paths, folder, columns }),
   workspaceRemoveSource: (id: number) => invoke<WorkspaceView>("workspace_remove_source", { id }),
+  workspaceSetTimeUnit: (id: number, scale: number) => invoke<WorkspaceView>("workspace_set_time_unit", { id, scale }),
   workspaceSetRowStep: (id: number, step: number | null) => invoke<WorkspaceView>("workspace_set_row_step", { id, step }),
   /** A row of a file → its time, or a time → the nearest row. */
   sourceTimeMap: (id: number, at: { row?: number; time?: number }) => invoke<TimeMap>("source_time_map", { id, row: at.row ?? null, time: at.time ?? null }),
@@ -451,7 +456,7 @@ export const api = {
 
   spectrum: (column: string, nperseg: number) => invoke<SpectrumView>("spectrum", { column, nperseg }),
 
-  correlationCompute: () => invoke<CorrelationView>("correlation_compute"),
+  correlationCompute: (columns: string[] | null = null) => invoke<CorrelationView>("correlation_compute", { columns }),
   correlationPair: (a: string, b: string) => invoke<PairAnalysis>("correlation_pair", { a, b }),
   correlationLags: () => invoke<PairDto[]>("correlation_lags"),
 

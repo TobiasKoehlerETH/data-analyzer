@@ -28,6 +28,8 @@ export function PrepareTab() {
   const [preview, setPreview] = useState<number[] | null>(null);
   const [suggestions, setSuggestions] = useState<{ reason: string; step: VariableEdit }[]>([]);
   const [viewRange, setViewRange] = useState<[number, number] | null>(null);
+  /** Rows of every other signal, for downsampling to another signal's length. */
+  const [lengths, setLengths] = useState<Record<string, number>>({});
 
   useEffect(() => {
     if (!dataset) return;
@@ -43,11 +45,12 @@ export function PrepareTab() {
     if (!column || activeTab !== "prepare") return;
     let cancelled = false;
     setLoading(true);
-    Promise.all([api.workspaceVariable(column), api.workspacePipeline(column)])
-      .then(([v, p]) => {
+    Promise.all([api.workspaceVariable(column), api.workspacePipeline(column), api.workspaceView()])
+      .then(([v, p, w]) => {
         if (cancelled) return;
         setVec(v);
         setPipeline(p);
+        setLengths(Object.fromEntries(w.variables.filter((x) => x.kind !== "text" && !x.is_time).map((x) => [x.name, x.len])));
         setError("");
       })
       .catch((e) => !cancelled && setError(errorText(e)))
@@ -254,6 +257,9 @@ export function PrepareTab() {
           fmtTime={fmtTime}
           nyquist={nyquist}
           rangeDefault={rangeDefault}
+          lengths={lengths}
+          ownName={column ?? ""}
+          ownLength={vec?.original.length ?? 0}
           onRemove={(i) => step("remove", i)}
           onMove={(i, to) => step("move", i, { to })}
           onReplace={(i, edit) => step("replace", i, { edit })}

@@ -99,6 +99,12 @@ function Sparkline({ values }: { values: (number | null)[] | undefined }) {
 
 const T = (t: number) => String(Number(t.toPrecision(6)));
 const STEP = "__step";
+const UNITS = [
+  { label: "seconds", scale: 1 },
+  { label: "minutes", scale: 60 },
+  { label: "hours", scale: 3600 },
+  { label: "days", scale: 86400 },
+];
 
 /** How a file's rows sit in time: where its time comes from, a ruler of rows against time, and a lookup. */
 function TimeMapRow({ s, vars, run }: { s: SourceInfo; vars: VariableInfo[]; run: (f: () => Promise<WorkspaceView>) => Promise<void> }) {
@@ -171,6 +177,23 @@ function TimeMapRow({ s, vars, run }: { s: SourceInfo; vars: VariableInfo[]; run
           </SelectContent>
         </Select>
       </label>
+      {s.row_step === null && s.origin === null && (
+        <label className="flex items-center gap-2">
+          <span className="text-muted-foreground">in</span>
+          <Select value={String(s.time_scale)} onValueChange={(v) => run(() => api.workspaceSetTimeUnit(s.id, Number(v)))}>
+            <SelectTrigger className="h-8 w-28" title="The unit the time column is given in">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {UNITS.map((u) => (
+                <SelectItem key={u.scale} value={String(u.scale)}>
+                  {u.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </label>
+      )}
       {s.row_step !== null && (
         <label className="flex items-center gap-2">
           <NumberInput className="w-32" value={s.row_step} min={0} step={0.001} suffix="s/row" title="Seconds between two rows" onChange={(k) => k > 0 && run(() => api.workspaceSetRowStep(s.id, k))} />
@@ -566,6 +589,19 @@ export function WorkspacePanel({ ws, fresh, run, onAddFiles, onExport }: Props) 
                     onChange={(s) => run(() => api.workspaceSetAlign(ws.align, s > 0 ? s : null))}
                   />
                 </label>
+              )}
+              {ws.sources.length > 1 && ws.align !== "row" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  title="Use the time step of the slowest file. Faster files are averaged, so every signal has the same number of rows."
+                  onClick={() => {
+                    const rates = ws.sources.map((s) => s.sample_rate).filter((r) => r > 0 && Number.isFinite(r));
+                    if (rates.length) run(() => api.workspaceSetAlign(ws.align, Number((1 / Math.min(...rates)).toPrecision(6))));
+                  }}
+                >
+                  Same length
+                </Button>
               )}
               <span className="text-[12px] text-muted-foreground">0 = keep each file's own time step</span>
               <div className="flex-1" />

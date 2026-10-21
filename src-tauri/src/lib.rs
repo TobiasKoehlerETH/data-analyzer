@@ -25,6 +25,7 @@ pub fn run() {
             commands::workspace_rename,
             commands::workspace_set_time,
             commands::workspace_set_row_step,
+            commands::workspace_set_time_unit,
             commands::workspace_clear,
             commands::workspace_edit,
             commands::workspace_vectors,
