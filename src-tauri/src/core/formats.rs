@@ -70,6 +70,7 @@ impl Columns {
             time_column,
             time,
             time_origin,
+            time_unit: None,
             text_columns: self.text,
             metadata: self.metadata,
             header_row: 0,

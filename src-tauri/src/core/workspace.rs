@@ -1073,9 +1073,10 @@ impl Workspace {
             time_scale: 1.0,
             suffix: suffix.clone(),
         };
-        // "Time (min)" holds minutes: read as seconds it would squeeze the file into a fraction
-        // of the time axis and pair it with the wrong rows of other files.
-        if let Some(scale) = parsed.time_column.as_deref().filter(|_| parsed.time.is_some() && parsed.time_origin.is_none()).and_then(time_unit_of) {
+        // "Time (min)", or "min" in a units row, means minutes: read as seconds it would squeeze the
+        // file into a fraction of the time axis and pair it with the wrong rows of other files.
+        let unit = parsed.time_column.as_deref().and_then(time_unit_of).or_else(|| parsed.time_unit.as_deref().and_then(time_unit_of));
+        if let Some(scale) = unit.filter(|_| parsed.time.is_some() && parsed.time_origin.is_none()) {
             source.time_scale = scale;
             source.time = source.scaled(&source.time);
         }
@@ -1904,6 +1905,7 @@ impl Workspace {
             time_column: None,
             time: Some(self.grid.to_vec()),
             time_origin,
+            time_unit: None,
             text_columns,
             metadata,
             header_row: 0,

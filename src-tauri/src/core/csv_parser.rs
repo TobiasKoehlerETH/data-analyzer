@@ -49,6 +49,8 @@ pub struct ParseResult {
     pub time: Option<Vec<f64>>,
     /// Absolute start of a datetime time column (Unix seconds, naive times read as UTC).
     pub time_origin: Option<f64>,
+    /// Unit written under the time column in a units row between header and data ("min"), if any.
+    pub time_unit: Option<String>,
     /// Non-numeric columns (labels, states, IDs); missing cells are empty strings.
     pub text_columns: Vec<(String, Vec<String>)>,
     pub metadata: Map<String, Value>,
@@ -856,8 +858,38 @@ pub fn delimiter_label(d: char) -> String {
 }
 
 fn table_spec<'a>(det: &Detected, opts: &'a ImportOptions) -> TableSpec<'a> {
-    let data_start = opts.data_start.unwrap_or(if opts.no_header { det.header_row } else { det.header_row + 1 });
+    let data_start = opts.data_start.unwrap_or_else(|| if opts.no_header { det.header_row } else { first_data_line(&det.text, det.header_row, det.delimiter, det.quoting) });
     TableSpec { header_row: det.header_row, no_header: opts.no_header, data_start, skip_rows: &opts.skip_rows }
+}
+
+/// Lines between the header and the data that hold no number at all ("N,mm,min" units,
+/// "Sample 1") are not data: the data starts after them. At most five such lines are skipped,
+/// and only when numbers follow, so a text-only table still starts right after its header.
+fn first_data_line(text: &str, header_row: usize, delimiter: char, quoting: bool) -> usize {
+    let decimal_comma = delimiter != ',';
+    let mut prelude = 0;
+    for (i, line) in text.lines().enumerate().skip(header_row + 1).filter(|(_, l)| !l.trim().is_empty()).take(6) {
+        let cells = split_line(line.trim_end_matches('\r'), delimiter, quoting);
+        let filled: Vec<&str> = cells.iter().map(|c| c.trim().trim_matches('"')).filter(|c| !is_na(c)).collect();
+        if filled.is_empty() || filled.iter().any(|c| parse_number(c, decimal_comma).is_some()) {
+            return if prelude > 0 { i } else { header_row + 1 };
+        }
+        prelude += 1;
+    }
+    header_row + 1
+}
+
+/// The text under column `c` in the lines between the header and the data (a units row).
+fn unit_of_column(text: &str, spec: &TableSpec, c: usize, delimiter: char, quoting: bool) -> Option<String> {
+    if spec.no_header {
+        return None;
+    }
+    text.lines()
+        .enumerate()
+        .skip(spec.header_row + 1)
+        .take_while(|(i, _)| *i < spec.data_start)
+        .filter_map(|(_, l)| split_line(l.trim_end_matches('\r'), delimiter, quoting).get(c).map(|v| v.trim().trim_matches('"').to_string()))
+        .find(|v| !is_na(v) && parse_number(v, delimiter != ',').is_none())
 }
 
 /// Column typing shared by preview and parse: (numeric columns, time column index).
@@ -1026,11 +1058,14 @@ pub fn parse_file_with(path: &Path, sheet: Option<&str>, opts: &ImportOptions) -
         .filter_map(|&c| numeric.remove(&c).map(|v| (headers[c].clone(), v)))
         .collect();
 
+    let time_unit = ts_col.and_then(|c| unit_of_column(&det.text, &spec, c, det.delimiter, det.quoting));
+
     Ok(ParseResult {
         columns,
         time_column: ts_col.map(|c| headers[c].clone()),
         time,
         time_origin,
+        time_unit,
         text_columns,
         metadata,
         header_row: det.header_row,
@@ -1261,6 +1296,23 @@ mod import_option_tests {
         assert_eq!(prev.skipped_columns, vec![2]);
         assert_eq!(prev.raw.len(), 7);
         std::fs::remove_file(p).ok();
+    }
+
+    #[test]
+    fn a_units_row_and_a_label_row_under_the_header_are_skipped() {
+        // Testing-machine export: units under the names, then a "Sample 1" line, then data.
+        let p = write_temp("units_row.csv", "Force,Distance,Time,Event,\nN,mm,min,,\nSample 1,,,,\n-4.28,31.89,0.00000,0,\n-4.27,31.90,0.00002,0,\n");
+        let r = parse_file_with(&p, None, &ImportOptions::default()).unwrap();
+        assert_eq!(r.n_rows, 2);
+        assert_eq!(r.time_column.as_deref(), Some("Time"));
+        assert_eq!(r.time_unit.as_deref(), Some("min"));
+        assert_eq!(r.columns.iter().map(|c| c.0.as_str()).collect::<Vec<_>>(), vec!["Force", "Distance", "Event"]);
+        assert_eq!(preview_file_with(&p, None, &ImportOptions::default()).unwrap().data_start, 3);
+        // A table that is text from the first line keeps its rows.
+        let t = write_temp("text_rows.csv", "Name,State\na,on\nb,off\n");
+        assert_eq!(parse_file_with(&t, None, &ImportOptions::default()).unwrap().n_rows, 2);
+        std::fs::remove_file(p).ok();
+        std::fs::remove_file(t).ok();
     }
 
     #[test]
