@@ -66,6 +66,7 @@ async fn dispatch(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String>
         "workspace_vectors" => { args!(a; names: Vec<String>, range: Option<[f64; 2]>, maxPoints: Option<usize>, row: Option<bool>); ok(c::workspace_vectors(st(), names, range, maxPoints, row).await?) }
         "workspace_clear" => ok(c::workspace_clear(app.clone(), st()).await?),
         "export_dataset" => { args!(a; path: String); ok(c::export_dataset(st(), path).await?) }
+        "save_image" => { args!(a; path: String, dataUrl: String); ok(c::save_image(path, dataUrl).await?) }
         "dataset_info" => ok(c::dataset_info(st())),
         "descriptive_stats" => ok(c::descriptive_stats(st()).await?),
         "analysis_vectors" => { args!(a; columns: Vec<String>, maxPoints: Option<usize>); ok(c::analysis_vectors(st(), columns, maxPoints).await?) }

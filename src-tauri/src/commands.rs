@@ -561,6 +561,18 @@ pub async fn project_open(app: AppHandle, state: AppStateRef<'_>, path: String) 
     .await
 }
 
+/// Writes a chart image (a PNG data URL from the page) to `path`.
+#[tauri::command]
+pub async fn save_image(path: String, data_url: String) -> CmdResult<()> {
+    blocking(move || {
+        use base64::Engine;
+        let b64 = data_url.strip_prefix("data:image/png;base64,").ok_or("Not a PNG image.")?;
+        let bytes = base64::engine::general_purpose::STANDARD.decode(b64).map_err(|e| e.to_string())?;
+        std::fs::write(&path, bytes).map_err(|e| format!("Cannot write {path}: {e}"))
+    })
+    .await
+}
+
 /// Writes the active dataset (time + every signal) as CSV.
 #[tauri::command]
 pub async fn export_dataset(state: AppStateRef<'_>, path: String) -> CmdResult<usize> {

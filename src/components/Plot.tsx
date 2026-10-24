@@ -3,8 +3,10 @@ import type { Config, PlotlyHTMLElement } from "plotly.js";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Download, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 import { downloadText } from "@/lib/analysis";
 import { baseLayout, fmtG, plotConfig, type Figure } from "@/lib/chart";
+import { invoke, isTauri, save } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 import { WorkspaceActive } from "@/lib/workspace";
 
@@ -41,7 +43,29 @@ const MAX_BAR_PX = 24;
 const ICONS = {
   back: { width: 24, height: 24, path: "M10 5 3 12l7 7v-4.5c5 0 8.5 1.5 11 5-1-5-4-10-11-11V5z" },
   table: { width: 24, height: 24, path: "M3 4h18v16H3zM5 6v3h6V6zm8 0v3h6V6zM5 11v3h6v-3zm8 0v3h6v-3zM5 16v2h6v-2zm8 0v2h6v-2z" },
+  expand: { width: 24, height: 24, path: "M3 3h7v2H5v5H3zm11 0h7v7h-2V5h-5zM3 14h2v5h5v2H3zm16 0h2v7h-7v-2h5z" },
+  collapse: { width: 24, height: 24, path: "M8 3h2v7H3V8h5zm6 0h2v5h5v2h-7zM3 14h7v7H8v-5H3zm11 0h7v2h-5v5h-2z" },
 };
+
+/** Saves the chart as it is shown (current zoom, current size) as a PNG at twice the screen resolution. */
+async function exportPng(gd: PlotElement) {
+  try {
+    const url = await Plotly.toImage(gd, { format: "png", width: gd.clientWidth, height: gd.clientHeight, scale: 2 });
+    if (!isTauri) {
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "chart.png";
+      a.click();
+      return;
+    }
+    const path = await save({ filters: [{ name: "PNG image", extensions: ["png"] }], defaultPath: "chart.png", title: "Export chart as PNG" });
+    if (!path) return;
+    await invoke("save_image", { path, dataUrl: url });
+    toast.success(`Saved ${path.split(/[\\/]/).pop()}`);
+  } catch (e) {
+    toast.error(`PNG export failed: ${e}`);
+  }
+}
 
 function tableFrom(data: Figure[]): PlotTable {
   const rows: (string | number | null)[][] = [];
@@ -93,6 +117,8 @@ export function Plot({ data, layout, config, uirevision, table, events, classNam
   const last = useRef<Record<string, unknown>>({});
   const restoring = useRef(false);
   const [showTable, setShowTable] = useState(false);
+  /** The chart fills the window (Esc or the toolbar button returns it to its panel). */
+  const [full, setFull] = useState(false);
   const initialised = useRef(false);
 
   const fullConfig = useMemo<Partial<Config>>(() => {
@@ -112,14 +138,23 @@ export function Plot({ data, layout, config, uirevision, table, events, classNam
       },
     };
     const tableButton = { name: "table", title: "Show data as table", icon: ICONS.table, click: () => setShowTable((v) => !v) };
+    const png = { name: "png", title: "Export current view as PNG", icon: (Plotly as any).Icons.camera, click: () => gdRef.current && exportPng(gdRef.current) };
+    const fullButton = { name: "full", title: full ? "Back to panel (Esc)" : "Open in full window", icon: full ? ICONS.collapse : ICONS.expand, click: () => setFull((v) => !v) };
     const navigation: any[] = ["zoom2d", "pan2d", back, "resetScale2d"];
     return {
       ...plotConfig,
       ...(zoom ? {} : { scrollZoom: false, doubleClick: false as const }),
       ...config,
-      modeBarButtons: [...(zoom ? [navigation] : []), [tableButton, "toImage"]] as any,
+      modeBarButtons: [...(zoom ? [navigation] : []), [tableButton, png, fullButton]] as any,
     };
-  }, [config, zoom]);
+  }, [config, zoom, full]);
+
+  useEffect(() => {
+    if (!full) return;
+    const key = (e: KeyboardEvent) => e.key === "Escape" && setFull(false);
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [full]);
 
   useEffect(() => {
     history.current = [];
@@ -273,10 +308,32 @@ export function Plot({ data, layout, config, uirevision, table, events, classNam
   }, []);
 
   return (
-    <div className={cn("relative h-full w-full min-h-0", className)}>
-      <div ref={el} className="h-full w-full" />
-      {showTable && <TableView table={typeof table === "function" ? table() : (table ?? tableFrom(data))} onClose={() => setShowTable(false)} />}
-    </div>
+    <>
+      {full && <div className="fixed inset-0 z-40 bg-black/40" onClick={() => setFull(false)} title="Click to close" aria-hidden />}
+      <div
+        className={cn(
+          full ? "fixed inset-6 z-50 flex flex-col rounded-lg border border-ap-line bg-white shadow-2xl" : "relative h-full w-full min-h-0",
+          !full && className,
+        )}
+        role={full ? "dialog" : undefined}
+        aria-label={full ? "Chart in full window" : undefined}
+      >
+        {/* The plot node stays the same element in both modes, so the chart keeps its zoom. */}
+        {full && (
+          <div className="flex shrink-0 items-center gap-2 border-b border-ap-line px-3 py-2">
+            <span className="text-[12.5px] text-muted-foreground">Esc or click outside to close</span>
+            <Button size="sm" variant="outline" className="ml-auto" onClick={() => gdRef.current && exportPng(gdRef.current)} title="Export current view as PNG">
+              <Download /> PNG
+            </Button>
+            <Button size="sm" onClick={() => setFull(false)} title="Close full window (Esc)" autoFocus>
+              <X /> Close
+            </Button>
+          </div>
+        )}
+        <div ref={el} className={full ? "min-h-0 w-full flex-1 p-2" : "h-full w-full"} />
+        {showTable && <TableView table={typeof table === "function" ? table() : (table ?? tableFrom(data))} onClose={() => setShowTable(false)} />}
+      </div>
+    </>
   );
 }
 

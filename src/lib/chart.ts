@@ -145,7 +145,6 @@ export const plotConfig: Partial<Config> = {
   scrollZoom: true,
   doubleClick: "reset",
   displayModeBar: true,
-  toImageButtonOptions: { format: "png", scale: 2, filename: "plot" },
 };
 
 /** Hover template that leads with the value and keeps the series name secondary. */

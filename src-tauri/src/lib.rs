@@ -49,6 +49,7 @@ pub fn run() {
             commands::project_save,
             commands::project_open,
             commands::export_dataset,
+            commands::save_image,
             commands::dataset_info,
             commands::descriptive_stats,
             commands::get_series,
