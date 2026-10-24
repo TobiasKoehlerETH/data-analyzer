@@ -19,7 +19,6 @@ use super::svgplot::esc;
 /// The report's one font. It is embedded, so text and charts look the same on every computer.
 const INTER_WOFF2: &[u8] = include_bytes!("../../assets/Inter-latin.woff2");
 const TEMPLATE: &str = include_str!("../../../template/ap-report-template.html");
-const LOGO_PNG: &[u8] = include_bytes!("../../../src/assets/ap-logo.png");
 
 /// Plot colours matching the template palette (red first, then text / muted tones).
 pub const REPORT_PALETTE: &[&str] = &["#ff2400", "#2a78d6", "#1baf7a", "#6250d6", "#eda100", "#e87ba4", "#008300"];
@@ -262,11 +261,10 @@ impl Doc {
         self.pages.push((label.to_string(), body));
     }
 
-    fn render_page(&self, label: &str, body: &str, cover: bool, logo: &str) -> String {
+    fn render_page(&self, label: &str, body: &str, cover: bool) -> String {
         format!(
             r#"  <section class="page{cls}" aria-label="{aria}">
     <header class="header">
-      <img class="logo" src="{logo}" alt="Angst+Pfister">
       <span class="section-label">{label}</span>
     </header>
 {body}
@@ -338,7 +336,6 @@ fn th(cols: &[&str]) -> String {
 
 pub fn render_html(c: &ReportContent) -> String {
     let now = chrono::Local::now();
-    let logo = format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(LOGO_PNG));
     let mut doc = Doc {
         doc_id: format!("DA-{}", now.format("%Y%m%d-%H%M")),
         version: format!("Data Analyzer {}", env!("CARGO_PKG_VERSION")),
@@ -515,7 +512,7 @@ pub fn render_html(c: &ReportContent) -> String {
         now.format("%d %B %Y"),
         esc(&doc.version)
     );
-    html.push_str(&doc.render_page(&doc.doc_id, &cover, true, &logo));
+    html.push_str(&doc.render_page(&doc.doc_id, &cover, true));
 
     // Data
     let mut summary = String::from("    <h2>Data</h2>\n    <table class=\"kv\">\n      <tbody>\n");
@@ -534,10 +531,10 @@ pub fn render_html(c: &ReportContent) -> String {
         summary.push_str(&format!("        <tr><td>{k}</td><td>{}</td></tr>\n", esc(&v)));
     }
     summary.push_str("      </tbody>\n    </table>\n");
-    html.push_str(&doc.render_page("00 / Data", &summary, false, &logo));
+    html.push_str(&doc.render_page("00 / Data", &summary, false));
 
     for (label, body) in &doc.pages {
-        html.push_str(&doc.render_page(label, body, false, &logo));
+        html.push_str(&doc.render_page(label, body, false));
     }
     html.push_str("</body>\n</html>\n");
     html

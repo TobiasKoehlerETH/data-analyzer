@@ -81,7 +81,7 @@ fn sample_pipeline() {
     let (p, _) = generate_report(&out, "html", &content, &|_, _| {}).unwrap();
     let html = std::fs::read_to_string(p).unwrap();
     assert!(html.contains("<h2>Statistics</h2>") && html.contains("synthetic"));
-    assert!(html.contains("cover-band") && html.contains("data:image/png;base64"));
+    assert!(html.contains("cover-band") && !html.contains("class=\"logo\""));
     std::fs::copy(&out, std::env::temp_dir().join("da_sample_report_copy.html")).ok();
     println!("total: {:?}", t0.elapsed());
 }

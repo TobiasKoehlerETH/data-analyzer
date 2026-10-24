@@ -7,7 +7,7 @@
   <!--
     FOUR-PAGE A4 TEMPLATE
     Replace the [placeholders]. Duplicate a .page section for more pages.
-    Keep the header and footer in each section: the logo appears on every page.
+    Keep the header and footer in each section.
     Replace a .image-placeholder with <img src="your-image.png" alt="Description">.
     Keep the assets folder beside this file. No scripts or external services required.
     PDF: print at A4 / 100% scale, enable backgrounds, disable browser headers/footers.
@@ -67,8 +67,7 @@
       margin-bottom: 9mm;
       border-bottom: 2px solid var(--red);
     }
-    .logo { display: block; width: 46mm; height: auto; }
-    .section-label { color: var(--red); font-size: 10pt; font-weight: 700; text-align: right; }
+    .section-label { margin-left: auto; color: var(--red); font-size: 10pt; font-weight: 700; text-align: right; }
     .footer {
       position: absolute;
       bottom: 9mm;
@@ -146,7 +145,6 @@
   <!-- 1. COVER: title, optional hero image, document metadata. -->
   <section class="page cover" aria-label="Cover">
     <header class="header">
-      <img class="logo" src="assets/ap-logo.png" alt="Angst+Pfister">
       <span class="section-label">[Document ID]</span>
     </header>
     <div class="cover-band">
@@ -168,7 +166,6 @@
   <!-- 2. SUMMARY: one message, three metrics, short findings. -->
   <section class="page" aria-label="Summary">
     <header class="header">
-      <img class="logo" src="assets/ap-logo.png" alt="Angst+Pfister">
       <span class="section-label">01 / Summary</span>
     </header>
     <h2>[Main conclusion]</h2>
@@ -193,7 +190,6 @@
   <!-- 3. FIGURE PAGE: one dominant image and two brief explanations. -->
   <section class="page" aria-label="Figure page">
     <header class="header">
-      <img class="logo" src="assets/ap-logo.png" alt="Angst+Pfister">
       <span class="section-label">02 / [Section]</span>
     </header>
     <h2>[Figure-led heading]</h2>
@@ -213,7 +209,6 @@
   <!-- 4. RESULTS / ACTIONS: compact table and a three-step sequence. -->
   <section class="page" aria-label="Results and next steps">
     <header class="header">
-      <img class="logo" src="assets/ap-logo.png" alt="Angst+Pfister">
       <span class="section-label">03 / Results</span>
     </header>
     <h2>[Results or decision heading]</h2>
