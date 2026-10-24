@@ -342,10 +342,20 @@ fn columns_to_matrix(cols: &[Vec<f64>]) -> DMatrix<f64> {
     DMatrix::from_fn(n, cols.len(), |r, c| cols[c][r])
 }
 
+/// [start, end) shrunk to the rows where every signal has a value. Files that cover slightly
+/// different spans leave missing rows at the ends of the common time axis.
+pub fn finite_window(inputs: Signals, outputs: Signals, start: usize, end: usize) -> (usize, usize) {
+    let all_finite = |i: usize| inputs.iter().chain(outputs.iter()).all(|(_, s)| s.get(i).is_some_and(|v| v.is_finite()));
+    let start = (start..end).find(|&i| all_finite(i)).unwrap_or(end);
+    let end = (start..end).rev().find(|&i| all_finite(i)).map_or(start, |i| i + 1);
+    (start, end)
+}
+
 /// Window → decimate → remove mean. Returns (U, Y, dt).
 pub fn prepare_io(inputs: Signals, outputs: Signals, fs: f64, dec: usize, start: usize, end: usize) -> Result<(DMatrix<f64>, DMatrix<f64>, f64), String> {
     let len = inputs.first().map(|(_, s)| s.len()).unwrap_or(0);
     let end = if end == 0 || end > len { len } else { end };
+    let (start, end) = finite_window(inputs, outputs, start, end);
     if start >= end {
         return Err("Empty identification window".into());
     }
@@ -382,7 +392,7 @@ pub fn identify_model(
     progress(0, "Preparing data...".into());
     let (u, y, dt) = prepare_io(inputs, outputs, fs, params.decimation_factor, params.start_idx, params.end_idx)?;
     if u.iter().chain(y.iter()).any(|v| !v.is_finite()) {
-        return Err("Signals contain NaN or infinite values in the selected window.".into());
+        return Err("The signals have gaps inside the selected window. Fill the gaps (Prepare) or pick a window without them.".into());
     }
     let samples = u.nrows();
     let l = y.ncols();
@@ -468,6 +478,16 @@ pub fn identify_model(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_window_skips_missing_rows_at_the_ends() {
+        // Two files over slightly different spans: the input starts later, the output ends earlier.
+        let u: Vec<f64> = (0..10).map(|i| if i < 2 { f64::NAN } else { i as f64 }).collect();
+        let y: Vec<f64> = (0..10).map(|i| if i > 7 { f64::NAN } else { i as f64 }).collect();
+        let (u, y) = ([("u".to_string(), Arc::new(u))], [("y".to_string(), Arc::new(y))]);
+        assert_eq!(finite_window(&u, &y, 0, 10), (2, 8));
+        assert_eq!(finite_window(&u, &y, 3, 6), (3, 6));
+    }
 
     fn lcg(seed: &mut u64) -> f64 {
         *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);

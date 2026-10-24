@@ -53,6 +53,7 @@ pub fn simulate(
     end: usize,
 ) -> Result<SimulationResult, String> {
     let end = if end == 0 || end > time.len() { time.len() } else { end };
+    let (start, end) = super::sysid::finite_window(inputs, outputs, start, end);
     if start >= end {
         return Err("Empty simulation range".into());
     }

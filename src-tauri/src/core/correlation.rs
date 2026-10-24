@@ -207,12 +207,26 @@ pub fn compute_correlation_matrix(
 
 /// Normalised cross-correlation via FFT; returns (lags, corr) optionally restricted to ±max_lag.
 pub fn compute_cross_correlation(a: &[f64], b: &[f64], max_lag: Option<usize>) -> (Vec<i64>, Vec<f64>) {
-    let (ma, sa) = (mean(a), std(a) + 1e-30);
-    let (mb, sb) = (mean(b), std(b) + 1e-30);
-    let an: Vec<f64> = a.iter().map(|v| (v - ma) / sa).collect();
-    let bn: Vec<f64> = b.iter().rev().map(|v| (v - mb) / sb).collect();
+    // Missing samples (files that cover different spans, gaps) count as zero, so one gap does not
+    // blank the whole curve. Like the full-data version, every lag is divided by one constant,
+    // √(Na·Nb) of the finite counts, which keeps |r| ≤ 1 and lets lags with little overlap fade.
+    let finite = |x: &[f64]| x.iter().copied().filter(|v| v.is_finite()).collect::<Vec<f64>>();
+    let (fa, fb) = (finite(a), finite(b));
+    let (ma, sa) = (mean(&fa), std(&fa) + 1e-30);
+    let (mb, sb) = (mean(&fb), std(&fb) + 1e-30);
+    let z = |v: f64, m: f64, s: f64| if v.is_finite() { (v - m) / s } else { 0.0 };
+    let an: Vec<f64> = a.iter().map(|&v| z(v, ma, sa)).collect();
+    let bn: Vec<f64> = b.iter().rev().map(|&v| z(v, mb, sb)).collect();
     let n = an.len();
-    let corr: Vec<f64> = fftconvolve(&an, &bn).into_iter().map(|v| v / n as f64).collect();
+    let corr: Vec<f64> = if fa.len() == a.len() && fb.len() == b.len() {
+        fftconvolve(&an, &bn).into_iter().map(|v| v / n as f64).collect()
+    } else {
+        let mask = |x: &mut dyn Iterator<Item = &f64>| x.map(|v| if v.is_finite() { 1.0 } else { 0.0 }).collect::<Vec<f64>>();
+        let counts: Vec<f64> = fftconvolve(&mask(&mut a.iter()), &mask(&mut b.iter().rev())).into_iter().map(f64::round).collect();
+        let norm = ((fa.len() * fb.len()) as f64).sqrt().max(1.0);
+        // Lags where fewer than 10 pairs overlap say nothing.
+        fftconvolve(&an, &bn).into_iter().zip(counts).map(|(v, c)| if c >= 10.0 { v / norm } else { f64::NAN }).collect()
+    };
     let lags: Vec<i64> = (0..corr.len()).map(|i| i as i64 - (n as i64 - 1)).collect();
     match max_lag {
         Some(ml) => {
@@ -235,7 +249,7 @@ pub fn compute_lagged_correlations(
     for pair in pairs.iter_mut() {
         let (Some(a), Some(b)) = (signals(&pair.signal_a), signals(&pair.signal_b)) else { continue };
         let (lags, corr) = compute_cross_correlation(&a, &b, Some(max_lag));
-        if let Some((idx, _)) = corr.iter().enumerate().max_by(|x, y| x.1.abs().total_cmp(&y.1.abs())) {
+        if let Some((idx, _)) = corr.iter().enumerate().filter(|x| x.1.is_finite()).max_by(|x, y| x.1.abs().total_cmp(&y.1.abs())) {
             pair.lag_samples = lags[idx];
             pair.lag_seconds = lags[idx] as f64 / fs;
         }
@@ -245,6 +259,21 @@ pub fn compute_lagged_correlations(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cross_correlation_skips_missing_samples() {
+        // b is a delayed by 5 samples; both miss their ends, as two files over different spans do.
+        let s = |i: usize| (i as f64 * 0.07).sin() + 0.3 * (i as f64 * 0.31).cos();
+        let mut a: Vec<f64> = (0..400).map(s).collect();
+        let mut b: Vec<f64> = (0..400).map(|i| if i >= 5 { s(i - 5) } else { f64::NAN }).collect();
+        a[..20].fill(f64::NAN);
+        b[380..].fill(f64::NAN);
+        let (lags, corr) = compute_cross_correlation(&a, &b, Some(50));
+        assert!(corr.iter().all(|c| c.is_finite()), "no lag is blanked by the gaps");
+        let best = corr.iter().enumerate().max_by(|x, y| x.1.total_cmp(y.1)).unwrap().0;
+        assert_eq!(lags[best].abs(), 5);
+        assert!(corr[best] > 0.9 && corr[best] <= 1.0, "{}", corr[best]);
+    }
 
     #[test]
     fn missing_rows_are_skipped_pair_by_pair() {

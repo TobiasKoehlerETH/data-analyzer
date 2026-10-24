@@ -743,7 +743,16 @@ impl<'a> Axis<'a> {
             order.sort_by(|&a, &b| t[a].total_cmp(&t[b]));
         }
         let mut steps: Vec<f64> = order.windows(2).map(|w| t[w[1]] - t[w[0]]).filter(|d| *d > 0.0).collect();
-        let gap = if steps.is_empty() { f64::INFINITY } else { 3.0 * median_of(&mut steps) };
+        // A gap is a step well beyond both the typical one and the jitter of the clock: loggers
+        // with uneven timing (22 ms typical, 150 ms now and then) are bridged, real dropouts are not.
+        let gap = if steps.is_empty() {
+            f64::INFINITY
+        } else {
+            let typical = 3.0 * median_of(&mut steps);
+            let k = ((steps.len() - 1) as f64 * 0.99) as usize;
+            let p99 = *steps.select_nth_unstable_by(k, |a, b| a.total_cmp(b)).1;
+            typical.max(2.0 * p99)
+        };
         Axis { t, order, gap }
     }
 }
@@ -2657,6 +2666,21 @@ mod tests {
         assert_eq!(out[0], 0.5);
         assert!(out[1].is_nan() && out[3].is_nan());
         assert_eq!(out[2], 10.5);
+    }
+
+    #[test]
+    fn interpolation_bridges_clock_jitter_but_not_dropouts() {
+        // A 22 ms logger whose every 20th step takes 140 ms, and one 3 s dropout.
+        let mut t = vec![0.0];
+        for i in 1..1000 {
+            let step = if i == 500 { 3.0 } else if i % 20 == 0 { 0.14 } else { 0.022 };
+            t.push(t[i - 1] + step);
+        }
+        let v: Vec<f64> = t.iter().map(|x: &f64| x.sin()).collect();
+        let grid: Vec<f64> = (0..3000).map(|i| i as f64 * 0.01).filter(|g| *g <= t[999]).collect();
+        let out = interp_onto(&t, &v, &grid);
+        let missing: Vec<f64> = grid.iter().zip(&out).filter(|(_, o)| o.is_nan()).map(|(g, _)| *g).collect();
+        assert!(!missing.is_empty() && missing.iter().all(|g| *g > t[499] && *g < t[500]), "only the dropout is missing");
     }
 
     #[test]

@@ -74,16 +74,21 @@ export function CorrelationTab() {
   const heatmap = useMemo(() => {
     if (!result) return null;
     const m = method === "spearman" ? result.spearman : result.pearson;
-    const names = result.names.map((n) => esc(n.length > 22 ? n.slice(0, 21) + "…" : n));
-    const full = result.names.map(esc);
+    // Labels keep the unit ("Force [N]", "Force [mN]"): names alone can repeat, and repeated
+    // category labels would merge cells and shift the matrix. Cells sit at their index for the same reason.
+    const labels = result.columns.map((c, i) => dataset?.signals.find((s) => s.column === c)?.label ?? result.names[i]);
+    const names = labels.map((n) => esc(n.length > 22 ? n.slice(0, 21) + "…" : n));
+    const full = labels.map(esc);
+    const index = labels.map((_, i) => i);
+    const ticks = { tickmode: "array", tickvals: index, ticktext: names, zeroline: false };
     const showValues = names.length <= 12;
     return {
       data: [
         {
           type: "heatmap",
           z: m,
-          x: names,
-          y: names,
+          x: index,
+          y: index,
           customdata: m.map((row, i) => row.map((_, j) => [full[i], full[j]])),
           zmin: -1,
           zmax: 1,
@@ -94,18 +99,18 @@ export function CorrelationTab() {
           texttemplate: showValues ? "%{z:.2f}" : "",
           textfont: { size: 11 },
           colorbar: { thickness: 10, len: 0.8, outlinewidth: 0, tickfont: { size: 11, color: INK.muted }, tickvals: [-1, -0.5, 0, 0.5, 1], title: { text: "r", font: { size: 12, color: INK.secondary } } },
-          hovertemplate: "<b>r = %{z:.3f}</b><br>%{customdata[0]} ↔ %{customdata[1]}<extra></extra>",
+          hovertemplate: "<b>r = %{z:.3f}</b><br>%{customdata[1]} ↔ %{customdata[0]}<extra></extra>",
         },
       ],
       layout: baseLayout({
         hovermode: "closest",
         dragmode: false,
         margin: { l: 8, r: 8, t: 16, b: 8 },
-        xaxis: axis(undefined, { type: "category", showgrid: false, showline: false, ticks: "", tickangle: -60, tickfont: { size: 11, color: INK.secondary } }),
-        yaxis: axis(undefined, { type: "category", showgrid: false, showline: false, ticks: "", autorange: "reversed", tickfont: { size: 11, color: INK.secondary } }),
+        xaxis: axis(undefined, { ...ticks, showgrid: false, showline: false, ticks: "", tickangle: -60, tickfont: { size: 11, color: INK.secondary } }),
+        yaxis: axis(undefined, { ...ticks, showgrid: false, showline: false, ticks: "", autorange: "reversed", tickfont: { size: 11, color: INK.secondary } }),
       }),
     };
-  }, [result, method]);
+  }, [result, method, dataset]);
 
   const scatterPanels: ChartPanel[] = useMemo(
     () => (pair ? [{ id: "s", yLabel: pair.label_b, series: [{ name: "Samples", color: seriesColor(0), data: zip(pair.scatter.x, pair.scatter.y), type: "scatter" }] }] : []),
@@ -204,8 +209,9 @@ export function CorrelationTab() {
               click: (e: { points?: { pointNumber: [number, number] }[] }) => {
                 const pn = e.points?.[0]?.pointNumber;
                 if (!result || !pn) return;
+                // [row, column]: the column's signal goes on the x axis, as in the matrix.
                 const [i, j] = pn;
-                if (i !== j) showPair(result.columns[i], result.columns[j]);
+                if (i !== j) showPair(result.columns[j], result.columns[i]);
               },
             }}
           />
