@@ -37,8 +37,8 @@ export function TimeSeriesTab() {
     const initial = dataset?.signals.slice(0, 1).map((s) => s.column) ?? [];
     setSelected(initial);
     setSlots(Object.fromEntries(initial.map((c, i) => [c, i])));
-    // Time-series data opens on its time axis (dates for timestamps, seconds otherwise).
-    setXColumn("__time");
+    // Plots open on the index; time is one click away in the X menu.
+    setXColumn("__row");
   }, [dataset?.path, dataset?.sheet]);
 
   const select = (cols: string[]) => {
@@ -157,7 +157,7 @@ export function TimeSeriesTab() {
 
   const xLabel =
     xColumn === "__row"
-      ? "Row"
+      ? "Index"
       : xColumn === "__time"
         ? dateAxis
           ? "Time"
@@ -263,7 +263,7 @@ export function TimeSeriesTab() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="max-h-80">
-                <SelectItem value="__row">Row number</SelectItem>
+                <SelectItem value="__row">Index</SelectItem>
                 <SelectItem value="__time">Time</SelectItem>
                 {dataset.signals.map((s) => (
                   <SelectItem key={s.column} value={`column:${s.column}`}>

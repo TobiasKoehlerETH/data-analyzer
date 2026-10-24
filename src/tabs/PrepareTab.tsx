@@ -14,7 +14,7 @@ const round = (n: number) => Number(n.toPrecision(6));
 export function PrepareTab() {
   const { dataset, dataVersion, activeTab, setDataset, prepareVariable, setPrepareVariable, showStatus } = useApp();
   const [column, setColumn] = useState<string | null>(null);
-  const [xMode, setXMode] = useState<"time" | "row">("time");
+  const [xMode, setXMode] = useState<"time" | "row">("row");
   const [vec, setVec] = useState<VariableSamples | null>(null);
   const [pipeline, setPipeline] = useState<Pipeline | null>(null);
   const [loading, setLoading] = useState(false);
@@ -117,7 +117,7 @@ export function PrepareTab() {
   const time = useMemo(() => vec?.time ?? [], [vec]);
   const origin = vec?.time_origin ?? null;
   const dateAxis = xMode === "time" && origin !== null;
-  /** Chart x of each row: its position (Row), or its time. Every series has its own rows. */
+  /** Chart x of each row: its position (Index), or its time. Every series has its own rows. */
   const toX = useMemo(
     () => (times: number[]) => (xMode === "row" ? times.map((_, i) => i + 1) : dateAxis ? times.map((t) => (origin! + t) * 1000) : times),
     [xMode, dateAxis, origin],
@@ -230,7 +230,7 @@ export function PrepareTab() {
 
   if (!dataset) return <EmptyState title="No data loaded">Add data first, then clean it here.</EmptyState>;
 
-  const xLabel = xMode === "time" ? (dateAxis ? "Time" : "Time [s]") : "Row";
+  const xLabel = xMode === "time" ? (dateAxis ? "Time" : "Time [s]") : "Index";
 
   return (
     <div className="flex h-full flex-col gap-3">
@@ -243,7 +243,7 @@ export function PrepareTab() {
           onChange={setXMode}
           options={[
             { value: "time", label: "Time" },
-            { value: "row", label: "Row" },
+            { value: "row", label: "Index" },
           ]}
         />
       </div>

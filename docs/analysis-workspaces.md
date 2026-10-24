@@ -8,7 +8,7 @@ Add files, a folder of runs, or drop them on the window. Each file keeps its own
 
 **Time from** sets where a file's time comes from: one of its columns, or **Fixed step per row** (seconds per row). A time column is read in **seconds, minutes, hours or days**; choose the unit it is given in. The ruler below shows rows against time at five points. **Row** and **Time** convert one into the other. Files with clock timestamps show the time of day.
 
-With several files, **Line up files** combines them **By time**, **By clock time** or **By row**. **Shift** moves one file in time. **Resample to** sets the common time step (0 keeps the finest step; a coarser step averages instead of aliasing). The common grid has at most 1,000,000 rows.
+With several files, **Line up files** combines them **By time**, **By clock time** or **By index**. **Shift** moves one file in time. **Resample to** sets the common time step (0 keeps the finest step; a coarser step averages instead of aliasing). The common grid has at most 1,000,000 rows.
 
 A signal's menu has **Prepare**, **Rename**, **Duplicate**, **Reset to original** and **Remove**. **Formula** adds a signal computed from others. **Project** saves and opens projects and recipes (reusable processing).
 
@@ -28,7 +28,7 @@ Removed values become missing. Rows are never deleted, so every signal stays ali
 ## Explore
 
 - **Plot**: tick signals to plot them, stacked or overlaid. Choose the X axis: row, time or another signal. **Show original** draws the imported values behind processed ones.
-- **Distribution**: scatter, values by row, histogram and quartiles for one signal, with a summary table. Datasets over 100,000 rows are thinned by a fixed stride for display.
+- **Distribution**: scatter, values by index, histogram and quartiles for one signal, with a summary table. Datasets over 100,000 rows are thinned by a fixed stride for display.
 - **Compare files**: overlays the files of the workspace. Signals are matched by name; **Mapping** overrides a match. Line files up by typing a shift, clicking the same event on each trace, or aligning on a trigger. With two or more files it shows the difference and RMSE, maximum deviation, R² and mean error against the first file.
 
 ## Analyse

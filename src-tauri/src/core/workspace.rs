@@ -708,6 +708,26 @@ fn file_stem(path: &str) -> String {
     Path::new(path).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| path.to_string())
 }
 
+/// Seconds per unit named in a time column header ("Time (min)", "t [ms]", "time_h"), or None
+/// when the header names no unit other than seconds.
+fn time_unit_of(header: &str) -> Option<f64> {
+    let h = header.trim().to_lowercase();
+    // The unit is in brackets, or the last word of the header.
+    let unit = match h.rfind(['(', '[']) {
+        Some(i) => h[i + 1..].trim_end_matches([')', ']']).trim(),
+        None => h.rsplit([' ', '_', '-', '/']).next().unwrap_or(""),
+    };
+    let scale = match unit {
+        "us" | "µs" | "μs" | "usec" | "microseconds" => 1e-6,
+        "ms" | "msec" | "milliseconds" => 1e-3,
+        "min" | "mins" | "minute" | "minutes" => 60.0,
+        "h" | "hr" | "hrs" | "hour" | "hours" => 3600.0,
+        "d" | "day" | "days" => 86400.0,
+        _ => return None,
+    };
+    Some(scale)
+}
+
 /// A time axis prepared for interpolation: its finite samples in time order and the largest
 /// step that is still bridged. Every signal of a file shares it, so it is built once.
 pub struct Axis<'a> {
@@ -1053,6 +1073,12 @@ impl Workspace {
             time_scale: 1.0,
             suffix: suffix.clone(),
         };
+        // "Time (min)" holds minutes: read as seconds it would squeeze the file into a fraction
+        // of the time axis and pair it with the wrong rows of other files.
+        if let Some(scale) = parsed.time_column.as_deref().filter(|_| parsed.time.is_some() && parsed.time_origin.is_none()).and_then(time_unit_of) {
+            source.time_scale = scale;
+            source.time = source.scaled(&source.time);
+        }
         let label = |c: &str| match &suffix {
             Some(s) => format!("{c} · {s}"),
             None => c.to_string(),
@@ -2326,6 +2352,18 @@ mod tests {
         assert!((a[mid] - mid as f64 * 10.0).abs() < 6.0, "the 100 Hz signal is the average of its block, not a single sample");
         std::fs::remove_file(f).ok();
         std::fs::remove_file(s).ok();
+    }
+
+    #[test]
+    fn the_time_unit_comes_from_the_header() {
+        for (header, scale) in [("Time (min)", Some(60.0)), ("Zeit [h]", Some(3600.0)), ("t [ms]", Some(1e-3)), ("time_hours", Some(3600.0)), ("Time (s)", None), ("Time", None), ("timestamp", None)] {
+            assert_eq!(time_unit_of(header), scale, "{header}");
+        }
+        let a = write("minutes_header.csv", "Time (min),x\n0,1\n1,2\n2,3\n");
+        let mut ws = Workspace::default();
+        import(&mut ws, &a, &["Time (min)", "x"]);
+        assert_eq!(ws.time_map(0, Some(3), None).unwrap().time, 120.0, "minutes, as the header says");
+        std::fs::remove_file(a).ok();
     }
 
     #[test]

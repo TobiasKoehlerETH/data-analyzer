@@ -40,7 +40,7 @@ function Check({ checked, onChange, label, title }: { checked: boolean; onChange
 
 export function CurveFitTab() {
   const { dataset, dataVersion, activeTab } = useApp();
-  const [xCol, setXCol] = useState(TIME);
+  const [xCol, setXCol] = useState(ROW);
   const [yCol, setYCol] = useState("");
   const [points, setPoints] = useState<Point[]>([]);
   const [model, setModel] = useState(0);
@@ -61,12 +61,12 @@ export function CurveFitTab() {
   const revision = useRef(0);
   const current = active === null ? null : fits[active];
 
-  const label = (c: string) => (c === ROW ? "Row" : c === TIME ? "Time" : (dataset?.signals.find((s) => s.column === c)?.label ?? c));
+  const label = (c: string) => (c === ROW ? "Index" : c === TIME ? "Time" : (dataset?.signals.find((s) => s.column === c)?.label ?? c));
 
   useEffect(() => {
     if (!dataset) return;
     if (!dataset.signals.some((s) => s.column === yCol)) setYCol(dataset.signals[0]?.column ?? "");
-    if (xCol !== ROW && xCol !== TIME && !dataset.signals.some((s) => s.column === xCol)) setXCol(TIME);
+    if (xCol !== ROW && xCol !== TIME && !dataset.signals.some((s) => s.column === xCol)) setXCol(ROW);
   }, [dataset, xCol, yCol]);
 
   // Load the X/Y vectors.
@@ -208,7 +208,7 @@ export function CurveFitTab() {
   if (!dataset) return <EmptyState title="No data loaded" />;
 
   const columns = [
-    { value: ROW, label: "Row" },
+    { value: ROW, label: "Index" },
     { value: TIME, label: "Time" },
     ...dataset.signals.map((s) => ({ value: s.column, label: s.label })),
   ];

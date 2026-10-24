@@ -92,11 +92,11 @@ fn european_file_reads_semicolons_decimal_commas_and_hours() {
     let temp = col(&p, names.iter().find(|n| n.contains("Temperatur")).unwrap());
     let [lo, hi] = [f64s(&m["files"]["european_hours.csv"]["temp_from_to_C"])[0], f64s(&m["files"]["european_hours.csv"]["temp_from_to_C"])[1]];
     assert!((temp[0] - lo).abs() < 1e-6 && (temp[120] - hi).abs() < 0.2, "{} {}", temp[0], temp[120]);
-    // The time column is read as seconds until told it holds hours.
+    // "Zeit [h]": the time column is read as hours, and can still be set to another unit.
     let id = ws.source_info()[0].id;
-    assert!((ws.time_map(id, Some(121), None).unwrap().time - 2.0).abs() < 1e-3);
-    ws.set_time_unit(id, 3600.0).unwrap();
     assert!((ws.time_map(id, Some(121), None).unwrap().time - 7200.0).abs() < 1.0);
+    ws.set_time_unit(id, 1.0).unwrap();
+    assert!((ws.time_map(id, Some(121), None).unwrap().time - 2.0).abs() < 1e-3);
 }
 
 #[test]

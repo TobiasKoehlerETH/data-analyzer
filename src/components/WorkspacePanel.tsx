@@ -165,7 +165,7 @@ function TimeMapRow({ s, vars, run }: { s: SourceInfo; vars: VariableInfo[]; run
           }}
         >
           <SelectTrigger className="h-8 w-44" title="Take the time from a column, or from a fixed step per row">
-            <SelectValue placeholder="Row number" />
+            <SelectValue placeholder="Index" />
           </SelectTrigger>
           <SelectContent>
             {columns.map((v) => (
@@ -221,7 +221,7 @@ function TimeMapRow({ s, vars, run }: { s: SourceInfo; vars: VariableInfo[]; run
       )}
 
       <div className="flex items-center gap-2 tabular-nums">
-        <span className="text-muted-foreground">Row</span>
+        <span className="text-muted-foreground">Index</span>
         <NumberInput className="w-24" value={row} min={1} max={s.rows} step={1} integer onChange={setRow} />
         <span className="min-w-[72px] font-medium">= {at ? label(at) : "…"}</span>
         <span className="mx-1 text-muted-foreground">·</span>
@@ -571,7 +571,7 @@ export function WorkspacePanel({ ws, fresh, run, onAddFiles, onExport }: Props) 
                     <SelectContent>
                       <SelectItem value="time">By time</SelectItem>
                       <SelectItem value="clock">By clock time</SelectItem>
-                      <SelectItem value="row">By row</SelectItem>
+                      <SelectItem value="row">By index</SelectItem>
                     </SelectContent>
                   </Select>
                 </label>

@@ -33,8 +33,8 @@ export function StatisticsTab() {
   const [cats, setCats] = useState<Categories | null>(null);
 
   useEffect(() => {
-    // Default to a signal-vs-signal scatter; "by row" already shows the row view.
-    setXColumn(dataset?.signals[1]?.column ?? ROW);
+    // Comparisons start against the index; pick a signal to see a signal-vs-signal scatter.
+    setXColumn(ROW);
     setYColumn(dataset?.signals[0]?.column ?? "");
     setData(null);
     setGroupBy("");
@@ -81,7 +81,7 @@ export function StatisticsTab() {
 
   const x = useMemo(() => (!data ? [] : xColumn === ROW ? data.time.map((_, i) => i * data.step + 1) : (data.columns[xColumn] ?? [])), [data, xColumn]);
   const y = data?.columns[yColumn] ?? [];
-  const xLabel = xColumn === ROW ? "Row position" : (dataset?.signals.find((s) => s.column === xColumn)?.label ?? "X");
+  const xLabel = xColumn === ROW ? "Index" : (dataset?.signals.find((s) => s.column === xColumn)?.label ?? "X");
   const yLabel = dataset?.signals.find((s) => s.column === yColumn)?.label ?? "Y";
 
   /** Groups by size: the largest get palette slots, the rest share "Other" (gray). */
@@ -112,19 +112,24 @@ export function StatisticsTab() {
   const charts = useMemo(() => {
     const accent = seriesColor(0);
     const step = Math.max(1, Math.ceil(y.length / 8000));
-    const sx: number[] = [];
-    const sy: number[] = [];
     const rx: number[] = [];
     const ry: number[] = [];
     for (let i = 0; i < y.length; i += step) {
       if (!finite(y[i])) continue;
       rx.push(i * (data?.step ?? 1) + 1);
       ry.push(y[i] as number);
-      if (finite(x[i])) {
-        sx.push(x[i] as number);
-        sy.push(y[i] as number);
-      }
     }
+    /** Rows where both values exist, thinned to about 8000 points. Thinning the pairs (not the
+     *  rows) keeps a signal that covers only part of the rows from shrinking to a few dots. */
+    const pairRows = (xs: (i: number) => number | null, keep: (i: number) => boolean = () => true) => {
+      const rows: number[] = [];
+      for (let i = 0; i < y.length; i++) if (keep(i) && finite(y[i]) && finite(xs(i))) rows.push(i);
+      const every = Math.max(1, Math.ceil(rows.length / 8000));
+      return every === 1 ? rows : rows.filter((_, k) => k % every === 0);
+    };
+    const scatterRows = pairRows((i) => x[i]);
+    const sx = scatterRows.map((i) => x[i] as number);
+    const sy = scatterRows.map((i) => y[i] as number);
     const points = (xs: number[], ys: number[], xName: string) => ({
       type: "scattergl",
       mode: "markers",
@@ -137,16 +142,12 @@ export function StatisticsTab() {
     const yStats = summarize(y);
     const byGroup = (xs: (i: number) => number | null, xName: string) =>
       groups!.names.map((g, k) => {
-        const gx: number[] = [];
-        const gy: number[] = [];
-        for (let i = 0; i < y.length; i += step) {
-          const xi = xs(i);
-          if (groups!.of(i) === k && finite(y[i]) && finite(xi)) {
-            gx.push(xi);
-            gy.push(y[i] as number);
-          }
-        }
-        const t = points(gx, gy, xName);
+        const rows = pairRows(xs, (i) => groups!.of(i) === k);
+        const t = points(
+          rows.map((i) => xs(i) as number),
+          rows.map((i) => y[i] as number),
+          xName,
+        );
         return { ...t, name: esc(g), marker: { ...t.marker, color: groups!.colors[k] } };
       });
     const allBins = histogram(y, BINS);
@@ -173,8 +174,8 @@ export function StatisticsTab() {
         ? { data: byGroup((i) => x[i], xLabel), layout: { ...layout(xLabel, yLabel), ...legend } }
         : { data: [points(sx, sy, xLabel)], layout: layout(xLabel, yLabel) },
       row: groups
-        ? { data: byGroup((i) => i * (data?.step ?? 1) + 1, "Row"), layout: { ...layout("Row position", yLabel), ...legend } }
-        : { data: [points(rx, ry, "Row")], layout: layout("Row position", yLabel) },
+        ? { data: byGroup((i) => i * (data?.step ?? 1) + 1, "Index"), layout: { ...layout("Index", yLabel), ...legend } }
+        : { data: [points(rx, ry, "Index")], layout: layout("Index", yLabel) },
       histogram: groups
         ? {
             data: groups.names.map((g, k) =>
@@ -232,7 +233,7 @@ export function StatisticsTab() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent className="max-h-80">
-              <SelectItem value={ROW}>Row position</SelectItem>
+              <SelectItem value={ROW}>Index</SelectItem>
               {dataset.signals.map((s) => (
                 <SelectItem key={s.column} value={s.column}>
                   {s.label}
@@ -272,7 +273,7 @@ export function StatisticsTab() {
             <Panel title={`${yLabel} vs ${xLabel}`} bodyClassName="p-1">
               <Plot {...charts.scatter} uirevision={`${revision}|scatter`} />
             </Panel>
-            <Panel title={`${yLabel} by row`} bodyClassName="p-1">
+            <Panel title={`${yLabel} by index`} bodyClassName="p-1">
               <Plot {...charts.row} uirevision={`${revision}|row`} />
             </Panel>
             <Panel title="Histogram" bodyClassName="p-1">
