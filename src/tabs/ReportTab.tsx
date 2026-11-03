@@ -18,11 +18,12 @@ const SECTIONS: { name: string; hint: string }[] = [
   { name: "Simulations", hint: "The plots of the Model page" },
   { name: "Validation", hint: "The last validation run" },
   { name: "Comparison", hint: "File overlays and statistics (two or more files)" },
+  { name: "Results", hint: "The table on the Results page" },
 ];
 
 /** Pick what goes in, press one button, choose where to save: the report is written right away. */
 export function ReportTab() {
-  const { setProgress, dataset } = useApp();
+  const { setProgress, dataset, results } = useApp();
   const [sections, setSections] = useState<string[]>(SECTIONS.map((s) => s.name));
   const [format, setFormat] = useState<"html" | "pdf">("html");
   const [busy, setBusy] = useState(false);
@@ -34,7 +35,12 @@ export function ReportTab() {
     const path = picked.toLowerCase().endsWith(`.${format}`) ? picked : `${picked}.${format}`;
     setBusy(true);
     try {
-      const r = await api.reportGenerate(sections, format, path);
+      const r = await api.reportGenerate(
+        sections,
+        format,
+        path,
+        results.map(({ group, name, signal, value, unit, source }) => ({ group, name, signal, value, unit, source })),
+      );
       if (r.note) toast.warning(`${r.note} Saved to ${r.path}`);
       else toast.success(`Report saved to ${r.path}`);
     } catch (e) {

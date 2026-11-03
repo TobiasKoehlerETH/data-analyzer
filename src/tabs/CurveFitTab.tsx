@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeftRight, ChevronDown, Download, Play, Plus, RotateCcw } from "lucide-react";
+import { ArrowLeftRight, ChevronDown, Download, ListPlus, Play, Plus, RotateCcw } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -39,7 +40,7 @@ function Check({ checked, onChange, label, title }: { checked: boolean; onChange
 }
 
 export function CurveFitTab() {
-  const { dataset, dataVersion, activeTab } = useApp();
+  const { dataset, dataVersion, activeTab, addResults } = useApp();
   const [xCol, setXCol] = useState(ROW);
   const [yCol, setYCol] = useState("");
   const [points, setPoints] = useState<Point[]>([]);
@@ -495,9 +496,31 @@ export function CurveFitTab() {
             bodyClassName="flex flex-col gap-2 text-[12.5px]"
             title={current.name}
             actions={
-              <Button size="sm" variant="ghost" title="Export equation, data, settings and results (JSON)" onClick={() => downloadText("curve-fit.json", JSON.stringify(current, null, 2))}>
-                <Download />
-              </Button>
+              <>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  title="Coefficients, R² and RMSE to the Results page"
+                  onClick={() => {
+                    const label = (c: string) => (c === ROW ? "Index" : c === TIME ? "Time" : (dataset?.signals.find((x) => x.column === c)?.label ?? c));
+                    const signal = `${label(current.y)} vs ${label(current.x)}`;
+                    const group = `Fit · ${current.name}`;
+                    const r = current.result;
+                    const rows = [
+                      ...current.request.parameters.map((p, i) => ({ name: p.name, value: r.coefficients[i] })),
+                      ...(r.r_squared !== null ? [{ name: "R²", value: r.r_squared }] : []),
+                      { name: "RMSE", value: r.rmse },
+                    ];
+                    addResults(rows.map((x) => ({ ...x, group, signal, unit: "", source: "Curve fit" })));
+                    toast.success(`${rows.length} results added`);
+                  }}
+                >
+                  <ListPlus />
+                </Button>
+                <Button size="sm" variant="ghost" title="Export equation, data, settings and results (JSON)" onClick={() => downloadText("curve-fit.json", JSON.stringify(current, null, 2))}>
+                  <Download />
+                </Button>
+              </>
             }
           >
             {current.result.warning && <p className="text-amber-800">{current.result.warning}</p>}

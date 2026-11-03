@@ -514,8 +514,9 @@ export const api = {
     invoke<CompareSignalSeries[]>("compare_differences", { signals, maxPoints }),
   compareStats: (signals: string[]) => invoke<CompareStatistics[]>("compare_stats", { signals }),
 
-  reportGenerate: (sections: string[], format: string, path: string) =>
-    invoke<{ path: string; note: string | null }>("report_generate", { sections, format, path }),
+  reportGenerate: (sections: string[], format: string, path: string, results?: { group: string; name: string; signal: string; value: number; unit: string; source: string }[]) =>
+    invoke<{ path: string; note: string | null }>("report_generate", { sections, format, path, results: results ?? null }),
+  saveText: (path: string, text: string) => invoke<void>("save_text", { path, text }),
 };
 
 export function errorText(e: unknown): string {

@@ -12,6 +12,7 @@ use tauri::{AppHandle, Listener, Manager};
 use crate::commands as c;
 use crate::core::csv_parser::ImportOptions;
 use crate::core::filters::FilterStep;
+use crate::core::report::ResultEntry;
 use crate::state::AppState;
 
 pub const PORT: u16 = 1430;
@@ -66,6 +67,7 @@ async fn dispatch(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String>
         "workspace_vectors" => { args!(a; names: Vec<String>, range: Option<[f64; 2]>, maxPoints: Option<usize>, row: Option<bool>); ok(c::workspace_vectors(st(), names, range, maxPoints, row).await?) }
         "workspace_clear" => ok(c::workspace_clear(app.clone(), st()).await?),
         "export_dataset" => { args!(a; path: String); ok(c::export_dataset(st(), path).await?) }
+        "save_text" => { args!(a; path: String, text: String); ok(c::save_text(path, text).await?) }
         "save_image" => { args!(a; path: String, dataUrl: String); ok(c::save_image(path, dataUrl).await?) }
         "dataset_info" => ok(c::dataset_info(st())),
         "descriptive_stats" => ok(c::descriptive_stats(st()).await?),
@@ -106,7 +108,7 @@ async fn dispatch(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String>
         "compare_series" => { args!(a; signals: Vec<String>, range: Option<[f64; 2]>, maxPoints: usize); ok(c::compare_series(st(), signals, range, maxPoints)) }
         "compare_differences" => { args!(a; signals: Vec<String>, maxPoints: usize); ok(c::compare_differences(st(), signals, maxPoints)) }
         "compare_stats" => { args!(a; signals: Vec<String>); ok(c::compare_stats(st(), signals)) }
-        "report_generate" => { args!(a; sections: Vec<String>, format: String, path: String); ok(c::report_generate(app.clone(), st(), sections, format, path).await?) }
+        "report_generate" => { args!(a; sections: Vec<String>, format: String, path: String, results: Option<Vec<ResultEntry>>); ok(c::report_generate(app.clone(), st(), sections, format, path, results).await?) }
         other => Err(format!("Unknown command '{other}' (dev bridge)")),
     }
 }

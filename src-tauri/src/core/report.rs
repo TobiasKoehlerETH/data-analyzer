@@ -140,6 +140,17 @@ pub struct ComparisonStat {
     pub mean_error: f64,
 }
 
+/// One scalar result from the Results page.
+#[derive(Clone, Serialize, serde::Deserialize)]
+pub struct ResultEntry {
+    pub group: String,
+    pub name: String,
+    pub signal: String,
+    pub value: f64,
+    pub unit: String,
+    pub source: String,
+}
+
 #[derive(Clone, Default)]
 pub struct DataSummary {
     pub file_name: String,
@@ -167,6 +178,7 @@ pub struct ReportContent {
     pub validation_plots: Vec<Plot>,
     pub comparison_plots: Vec<Plot>,
     pub comparison_stats: Vec<ComparisonStat>,
+    pub results: Vec<ResultEntry>,
 }
 
 fn template_css() -> String {
@@ -330,6 +342,20 @@ fn table_pages(doc: &mut Doc, label: &str, heading: &str, _intro: &str, class: &
     }
 }
 
+/// Six significant digits, exponent form only for very large or small values.
+fn fmt_value(v: f64) -> String {
+    if !v.is_finite() {
+        return "—".into();
+    }
+    let a = v.abs();
+    if a != 0.0 && !(1e-4..1e7).contains(&a) {
+        return format!("{v:.4e}");
+    }
+    let digits = if a == 0.0 { 0 } else { (5 - a.log10().floor() as i32).clamp(0, 10) as usize };
+    let s = format!("{v:.digits$}");
+    if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s }
+}
+
 fn th(cols: &[&str]) -> String {
     cols.iter().map(|c| format!("<th scope=\"col\">{}</th>", esc(c))).collect()
 }
@@ -481,6 +507,26 @@ pub fn render_html(c: &ReportContent) -> String {
                 .collect();
             table_pages(&mut doc, &label, "Comparison", "Differences of each file to the reference file, interpolated on the reference time grid.", "data", &th(&["Signal", "File", "RMSE", "Max deviation", "R²", "Mean error"]), &rows, 24, 30);
         }
+    }
+
+    if !c.results.is_empty() {
+        let label = doc.next_label("Results");
+        let mut rows: Vec<String> = Vec::new();
+        let mut group = "";
+        for r in &c.results {
+            if r.group != group {
+                group = &r.group;
+                rows.push(format!("<tr><td colspan=\"4\"><strong>{}</strong></td></tr>", esc(group)));
+            }
+            rows.push(format!(
+                "<tr><td>{}</td><td>{}</td><td class=\"num\">{}</td><td>{}</td></tr>",
+                esc(&r.name),
+                esc(&r.signal),
+                fmt_value(r.value),
+                esc(&r.unit)
+            ));
+        }
+        table_pages(&mut doc, &label, "Results", "Scalar results collected on the Results page.", "data", &th(&["Result", "Signal", "Value", "Unit"]), &rows, 26, 32);
     }
 
     // ---- Cover and summary (built last, inserted first) ---------------------

@@ -16,7 +16,7 @@ use crate::core::downsample::{extend_to_finite, minmax, minmax_indices, window_i
 use crate::core::dsp::{decimate, mean, searchsorted, std};
 use crate::core::filters::{suggest_filters, FilterStep};
 use crate::core::models::{ModelSummary, OutputMetrics, StateSpaceResult};
-use crate::core::report::{self, ComparisonStat, DataSummary, FilterInfo, ModelInfo, Plot, ReportBlock, ReportContent, REPORT_PALETTE};
+use crate::core::report::{self, ComparisonStat, DataSummary, FilterInfo, ModelInfo, Plot, ReportBlock, ReportContent, ResultEntry, REPORT_PALETTE};
 use crate::core::simulation::simulate;
 use crate::core::spectrum::{compute_fft, compute_psd, detect_peaks, PeakInfo};
 use crate::core::stats::{compute_descriptive_stats, norm_pdf, StatRow};
@@ -559,6 +559,12 @@ pub async fn project_open(app: AppHandle, state: AppStateRef<'_>, path: String) 
         Ok((vec![], warnings))
     })
     .await
+}
+
+/// Writes text (a CSV table from the page) to `path`.
+#[tauri::command]
+pub async fn save_text(path: String, text: String) -> CmdResult<()> {
+    blocking(move || std::fs::write(&path, text).map_err(|e| format!("Cannot write {path}: {e}"))).await
 }
 
 /// Writes a chart image (a PNG data URL from the page) to `path`.
@@ -1745,10 +1751,13 @@ fn attr(svg: &str, name: &str) -> Option<f64> {
 }
 
 #[tauri::command]
-pub async fn report_generate(app: AppHandle, state: AppStateRef<'_>, sections: Vec<String>, format: String, path: String) -> CmdResult<ReportResult> {
+pub async fn report_generate(app: AppHandle, state: AppStateRef<'_>, sections: Vec<String>, format: String, path: String, results: Option<Vec<ResultEntry>>) -> CmdResult<ReportResult> {
     let st = state.inner().clone();
     blocking(move || {
-        let content = build_report(&st, &sections, &app)?;
+        let mut content = build_report(&st, &sections, &app)?;
+        if sections.iter().any(|s| s == "Results") {
+            content.results = results.unwrap_or_default();
+        }
         let progress = |v: i32, m: String| emit_progress(&app, "report", v, m);
         let (p, note) = report::generate_report(Path::new(&path), &format, &content, &progress)?;
         Ok(ReportResult { path: p.to_string_lossy().into_owned(), note })

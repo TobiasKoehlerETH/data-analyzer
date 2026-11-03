@@ -9,9 +9,13 @@ export type TabId =
   | "statistics"
   | "compare"
   | "spectrum"
+  | "spectrogram"
+  | "frf"
+  | "cycles"
   | "correlation"
   | "curvefit"
   | "model"
+  | "results"
   | "report";
 
 export const DEFAULT_TAB_ORDER: TabId[] = [
@@ -21,11 +25,47 @@ export const DEFAULT_TAB_ORDER: TabId[] = [
   "statistics",
   "compare",
   "spectrum",
+  "spectrogram",
+  "frf",
+  "cycles",
   "correlation",
   "curvefit",
   "model",
+  "results",
   "report",
 ];
+
+/** One scalar result (a measurement, a cycle statistic, a fitted coefficient). */
+export interface ResultRow {
+  id: string;
+  /** Rows added together share a group, e.g. "Cycles of Force". */
+  group: string;
+  name: string;
+  signal: string;
+  value: number;
+  unit: string;
+  /** The page it came from. */
+  source: string;
+}
+
+const RESULTS_KEY = "results.v1";
+function loadResults(): ResultRow[] {
+  try {
+    const raw = localStorage.getItem(RESULTS_KEY);
+    const v = raw ? (JSON.parse(raw) as ResultRow[]) : [];
+    return Array.isArray(v) ? v.filter((r) => r && typeof r.value === "number") : [];
+  } catch {
+    return [];
+  }
+}
+function saveResults(r: ResultRow[]) {
+  try {
+    localStorage.setItem(RESULTS_KEY, JSON.stringify(r));
+  } catch {
+    /* ignore */
+  }
+}
+let resultSeq = 0;
 
 interface ProgressState {
   value: number;
@@ -47,9 +87,6 @@ interface AppStore {
   /** Variable the Prepare page should open (set from the Workspace list). */
   prepareVariable: string | null;
   setPrepareVariable: (name: string | null) => void;
-  /** Signal the Plot page should add to its selection (set from the command palette). */
-  plotVariable: string | null;
-  setPlotVariable: (name: string | null) => void;
   setDataset: (d: DatasetInfo | null) => void;
   bumpData: (d?: DatasetInfo) => void;
   setActiveTab: (t: TabId) => void;
@@ -57,6 +94,10 @@ interface AppStore {
   showStatus: (text: string, timeoutMs?: number) => void;
   setProgress: (task: string, value: number, message: string) => void;
   refreshModels: () => Promise<void>;
+  results: ResultRow[];
+  /** Adds rows; a row with the same group, name and signal as an existing one replaces it. */
+  addResults: (rows: Omit<ResultRow, "id">[]) => void;
+  removeResults: (ids: string[]) => void;
 }
 
 let flashTimer: ReturnType<typeof setTimeout> | undefined;
@@ -85,8 +126,6 @@ export const useApp = create<AppStore>((set, get) => ({
   models: [],
   prepareVariable: null,
   setPrepareVariable: (name) => set({ prepareVariable: name }),
-  plotVariable: null,
-  setPlotVariable: (name) => set({ plotVariable: name }),
   setDataset: (d) =>
     set({
       dataset: d,
@@ -122,6 +161,21 @@ export const useApp = create<AppStore>((set, get) => ({
   refreshModels: async () => {
     const models = await api.modelsList();
     set({ models });
+  },
+  results: loadResults(),
+  addResults: (rows) => {
+    const key = (r: Omit<ResultRow, "id">) => `${r.group}\u0000${r.name}\u0000${r.signal}`;
+    const incoming = new Map(rows.filter((r) => Number.isFinite(r.value)).map((r) => [key(r), r]));
+    const kept = get().results.filter((r) => !incoming.has(key(r)));
+    const added = [...incoming.values()].map((r) => ({ ...r, id: `r${Date.now().toString(36)}${(resultSeq++).toString(36)}` }));
+    const results = [...kept, ...added];
+    saveResults(results);
+    set({ results });
+  },
+  removeResults: (ids) => {
+    const results = get().results.filter((r) => !ids.includes(r.id));
+    saveResults(results);
+    set({ results });
   },
 }));
 

@@ -15,7 +15,7 @@ import { useApp } from "@/lib/store";
 const MAX_PLOTS = PALETTE.length;
 
 export function TimeSeriesTab() {
-  const { dataset, dataVersion, activeTab, plotVariable, setPlotVariable } = useApp();
+  const { dataset, dataVersion, activeTab } = useApp();
   const [query, setQuery] = useState("");
   const loadedRequest = useRef("");
   const [selected, setSelected] = useState<string[]>([]);
@@ -66,14 +66,6 @@ export function TimeSeriesTab() {
     setSlots(s);
     setSelected(c);
   };
-
-  // "Plot <signal>" from the command palette adds that signal to the plot.
-  useEffect(() => {
-    if (!plotVariable || !dataset) return;
-    if (dataset.signals.some((s) => s.column === plotVariable) && !selected.includes(plotVariable)) select([...selected, plotVariable]);
-    setPlotVariable(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plotVariable, dataset]);
 
   const groups = useMemo(() => Object.fromEntries(selected.map((c, i) => [c, overlayAll ? 1 : i + 1])) as Record<string, number>, [selected, overlayAll]);
   const origin = dataset?.time_origin ?? null;

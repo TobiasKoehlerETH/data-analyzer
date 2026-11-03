@@ -50,6 +50,8 @@ export interface StackedChartProps {
   xLabel?: string;
   /** X values are Unix milliseconds: show a date/time axis. */
   xDate?: boolean;
+  /** Logarithmic x axis (frequency responses). */
+  xLog?: boolean;
   xRange?: [number, number] | null;
   /** Called (debounced) with the visible x range after zoom/pan; null = full range. */
   onZoom?: (range: [number, number] | null) => void;
@@ -76,6 +78,7 @@ export function StackedChart({
   columns = 1,
   xLabel,
   xDate = false,
+  xLog = false,
   xRange,
   onZoom,
   onCursor,
@@ -138,7 +141,7 @@ export function StackedChart({
       const x0 = col * (colW + colGap);
       const lastRow = row === rows - 1 || i + columns >= n;
       layout[`xaxis${id}`] = axis(lastRow ? xLabel : undefined, {
-        type: xDate ? "date" : undefined,
+        type: xDate ? "date" : xLog ? "log" : undefined,
         domain: [x0, x0 + colW],
         anchor: `y${id}`,
         matches: i === 0 ? undefined : "x",
@@ -303,7 +306,7 @@ export function StackedChart({
       bargap: 0.08,
     };
     return { data, layout: full };
-  }, [panels, columns, rows, n, size, xLabel, xDate, xRange, tooltip, scatterOnly, view, target]);
+  }, [panels, columns, rows, n, size, xLabel, xDate, xLog, xRange, tooltip, scatterOnly, view, target]);
 
   const table = (): PlotTable => {
     const out: PlotTable = { columns: ["Panel", "Series", xLabel ?? "X", "Y"], rows: [] };

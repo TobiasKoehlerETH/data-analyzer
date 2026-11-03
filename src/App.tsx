@@ -2,27 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen, open, save, message, isTauri } from "@/lib/platform";
-import {
-  ArrowRight,
-  BrushCleaning,
-  ChartLine,
-  Check,
-  Cpu,
-  Database,
-  Download,
-  FileText,
-  FolderOpen,
-  FolderUp,
-  Keyboard,
-  Microscope,
-  Plus,
-  Save,
-  Search,
-  type LucideIcon,
-} from "lucide-react";
+import { BrushCleaning, ChartLine, Cpu, Database, FileText, FolderOpen, Microscope, Plus, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { CommandPalette, Keys, type Command } from "@/components/CommandPalette";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -40,6 +21,10 @@ import { CorrelationTab } from "@/tabs/CorrelationTab";
 import { ModelTab } from "@/tabs/ModelTab";
 import { ReportTab } from "@/tabs/ReportTab";
 import { CurveFitTab } from "@/tabs/CurveFitTab";
+import { CyclesTab } from "@/tabs/CyclesTab";
+import { FrfTab } from "@/tabs/FrfTab";
+import { ResultsTab } from "@/tabs/ResultsTab";
+import { SpectrogramTab } from "@/tabs/SpectrogramTab";
 
 interface PageDef {
   label: string;
@@ -56,9 +41,13 @@ const PAGES: Record<TabId, PageDef> = {
   statistics: { label: "Distribution", component: StatisticsTab, hint: "Pick a signal; drag on any chart to select rows and compare.", needsData: true },
   compare: { label: "Compare files", component: CompareTab, hint: "Overlay the workspace's files and line them up; shifts apply everywhere." },
   spectrum: { label: "Spectrum", component: SpectrumTab, hint: "See which frequencies a signal contains. Drag the cutoff line, then add a low-pass there.", needsData: true },
+  spectrogram: { label: "Spectrogram", component: SpectrogramTab, hint: "Frequency content over time, or orders of a shaft speed.", needsData: true },
+  frf: { label: "Frequency response", component: FrfTab, hint: "Bode plot and coherence from an input to an output.", needsData: true },
+  cycles: { label: "Cycles", component: CyclesTab, hint: "Cut the data at trigger events and compare the cycles.", needsData: true },
   correlation: { label: "Correlations", component: CorrelationTab, hint: "Find signals that move together. Click a cell or pair for details.", needsData: true },
   curvefit: { label: "Curve fit", component: CurveFitTab, hint: "Pick X and Y variables, choose a model and fit.", needsData: true },
   model: { label: "Model", component: ModelTab, hint: "Identify, store, simulate and validate state-space models." },
+  results: { label: "Results", component: ResultsTab, hint: "Measured values and results from other pages in one table." },
   report: { label: "Report", component: ReportTab, hint: "Choose sections and export the analysis as HTML or PDF." },
 };
 
@@ -74,9 +63,9 @@ const STEPS: Step[] = [
   { id: "data", label: "Data", icon: Database, pages: ["file"] },
   { id: "prepare", label: "Prepare", icon: BrushCleaning, pages: ["prepare"] },
   { id: "explore", label: "Explore", icon: ChartLine, pages: ["timeseries", "statistics", "compare"] },
-  { id: "analyse", label: "Analyse", icon: Microscope, pages: ["spectrum", "correlation", "curvefit"] },
+  { id: "analyse", label: "Analyse", icon: Microscope, pages: ["spectrum", "spectrogram", "frf", "cycles", "correlation", "curvefit"] },
   { id: "model", label: "Model", icon: Cpu, pages: ["model"] },
-  { id: "report", label: "Report", icon: FileText, pages: ["report"] },
+  { id: "report", label: "Report", icon: FileText, pages: ["results", "report"] },
 ];
 const ORDER: TabId[] = STEPS.flatMap((s) => s.pages);
 
@@ -104,89 +93,8 @@ function NeedsData({ onImport }: { onImport: () => void }) {
   );
 }
 
-/** The step that follows in the workflow, one click away. */
-function NextStep({ stepIndex, onGo }: { stepIndex: number; onGo: (s: Step) => void }) {
-  const next = STEPS[stepIndex + 1];
-  if (!next) return null;
-  return (
-    <Button variant="ghost" size="sm" className="ml-auto shrink-0 text-muted-foreground" onClick={() => onGo(next)} title={`Continue to ${next.label} (Alt+${stepIndex + 2})`}>
-      Next: {next.label} <ArrowRight />
-    </Button>
-  );
-}
-
-const SHORTCUTS: { group: string; items: [string, string][] }[] = [
-  {
-    group: "Everywhere",
-    items: [
-      ["Ctrl K", "Search everything"],
-      ["Alt 1–6", "Go to a workflow step"],
-      ["Ctrl PgDn", "Next page"],
-      ["Ctrl PgUp", "Previous page"],
-      ["?", "Show this list"],
-    ],
-  },
-  {
-    group: "Data",
-    items: [
-      ["Ctrl O", "Add data files"],
-      ["Ctrl E", "Export the data as CSV"],
-      ["Ctrl S", "Save the model library"],
-      ["Ctrl L", "Load a model library"],
-    ],
-  },
-  {
-    group: "Prepare",
-    items: [
-      ["Alt ↑", "Previous signal"],
-      ["Alt ↓", "Next signal"],
-    ],
-  },
-  {
-    group: "Charts",
-    items: [
-      ["Drag", "Zoom to a range"],
-      ["Wheel", "Zoom in and out"],
-      ["Middle-drag", "Pan"],
-      ["Double-click", "Reset the view"],
-    ],
-  },
-];
-
-function ShortcutsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="bg-white sm:max-w-[560px]">
-        <DialogHeader>
-          <DialogTitle>Keyboard shortcuts</DialogTitle>
-          <DialogDescription>Faster ways through the workflow.</DialogDescription>
-        </DialogHeader>
-        <div className="grid grid-cols-2 gap-x-8 gap-y-5">
-          {SHORTCUTS.map((g) => (
-            <section key={g.group}>
-              <h3 className="mb-1.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{g.group}</h3>
-              <dl className="flex flex-col gap-1.5">
-                {g.items.map(([k, what]) => (
-                  <div key={k} className="flex items-center justify-between gap-3 text-[13px]">
-                    <dt>{what}</dt>
-                    <dd>
-                      <Keys keys={k} />
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            </section>
-          ))}
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 export default function App() {
-  const { activeTab, setActiveTab, flash, progress, setProgress, dataset, models, refreshModels, showStatus, setPrepareVariable, setPlotVariable } = useApp();
-  const [paletteOpen, setPaletteOpen] = useState(false);
-  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const { activeTab, setActiveTab, flash, progress, setProgress, dataset, models, refreshModels, showStatus } = useApp();
   const [now, setNow] = useState(Date.now());
   const [visited, setVisited] = useState(() => new Set<TabId>([activeTab]));
   /** The page last open in each step, so switching steps returns to where you were. */
@@ -256,31 +164,8 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const typing = (e.target as HTMLElement | null)?.closest?.("input, textarea, select, [contenteditable='true']");
-      const dialogOpen = !!document.querySelector('[role="dialog"]');
-      // Alt+1…6 jumps to a workflow step.
-      if (e.altKey && !e.ctrlKey && !e.metaKey && /^Digit[1-9]$/.test(e.code)) {
-        const s = STEPS[Number(e.code.slice(5)) - 1];
-        if (s && !dialogOpen) {
-          e.preventDefault();
-          setActiveTab(lastPage[s.id] ?? s.pages[0]);
-        }
-        return;
-      }
-      if (e.key === "?" && !typing && !e.ctrlKey && !e.altKey && !dialogOpen) {
-        e.preventDefault();
-        setShortcutsOpen(true);
-        return;
-      }
-      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      if (!e.ctrlKey || e.altKey) return;
       const k = e.key.toLowerCase();
-      if (k === "k") {
-        e.preventDefault();
-        setShortcutsOpen(false);
-        setPaletteOpen((o) => !o);
-        return;
-      }
-      if (!e.ctrlKey) return;
       if ((k === "pageup" || k === "pagedown") && !document.querySelector('[role="dialog"]')) {
         e.preventDefault();
         const step = k === "pagedown" ? 1 : -1;
@@ -324,61 +209,6 @@ export default function App() {
     };
   });
 
-  const goStep = (s: Step) => setActiveTab(lastPage[s.id] ?? s.pages[0]);
-  /** A step is done once it has left a trace: data loaded, a signal processed, a model stored. */
-  const stepDone = (id: string) =>
-    id === "data" ? !!dataset : id === "prepare" ? (dataset?.edited.length ?? 0) > 0 : id === "model" ? models.length > 0 : false;
-
-  const commands = useMemo<Command[]>(() => {
-    const nav: Command[] = STEPS.flatMap((s, si) =>
-      s.pages.map((id) => ({
-        id: `go:${id}`,
-        group: "Go to",
-        label: s.pages.length > 1 ? `${s.label} › ${PAGES[id].label}` : s.label,
-        detail: PAGES[id].hint,
-        icon: s.icon,
-        keys: s.pages[0] === id ? `Alt ${si + 1}` : undefined,
-        keywords: id === "spectrum" ? "fft psd frequency welch" : id === "curvefit" ? "regression fit" : id === "model" ? "state space identify simulate validate" : id === "report" ? "pdf html export" : "",
-        run: () => setActiveTab(id),
-      })),
-    );
-    const actions: Command[] = [
-      { id: "act:add", group: "Actions", label: "Add data files…", icon: FolderUp, keys: "Ctrl O", keywords: "open import csv excel", run: openFiles },
-      { id: "act:export", group: "Actions", label: "Export data as CSV…", icon: Download, keys: "Ctrl E", disabled: !dataset, run: exportData },
-      { id: "act:report", group: "Actions", label: "Create a report", icon: FileText, keywords: "pdf html", disabled: !dataset, run: () => setActiveTab("report") },
-      { id: "act:savemodels", group: "Actions", label: "Save model library…", icon: Save, keys: "Ctrl S", disabled: models.length === 0, run: saveModels },
-      { id: "act:loadmodels", group: "Actions", label: "Load model library…", icon: FolderOpen, keys: "Ctrl L", run: loadModels },
-      { id: "act:keys", group: "Actions", label: "Keyboard shortcuts", icon: Keyboard, keys: "?", run: () => setShortcutsOpen(true) },
-    ];
-    const signals: Command[] = (dataset?.signals ?? []).flatMap((sg) => [
-      {
-        id: `prep:${sg.column}`,
-        group: "Signals",
-        label: `Prepare ${sg.label}`,
-        detail: dataset?.edited.includes(sg.column) ? "edited" : undefined,
-        icon: BrushCleaning,
-        keywords: "clean filter",
-        run: () => {
-          setPrepareVariable(sg.column);
-          setActiveTab("prepare");
-        },
-      },
-      {
-        id: `plot:${sg.column}`,
-        group: "Signals",
-        label: `Plot ${sg.label}`,
-        icon: ChartLine,
-        keywords: "show chart",
-        run: () => {
-          setPlotVariable(sg.column);
-          setActiveTab("timeseries");
-        },
-      },
-    ]);
-    return [...nav, ...actions, ...signals];
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataset, models.length]);
-
   const eta = progress && progress.value > 2 ? formatEta(((now - progress.startedAt) * (100 - progress.value)) / progress.value) : "";
   const stepIndex = Math.max(
     0,
@@ -401,12 +231,11 @@ export default function App() {
               const locked = !dataset && s.pages.every((p) => PAGES[p].needsData);
               const badge = s.id === "model" && models.length > 0 ? models.length : null;
               const Icon = s.icon;
-              const done = !active && stepDone(s.id);
               return (
                 <button
                   key={s.id}
-                  onClick={() => goStep(s)}
-                  title={`${PAGES[s.pages[0]].hint} (Alt+${si + 1})`}
+                  onClick={() => setActiveTab(lastPage[s.id] ?? s.pages[0])}
+                  title={PAGES[s.pages[0]].hint}
                   aria-current={active ? "step" : undefined}
                   className={cn(
                     "group relative flex h-9 items-center gap-2 rounded-lg px-3 text-[13.5px] whitespace-nowrap transition-colors",
@@ -417,11 +246,10 @@ export default function App() {
                   <span
                     className={cn(
                       "flex size-[18px] shrink-0 items-center justify-center rounded-full text-[10.5px] font-semibold",
-                      active ? "bg-ap-red text-white" : done ? "bg-ap-darkblue text-white" : "bg-ap-bluegray-15 text-ap-bluegray",
+                      active ? "bg-ap-red text-white" : "bg-ap-bluegray-15 text-ap-bluegray",
                     )}
-                    aria-label={done ? `Step ${si + 1}, done` : `Step ${si + 1}`}
                   >
-                    {done ? <Check className="size-3" strokeWidth={3} /> : si + 1}
+                    {si + 1}
                   </span>
                   <Icon className="hidden size-4 xl:block" strokeWidth={1.8} />
                   {s.label}
@@ -430,15 +258,6 @@ export default function App() {
               );
             })}
           </nav>
-          <button
-            onClick={() => setPaletteOpen(true)}
-            className="flex h-9 w-[260px] shrink-0 items-center gap-2 rounded-lg border border-ap-line bg-[#f7f8fa] px-3 text-[13px] text-muted-foreground hover:border-ap-bluegray-60 hover:bg-white max-xl:w-auto"
-            title="Search pages, signals and actions (Ctrl+K)"
-          >
-            <Search className="size-4 shrink-0" />
-            <span className="flex-1 truncate text-left max-xl:hidden">Search or jump to…</span>
-            <Keys keys="Ctrl K" className="max-xl:hidden" />
-          </button>
           <button
             onClick={() => setActiveTab("file")}
             className="flex max-w-[320px] shrink-0 items-center gap-2.5 max-lg:hidden rounded-lg border border-ap-line bg-white py-1.5 pr-3 pl-2.5 text-left hover:border-ap-bluegray-60"
@@ -456,9 +275,9 @@ export default function App() {
           </button>
         </header>
 
-        {/* Page bar: the step's pages as tabs (or its title), what to do here, and the next step */}
-        <div className="flex h-11 shrink-0 items-center border-b border-ap-line bg-[#fafbfc] px-5">
-          {step.pages.length > 1 ? (
+        {/* Page tabs, only for steps with more than one page */}
+        {step.pages.length > 1 && (
+          <div className="flex h-12 shrink-0 items-center border-b border-ap-line bg-[#fafbfc] px-5">
             <div role="tablist" className="flex items-center gap-0.5 rounded-lg bg-[#e8eaee] p-0.5">
               {step.pages.map((id) => (
                 <button
@@ -476,12 +295,8 @@ export default function App() {
                 </button>
               ))}
             </div>
-          ) : (
-            <h1 className="text-[14px] font-semibold">{step.label}</h1>
-          )}
-          <p className="ml-4 truncate text-[12.5px] text-muted-foreground max-lg:hidden">{PAGES[activeTab].hint}</p>
-          <NextStep stepIndex={stepIndex} onGo={goStep} />
-        </div>
+          </div>
+        )}
 
         <main className="relative min-h-0 flex-1">
           {ORDER.map((id) => {
@@ -513,8 +328,6 @@ export default function App() {
           </footer>
         )}
       </div>
-      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} commands={commands} />
-      <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
       <Toaster position="bottom-right" />
     </TooltipProvider>
   );
