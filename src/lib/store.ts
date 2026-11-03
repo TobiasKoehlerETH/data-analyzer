@@ -47,6 +47,9 @@ interface AppStore {
   /** Variable the Prepare page should open (set from the Workspace list). */
   prepareVariable: string | null;
   setPrepareVariable: (name: string | null) => void;
+  /** Signal the Plot page should add to its selection (set from the command palette). */
+  plotVariable: string | null;
+  setPlotVariable: (name: string | null) => void;
   setDataset: (d: DatasetInfo | null) => void;
   bumpData: (d?: DatasetInfo) => void;
   setActiveTab: (t: TabId) => void;
@@ -82,6 +85,8 @@ export const useApp = create<AppStore>((set, get) => ({
   models: [],
   prepareVariable: null,
   setPrepareVariable: (name) => set({ prepareVariable: name }),
+  plotVariable: null,
+  setPlotVariable: (name) => set({ plotVariable: name }),
   setDataset: (d) =>
     set({
       dataset: d,

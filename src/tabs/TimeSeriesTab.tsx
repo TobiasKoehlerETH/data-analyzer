@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { Search, X } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CheckField, EmptyState, Panel, Segmented } from "@/components/common";
 import { StackedChart, type ChartPanel } from "@/components/StackedChart";
@@ -13,7 +15,8 @@ import { useApp } from "@/lib/store";
 const MAX_PLOTS = PALETTE.length;
 
 export function TimeSeriesTab() {
-  const { dataset, dataVersion, activeTab } = useApp();
+  const { dataset, dataVersion, activeTab, plotVariable, setPlotVariable } = useApp();
+  const [query, setQuery] = useState("");
   const loadedRequest = useRef("");
   const [selected, setSelected] = useState<string[]>([]);
   /** Stack: one plot per signal. Overlay: every signal in one plot. */
@@ -63,6 +66,14 @@ export function TimeSeriesTab() {
     setSlots(s);
     setSelected(c);
   };
+
+  // "Plot <signal>" from the command palette adds that signal to the plot.
+  useEffect(() => {
+    if (!plotVariable || !dataset) return;
+    if (dataset.signals.some((s) => s.column === plotVariable) && !selected.includes(plotVariable)) select([...selected, plotVariable]);
+    setPlotVariable(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plotVariable, dataset]);
 
   const groups = useMemo(() => Object.fromEntries(selected.map((c, i) => [c, overlayAll ? 1 : i + 1])) as Record<string, number>, [selected, overlayAll]);
   const origin = dataset?.time_origin ?? null;
@@ -217,7 +228,9 @@ export function TimeSeriesTab() {
         ? never
         : NonNullable<typeof dataset>["signals"]
     >();
+    const q = query.trim().toLowerCase();
     for (const s of dataset?.signals ?? []) {
+      if (q && !`${s.label} ${s.group}`.toLowerCase().includes(q)) continue;
       m.set(s.group, [...(m.get(s.group) ?? []), s]);
     }
     return [...m.entries()]
@@ -226,16 +239,58 @@ export function TimeSeriesTab() {
         ([g, l]) =>
           [g, [...l].sort((a, b) => a.name.localeCompare(b.name))] as const,
       );
-  }, [dataset]);
+  }, [dataset, query]);
 
   if (!dataset) return <EmptyState title="No data loaded" />;
 
   const single = grouped.length === 1;
+  const visible = grouped.flatMap(([, l]) => l.map((s) => s.column));
+  const many = dataset.signals.length > 6;
 
   return (
     <div className="flex h-full gap-3">
-      <Panel title="Signals" className="w-[250px] shrink-0" bodyClassName="flex min-h-0 flex-col gap-1 p-2">
+      <Panel
+        title={
+          <>
+            Signals <span className="font-normal text-muted-foreground tabular-nums">{selected.length}/{dataset.signals.length}</span>
+          </>
+        }
+        actions={
+          <>
+            <button
+              className="rounded px-1.5 py-0.5 text-[12px] text-muted-foreground hover:bg-ap-bluegray-15 hover:text-foreground disabled:opacity-40"
+              disabled={visible.every((c) => selected.includes(c))}
+              onClick={() => select([...selected, ...visible.filter((c) => !selected.includes(c))])}
+              title={query ? "Plot every signal that matches" : "Plot every signal"}
+            >
+              All
+            </button>
+            <button
+              className="rounded px-1.5 py-0.5 text-[12px] text-muted-foreground hover:bg-ap-bluegray-15 hover:text-foreground disabled:opacity-40"
+              disabled={selected.length === 0}
+              onClick={() => select([])}
+              title="Clear the plot"
+            >
+              None
+            </button>
+          </>
+        }
+        className="w-[250px] shrink-0"
+        bodyClassName="flex min-h-0 flex-col gap-1 p-2"
+      >
+        {many && (
+          <label className="relative mx-0.5 mb-1 block">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setQuery("")} placeholder="Find a signal" className="h-8 pr-7 pl-8 text-[13px]" aria-label="Find a signal" />
+            {query && (
+              <button className="absolute top-1/2 right-1.5 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground" onClick={() => setQuery("")} aria-label="Clear search">
+                <X className="size-3.5" />
+              </button>
+            )}
+          </label>
+        )}
         <div className="min-h-0 flex-1 overflow-auto text-[13px]">
+          {visible.length === 0 && <p className="px-2 py-4 text-center text-[12.5px] text-muted-foreground">No signal matches “{query}”.</p>}
           {grouped.map(([g, list]) => (
             <div key={g} className="mb-2">
               {!single && <p className="px-2 py-1 text-[12px] font-medium text-muted-foreground">{g}</p>}

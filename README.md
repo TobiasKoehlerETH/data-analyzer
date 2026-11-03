@@ -19,6 +19,10 @@ A local desktop app for exploring numeric measurement data, cleaning it step by 
 
 ![Correlations](docs/images/correlations.png)
 
+Press **Ctrl+K** anywhere to jump to a page, open a signal or run an action, and **?** for all keyboard shortcuts.
+
+![Search: pages, signals and actions from the keyboard](docs/images/search.png)
+
 See [the guide](docs/analysis-workspaces.md) for details.
 
 ## Run

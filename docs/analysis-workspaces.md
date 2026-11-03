@@ -1,6 +1,8 @@
 # Guide
 
-The top bar follows the workflow: **Data → Prepare → Explore → Analyse → Model → Report**. Explore and Analyse have tabs.
+The top bar follows the workflow: **Data → Prepare → Explore → Analyse → Model → Report**. Explore and Analyse have tabs. A step turns into a check mark once it has left a trace: data loaded, a signal processed, a model stored. The bar under it says what to do on the current page and has **Next** to move on to the following step.
+
+**Search** (Ctrl+K) jumps to any page, opens any signal in Prepare or adds it to the plot, and runs common actions (add files, export, report, model library). Type a few letters, choose with the arrow keys, press Enter. Press **?** for the list of keyboard shortcuts; Alt+1 … Alt+6 go straight to a step.
 
 ## Data
 
@@ -10,11 +12,11 @@ Add files, a folder of runs, or drop them on the window. Each file keeps its own
 
 With several files, **Line up files** combines them **By time**, **By clock time** or **By index**. **Shift** moves one file in time. **Resample to** sets the common time step (0 keeps the finest step; a coarser step averages instead of aliasing). The common grid has at most 1,000,000 rows.
 
-A signal's menu has **Prepare**, **Rename**, **Duplicate**, **Reset to original** and **Remove**. **Formula** adds a signal computed from others. **Project** saves and opens projects and recipes (reusable processing).
+The bar above the files counts files, signals and processed signals. With more than six signals, **Filter signals** narrows the lists by name. A signal's menu has **Prepare**, **Rename**, **Duplicate**, **Reset to original** and **Remove**. **Formula** adds a signal computed from others. **Project** saves and opens projects and recipes (reusable processing).
 
 ## Prepare
 
-Prepare processes one signal as a row of blocks: **Source → steps → Output**.
+Prepare processes one signal as a row of blocks: **Source → steps → Output**. The arrows beside the signal picker (or Alt+↑ / Alt+↓) step to the previous or next signal, so a whole file can be cleaned one signal after another.
 
 - **Add step** offers **Clean** (spikes, gaps, range), **Filter** (low-pass, high-pass, band-pass, band-stop, notch, moving average, median, Savitzky–Golay, exponential average), **Adjust** (offset, gain, downsample, remove mean, normalize, z-score, invert) and **Suggest filters**.
 - A new step is previewed on the chart before it is added.
@@ -27,7 +29,7 @@ Removed values become missing. Rows are never deleted, so every signal stays ali
 
 ## Explore
 
-- **Plot**: tick signals to plot them, stacked or overlaid. Choose the X axis: row, time or another signal. **Show original** draws the imported values behind processed ones.
+- **Plot**: tick signals to plot them, stacked or overlaid. **All** and **None** tick or clear the list; with more than six signals, **Find a signal** filters it. Choose the X axis: row, time or another signal. **Show original** draws the imported values behind processed ones.
 - **Distribution**: scatter, values by index, histogram and quartiles for one signal, with a summary table. Datasets over 100,000 rows are thinned by a fixed stride for display.
 - **Compare files**: overlays the files of the workspace. Signals are matched by name; **Mapping** overrides a match. Line files up by typing a shift, clicking the same event on each trace, or aligning on a trigger. With two or more files it shows the difference and RMSE, maximum deviation, R² and mean error against the first file.
 

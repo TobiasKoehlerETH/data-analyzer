@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { ChevronDown, ChevronUp } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { EmptyState, Field, Panel, Segmented, StatusText } from "@/components/common";
 import { PipelineDiagram, blockInfo, type AddChoice } from "@/components/PipelineDiagram";
 import { SignalSelect } from "@/components/SignalSelect";
@@ -178,6 +180,25 @@ export function PrepareTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewRange, time, rows, xMode, origin]);
 
+  // Step through the signals one after another: Alt+↑ / Alt+↓ or the arrows beside the picker.
+  const signals = dataset?.signals ?? [];
+  const at = signals.findIndex((s) => s.column === column);
+  const stepSignal = (d: number) => {
+    if (!signals.length) return;
+    setColumn(signals[(Math.max(0, at) + d + signals.length) % signals.length].column);
+  };
+  useEffect(() => {
+    if (activeTab !== "prepare") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.altKey || e.ctrlKey || e.metaKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+      if (document.querySelector('[role="dialog"]')) return;
+      e.preventDefault();
+      stepSignal(e.key === "ArrowDown" ? 1 : -1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
   const fmtTime = (t: number) => (origin !== null ? new Date((origin + t) * 1000).toISOString().slice(11, 23) : `${Number(t.toPrecision(5))} s`);
 
   const run = async (f: () => Promise<{ dataset: typeof dataset }>, done: string) => {
@@ -235,9 +256,23 @@ export function PrepareTab() {
   return (
     <div className="flex h-full flex-col gap-3">
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-        <Field label="Signal" className="w-[340px]">
-          <SignalSelect signals={dataset.signals} value={column} onChange={setColumn} edited={dataset.edited} />
-        </Field>
+        <div className="flex items-center gap-1">
+          <Field label="Signal" className="w-[340px]">
+            <SignalSelect signals={dataset.signals} value={column} onChange={setColumn} edited={dataset.edited} />
+          </Field>
+          <Button size="icon-sm" variant="outline" disabled={signals.length < 2} onClick={() => stepSignal(-1)} title="Previous signal (Alt+↑)" aria-label="Previous signal">
+            <ChevronUp />
+          </Button>
+          <Button size="icon-sm" variant="outline" disabled={signals.length < 2} onClick={() => stepSignal(1)} title="Next signal (Alt+↓)" aria-label="Next signal">
+            <ChevronDown />
+          </Button>
+          {signals.length > 1 && (
+            <span className="ml-1 text-[12px] text-muted-foreground tabular-nums">
+              {Math.max(0, at) + 1} of {signals.length}
+              {dataset.edited.length > 0 && <> · {dataset.edited.length} processed</>}
+            </span>
+          )}
+        </div>
         <Segmented
           value={xMode}
           onChange={setXMode}

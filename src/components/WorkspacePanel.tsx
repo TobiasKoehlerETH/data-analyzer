@@ -12,6 +12,7 @@ import {
   FolderTree,
   MoreHorizontal,
   Pencil,
+  Search,
   Plus,
   RotateCcw,
   Save,
@@ -247,6 +248,9 @@ export function WorkspacePanel({ ws, fresh, run, onAddFiles, onExport }: Props) 
   const [renaming, setRenaming] = useState<{ name: string; value: string } | null>(null);
   const [formula, setFormula] = useState<{ name: string; text: string; editing: string | null; error: string } | null>(null);
   const [spark, setSpark] = useState<Record<string, (number | null)[]>>({});
+  /** Filters the signal lists by name; files without a match fold away. */
+  const [filter, setFilter] = useState("");
+  const matches = (v: VariableInfo) => !filter.trim() || v.name.toLowerCase().includes(filter.trim().toLowerCase());
   const numeric = ws.variables.filter((v) => v.kind !== "text");
   const sparkKey = numeric.map((v) => `${v.name}:${v.edits.length}`).join("|");
 
@@ -460,6 +464,8 @@ export function WorkspacePanel({ ws, fresh, run, onAddFiles, onExport }: Props) 
 
   const derived = ws.variables.filter((v) => v.kind === "derived");
   const empty = ws.sources.length === 0 && derived.length === 0;
+  const signalCount = ws.variables.filter((v) => !v.is_time && v.kind !== "text").length;
+  const shownDerived = derived.filter(matches);
 
   const card = (key: string | number, header: React.ReactNode, body: React.ReactNode, extra?: React.ReactNode) => (
     <section key={key} className="shrink-0 overflow-hidden rounded-xl border border-ap-line bg-white shadow-[var(--ap-shadow-sm)]">
@@ -472,6 +478,24 @@ export function WorkspacePanel({ ws, fresh, run, onAddFiles, onExport }: Props) 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
       <div className="flex items-center gap-2">
+        {!empty && (
+          <p className="text-[13px] text-muted-foreground tabular-nums">
+            <span className="font-semibold text-foreground">{ws.sources.length}</span> file{ws.sources.length === 1 ? "" : "s"} ·{" "}
+            <span className="font-semibold text-foreground">{signalCount}</span> signal{signalCount === 1 ? "" : "s"}
+            {ws.dataset && ws.dataset.edited.length > 0 && (
+              <>
+                {" "}
+                · <span className="font-semibold text-foreground">{ws.dataset.edited.length}</span> processed
+              </>
+            )}
+          </p>
+        )}
+        {signalCount > 6 && (
+          <label className="relative ml-2 w-56">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input value={filter} onChange={(e) => setFilter(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setFilter("")} placeholder="Filter signals" className="h-8 pl-8 text-[13px]" aria-label="Filter signals" />
+          </label>
+        )}
         <div className="flex-1" />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -603,18 +627,20 @@ export function WorkspacePanel({ ws, fresh, run, onAddFiles, onExport }: Props) 
                   Same length
                 </Button>
               )}
-              <span className="text-[12px] text-muted-foreground">0 = keep each file's own time step</span>
+              {ws.align !== "row" && <span className="text-[12px] text-muted-foreground">0 keeps each file's own time step</span>}
               <div className="flex-1" />
-              <Button disabled={!ws.dataset} onClick={() => setActiveTab("prepare")}>
-                <BrushCleaning /> Prepare
-              </Button>
-              <Button variant="outline" disabled={!ws.dataset} onClick={() => setActiveTab("timeseries")}>
+              <Button variant="outline" size="sm" disabled={!ws.dataset} onClick={() => setActiveTab("timeseries")} title="Plot the signals">
                 <ChartLine /> Plot
+              </Button>
+              <Button size="sm" disabled={!ws.dataset} onClick={() => setActiveTab("prepare")} title="Clean and filter the signals">
+                <BrushCleaning /> Prepare
               </Button>
             </div>
           )}
 
+          {filter.trim() && !ws.variables.some(matches) && <p className="px-1 py-6 text-center text-[13px] text-muted-foreground">No signal matches “{filter}”.</p>}
           {ws.sources.map((s) =>
+            (!filter.trim() || ws.variables.some((v) => v.source_id === s.id && matches(v))) &&
             card(
               s.id,
               <>
@@ -638,18 +664,18 @@ export function WorkspacePanel({ ws, fresh, run, onAddFiles, onExport }: Props) 
                   <X />
                 </Button>
               </>,
-              ws.variables.filter((v) => v.source_id === s.id).map(row),
-              <TimeMapRow s={s} vars={ws.variables.filter((v) => v.source_id === s.id)} run={run} />,
+              ws.variables.filter((v) => v.source_id === s.id && matches(v)).map(row),
+              filter.trim() ? undefined : <TimeMapRow s={s} vars={ws.variables.filter((v) => v.source_id === s.id)} run={run} />,
             ),
           )}
-          {derived.length > 0 &&
+          {shownDerived.length > 0 &&
             card(
               "derived",
               <>
                 <Sigma className="size-4 shrink-0 text-ap-red" />
                 <p className="flex-1 text-[13.5px] font-semibold">Formulas</p>
               </>,
-              derived.map(row),
+              shownDerived.map(row),
             )}
         </div>
       )}
