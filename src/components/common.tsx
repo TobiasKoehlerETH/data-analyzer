@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -237,7 +237,7 @@ export function CheckField({ checked, onChange, label, hint }: { checked: boolea
   );
 }
 
-/** Pill-style switch between a few options. */
+/** Pill-style switch between a few options; the white pill slides to the chosen one. */
 export function Segmented<T extends string>({
   value,
   onChange,
@@ -246,26 +246,52 @@ export function Segmented<T extends string>({
 }: {
   value: T;
   onChange: (v: T) => void;
-  options: { value: T; label: string; hint?: string }[];
+  options: { value: T; label: ReactNode; hint?: string }[];
   className?: string;
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pill, setPill] = useState<{ left: number; width: number } | null>(null);
+  const measure = () => {
+    const el = ref.current?.querySelector<HTMLElement>('[aria-selected="true"]');
+    const next = el ? { left: el.offsetLeft, width: el.offsetWidth } : null;
+    setPill((p) => (p?.left === next?.left && p?.width === next?.width ? p : next));
+  };
+  useLayoutEffect(measure, [value, options.length]);
+  useEffect(() => {
+    // Fonts and labels change widths after the first paint.
+    if (!ref.current) return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(ref.current);
+    return () => ro.disconnect();
+  }, []);
   return (
-    <div role="tablist" className={cn("inline-flex items-center gap-0.5 rounded-lg bg-[#e8eaee] p-0.5", className)}>
-      {options.map((o) => (
-        <button
-          key={o.value}
-          role="tab"
-          aria-selected={o.value === value}
-          title={o.hint}
-          onClick={() => onChange(o.value)}
-          className={cn(
-            "h-7 rounded-md px-3 text-[13px] whitespace-nowrap transition-colors",
-            o.value === value ? "bg-white font-semibold text-foreground shadow-[var(--ap-shadow-sm)]" : "text-muted-foreground hover:text-foreground",
-          )}
-        >
-          {o.label}
-        </button>
-      ))}
+    <div ref={ref} role="tablist" className={cn("relative inline-flex items-center gap-0.5 rounded-lg bg-[#e8eaee] p-0.5", className)}>
+      {pill && (
+        <span
+          aria-hidden
+          className="absolute top-0.5 bottom-0.5 rounded-md bg-white shadow-[var(--ap-shadow-sm)] transition-[left,width] duration-200 ease-out motion-reduce:transition-none"
+          style={{ left: pill.left, width: pill.width }}
+        />
+      )}
+      {options.map((o) => {
+        const on = o.value === value;
+        return (
+          <button
+            key={o.value}
+            role="tab"
+            aria-selected={on}
+            title={o.hint}
+            onClick={() => onChange(o.value)}
+            className={cn(
+              "relative z-10 h-7 rounded-md px-3 text-[13px] whitespace-nowrap transition-colors",
+              on ? "font-semibold text-foreground" : "text-muted-foreground hover:text-foreground",
+              on && !pill && "bg-white shadow-[var(--ap-shadow-sm)]",
+            )}
+          >
+            {o.label}
+          </button>
+        );
+      })}
     </div>
   );
 }

@@ -134,12 +134,12 @@ export function FrfTab() {
           <ListPlus /> Add to results
         </Button>
       </div>
-      {input === output && <StatusText>Input and output are the same signal: the gain is 1 everywhere.</StatusText>}
+      {input === output && <StatusText>Input = output</StatusText>}
       <Panel title="Bode plot" className={cn("min-h-0 flex-1 transition-opacity", loading && "opacity-60")} bodyClassName="p-1">
         {panels.length ? (
           <StackedChart panels={panels} xLabel="Frequency [Hz]" xLog={scale === "log"} resetKey={`${input}|${output}|${scale}|${nperseg}`} />
         ) : (
-          <EmptyState title={loading ? "Loading…" : "Pick an input and an output"}>Both signals must be sampled together for long enough to fill at least one segment.</EmptyState>
+          <EmptyState title={loading ? "Loading…" : "Pick an input and an output"} />
         )}
       </Panel>
       {error && <StatusText tone="error">{error}</StatusText>}

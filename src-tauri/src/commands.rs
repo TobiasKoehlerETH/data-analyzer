@@ -145,7 +145,7 @@ fn install_dataset(app: &AppHandle, st: &AppState, ds: Dataset) -> CmdResult<Dat
 // Workspace (variables from any number of files, aligned on a common time grid)
 // ---------------------------------------------------------------------------
 
-use crate::core::workspace::{Align, Edit, Pipeline, Project, Recipe, SourceInfo, VariableInfo, Workspace};
+use crate::core::workspace::{Align, Edit, Pipeline, Project, Recipe, SourceInfo, UnitChange, VariableInfo, Workspace};
 
 #[derive(Serialize)]
 pub struct WorkspaceView {
@@ -268,6 +268,12 @@ pub async fn workspace_remove_source(app: AppHandle, state: AppStateRef<'_>, id:
 #[tauri::command]
 pub async fn workspace_rename(app: AppHandle, state: AppStateRef<'_>, old: String, new: String) -> CmdResult<WorkspaceView> {
     ws_change(app, state, move |ws| ws.rename(&old, &new).map(|_| Default::default())).await
+}
+
+/// Sets (or resets) the units of several variables, optionally converting their values.
+#[tauri::command]
+pub async fn workspace_set_units(app: AppHandle, state: AppStateRef<'_>, changes: Vec<UnitChange>) -> CmdResult<WorkspaceView> {
+    ws_change(app, state, move |ws| ws.set_units(&changes).map(|_| Default::default())).await
 }
 
 /// Makes `name` its source's time axis (`time = true`) or reverts that source to row numbers.

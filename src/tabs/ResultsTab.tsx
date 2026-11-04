@@ -203,9 +203,7 @@ export function ResultsTab() {
           }
         >
           {results.length === 0 ? (
-            <EmptyState title="No results yet">
-              Measure a value above, or press <b>Add to results</b> on the Cycles, Frequency response or Curve fit page. Results go into the report.
-            </EmptyState>
+            <EmptyState title="No results yet" />
           ) : (
             <div className="selectable min-h-0 flex-1 overflow-auto rounded-lg border border-ap-line">
               <table className="w-full border-collapse text-[12.5px] tabular-nums">

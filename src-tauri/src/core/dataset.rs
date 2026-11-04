@@ -30,8 +30,26 @@ pub struct SignalInfo {
     pub label: String,
 }
 
-/// Parses a header like `Motor_Torque [Nm]` into (name, unit, group).
+/// Splits the workspace's file suffix off a variable name: `Force (N) · run_a` → (`Force (N)`, `run_a`).
+pub fn split_suffix(col: &str) -> (&str, Option<&str>) {
+    match col.rsplit_once(" · ") {
+        Some((head, sfx)) if !head.trim().is_empty() && !sfx.trim().is_empty() => (head, Some(sfx)),
+        _ => (col, None),
+    }
+}
+
+/// Parses a header like `Motor_Torque [Nm]` (or `Force (N) · run_a`) into (name, unit, group).
+/// The file suffix stays on the name, so names remain unique.
 pub fn parse_signal_name(col: &str) -> (String, String, String) {
+    let (head, suffix) = split_suffix(col);
+    let (name, unit, group) = parse_header(head);
+    match suffix {
+        Some(s) => (format!("{name} · {s}"), unit, group),
+        None => (name, unit, group),
+    }
+}
+
+fn parse_header(col: &str) -> (String, String, String) {
     let trimmed = col.trim_end();
     // Units in brackets ("Torque [Nm]") or parentheses ("Force (mN)").
     let split_unit = |open_c: char, close_c: char| -> Option<(String, String)> {
@@ -55,7 +73,13 @@ pub fn parse_signal_name(col: &str) -> (String, String, String) {
     (name, unit, group)
 }
 
+/// "Force [N]", with a file suffix after the unit: "Force [N] · run_a".
 pub fn signal_label(name: &str, unit: &str) -> String {
+    if let (head, Some(sfx)) = split_suffix(name) {
+        if !unit.is_empty() {
+            return format!("{head} [{unit}] · {sfx}");
+        }
+    }
     if unit.is_empty() {
         name.to_string()
     } else {
@@ -112,6 +136,8 @@ pub struct SharedParts {
     pub texts: Vec<(String, Arc<Vec<String>>)>,
     pub time_origin: Option<f64>,
     pub metadata: Map<String, Value>,
+    /// Units set by the user, by column; they replace the unit read from the header.
+    pub units: HashMap<String, String>,
 }
 
 pub fn time_axis(parse_time: Option<Vec<f64>>, n_rows: usize) -> Vec<f64> {
@@ -137,7 +163,8 @@ impl Dataset {
         let mut signals = Vec::new();
         let mut raw = HashMap::new();
         for (idx, (col, values)) in parts.columns.into_iter().enumerate() {
-            let (name, unit, group) = parse_signal_name(&col);
+            let (name, parsed, group) = parse_signal_name(&col);
+            let unit = parts.units.get(&col).cloned().unwrap_or(parsed);
             let label = signal_label(&name, &unit);
             signals.push(SignalInfo { column: col.clone(), name, unit, group, index: idx, label });
             raw.insert(col, values);

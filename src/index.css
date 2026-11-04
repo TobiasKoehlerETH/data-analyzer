@@ -101,6 +101,9 @@
   --color-sidebar-ring: var(--sidebar-ring);
   --color-ap-red: var(--ap-red);
   --color-ap-red-soft: var(--ap-red-soft);
+  --color-ap-red-dark: var(--ap-red-dark);
+  --color-ap-gray-dark: var(--ap-gray-dark);
+  --color-ap-gray-light: var(--ap-gray-light);
   --color-ap-bluegray: var(--ap-bluegray);
   --color-ap-bluegray-60: var(--ap-bluegray-60);
   --color-ap-bluegray-15: var(--ap-bluegray-15);
@@ -200,8 +203,10 @@
 }
 .analysis-field select:focus, .analysis-field input:focus, .analysis-input:focus { outline: 2px solid color-mix(in srgb, var(--ap-red) 40%, transparent); outline-offset: 0; border-color: var(--ap-red); }
 
-.ap-workspace { animation: workspace-in 160ms ease-out; }
-@keyframes workspace-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+.ap-workspace { animation: workspace-in 200ms cubic-bezier(0.2, 0.7, 0.2, 1); }
+@keyframes workspace-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+/* Table rows and list items fade their highlight instead of snapping. */
+tr, li { transition: background-color 120ms ease-out, color 120ms ease-out; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }

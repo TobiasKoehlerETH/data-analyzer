@@ -41,6 +41,7 @@ async fn dispatch(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String>
         "workspace_view" => ok(c::workspace_view(st())),
         "workspace_remove" => { args!(a; names: Vec<String>); ok(c::workspace_remove(app.clone(), st(), names).await?) }
         "workspace_rename" => { args!(a; old: String, new: String); ok(c::workspace_rename(app.clone(), st(), old, new).await?) }
+        "workspace_set_units" => { args!(a; changes: Vec<crate::core::workspace::UnitChange>); ok(c::workspace_set_units(app.clone(), st(), changes).await?) }
         "workspace_set_time_unit" => { args!(a; id: u32, scale: f64); ok(c::workspace_set_time_unit(app.clone(), st(), id, scale).await?) }
         "workspace_set_row_step" => { args!(a; id: u32, step: Option<f64>); ok(c::workspace_set_row_step(app.clone(), st(), id, step).await?) }
         "workspace_set_time" => { args!(a; name: String, time: bool); ok(c::workspace_set_time(app.clone(), st(), name, time).await?) }

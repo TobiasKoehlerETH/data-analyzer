@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use super::csv_parser::{parse_file_with, ImportOptions, ParseResult};
 use super::par;
-use super::dataset::{sample_rate_of, Dataset, SharedParts};
+use super::dataset::{parse_signal_name, sample_rate_of, Dataset, SharedParts};
 use super::filters::{apply_steps, FilterStep};
 
 /// Upper bound on the common grid; longer spans get a coarser step.
@@ -464,6 +464,8 @@ pub struct Variable {
     pub error: Option<String>,
     /// The time of each row of `data` when a step (downsample) changed the rows; None = the file's time.
     pub time: Option<Arc<Vec<f64>>>,
+    /// The unit set by the user; None = the unit in the header ("Force [N]"), Some("") = no unit.
+    pub unit: Option<String>,
 }
 
 /// A text column (labels, states, IDs) used for grouping.
@@ -491,6 +493,25 @@ pub struct VariableInfo {
     pub edits: Vec<String>,
     pub can_undo: bool,
     pub error: Option<String>,
+    /// The unit in use: set by the user, or read from the header.
+    pub unit: String,
+    /// The unit read from the header (or formula name).
+    pub header_unit: String,
+    /// True when the user set the unit.
+    pub unit_set: bool,
+}
+
+/// One change on the units dialog: a new unit, and optionally `value × scale + offset` applied
+/// to the values as processing steps (a conversion such as mm → m).
+#[derive(Debug, Clone, Deserialize)]
+pub struct UnitChange {
+    pub name: String,
+    /// None = back to the unit in the header.
+    pub unit: Option<String>,
+    #[serde(default)]
+    pub scale: Option<f64>,
+    #[serde(default)]
+    pub offset: Option<f64>,
 }
 
 /// What one pipeline block did to the values it received.
@@ -587,6 +608,8 @@ pub struct Recipe {
 pub struct RecipeColumn {
     pub column: String,
     pub steps: Vec<Edit>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -642,6 +665,8 @@ pub struct ProjectVariable {
     pub kind: ProjectKind,
     #[serde(default)]
     pub steps: Vec<Edit>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1030,7 +1055,7 @@ impl Workspace {
     fn add_var(&mut self, name: &str, kind: Kind, data: Vec<f64>) -> String {
         let name = self.unique_name(name);
         let data = Arc::new(data);
-        self.vars.push(Variable { name: name.clone(), kind, original: data.clone(), data, steps: vec![], edits: vec![], error: None, time: None });
+        self.vars.push(Variable { name: name.clone(), kind, original: data.clone(), data, steps: vec![], edits: vec![], error: None, time: None, unit: None });
         name
     }
 
@@ -1430,6 +1455,34 @@ impl Workspace {
             .collect();
         self.remove(&names);
         self.sources.retain(|s| s.id != id);
+    }
+
+    /// Sets the units of several variables at once. A change with a scale or offset converts the
+    /// values too, as Gain and Offset steps at the end of the pipeline (so Undo and Reset work).
+    pub fn set_units(&mut self, changes: &[UnitChange]) -> Result<(), String> {
+        for c in changes {
+            if self.get(&c.name).is_none() {
+                return Err(if self.texts.iter().any(|t| t.name == c.name) { format!("'{}' is a text column and has no unit.", c.name) } else { format!("No variable '{}'.", c.name) });
+            }
+        }
+        for c in changes {
+            let time = self.is_time_var(&c.name);
+            if let Some(k) = c.scale.filter(|k| k.is_finite() && *k != 1.0) {
+                if time {
+                    return Err(format!("'{}' is a time axis: set its unit with 'in' next to 'Time from'.", c.name));
+                }
+                self.edit(&c.name, Edit::Scale(k))?;
+            }
+            if let Some(o) = c.offset.filter(|o| o.is_finite() && *o != 0.0) {
+                if time {
+                    return Err(format!("'{}' is a time axis: set its unit with 'in' next to 'Time from'.", c.name));
+                }
+                self.edit(&c.name, Edit::Offset(o))?;
+            }
+            let v = self.get_mut(&c.name)?;
+            v.unit = c.unit.as_ref().map(|u| u.trim().to_string());
+        }
+        Ok(())
     }
 
     pub fn rename(&mut self, old: &str, new: &str) -> Result<(), String> {
@@ -1873,7 +1926,8 @@ impl Workspace {
             Value::Array(self.info().iter().map(|v| Value::String(format!("{} ← {}", v.name, v.source))).collect()),
         );
         metadata.insert("alignment".into(), Value::String(format!("{:?}", self.align).to_lowercase()));
-        Some(Dataset::from_shared(path, SharedParts { time: self.grid.clone(), sample_rate: self.grid_rate, columns, texts, time_origin, metadata }))
+        let units: HashMap<String, String> = signal_idx.iter().filter_map(|&i| self.vars[i].unit.clone().map(|u| (self.vars[i].name.clone(), u))).collect();
+        Some(Dataset::from_shared(path, SharedParts { time: self.grid.clone(), sample_rate: self.grid_rate, columns, texts, time_origin, metadata, units }))
     }
 
     /// Row-aligned dataset of all signals on the common grid (None without numeric signals).
@@ -1947,6 +2001,7 @@ impl Workspace {
                     }
                     Kind::Derived { formula } => (format!("= {formula}"), None, "derived", Some(formula.clone())),
                 };
+                let header_unit = parse_signal_name(&v.name).1;
                 VariableInfo {
                     name: v.name.clone(),
                     len: v.data.len(),
@@ -1960,6 +2015,9 @@ impl Workspace {
                     edits: v.edits.clone(),
                     can_undo: !v.steps.is_empty(),
                     error: v.error.clone(),
+                    unit: v.unit.clone().unwrap_or_else(|| header_unit.clone()),
+                    header_unit,
+                    unit_set: v.unit.is_some(),
                 }
             })
             .collect();
@@ -1978,6 +2036,9 @@ impl Workspace {
                 edits: vec![],
                 can_undo: false,
                 error: None,
+                unit: String::new(),
+                header_unit: String::new(),
+                unit_set: false,
             }
         }));
         out
@@ -2030,8 +2091,8 @@ impl Workspace {
                 Kind::Imported { column, .. } => {
                     names.insert(v.name.clone(), column.clone());
                     let steps: Vec<Edit> = v.steps.iter().filter(|s| !s.is_manual()).cloned().collect();
-                    if wanted(&v.name) && !steps.is_empty() && !columns.iter().any(|c| &c.column == column) {
-                        columns.push(RecipeColumn { column: column.clone(), steps });
+                    if wanted(&v.name) && (!steps.is_empty() || v.unit.is_some()) && !columns.iter().any(|c| &c.column == column) {
+                        columns.push(RecipeColumn { column: column.clone(), steps, unit: v.unit.clone() });
                     }
                 }
                 Kind::Derived { formula } => {
@@ -2063,6 +2124,9 @@ impl Workspace {
             .collect();
         for rc in &recipe.columns {
             for (name, _, _) in targets.iter().filter(|(_, c, _)| c == &rc.column) {
+                if let (Some(u), Ok(v)) = (&rc.unit, self.get_mut(name)) {
+                    v.unit = Some(u.clone());
+                }
                 for step in &rc.steps {
                     if let Err(e) = self.edit_local(name, step.clone()) {
                         warnings.push(format!("{name}: {e}"));
@@ -2136,11 +2200,13 @@ impl Workspace {
                         Kind::Derived { formula } => ProjectKind::Derived { formula: formula.clone() },
                     },
                     steps: v.steps.clone(),
+                    unit: v.unit.clone(),
                 })
                 .chain(self.texts.iter().map(|t| ProjectVariable {
                     name: t.name.clone(),
                     kind: ProjectKind::Text { source: t.source, column: t.column.clone() },
                     steps: vec![],
+                    unit: None,
                 }))
                 .collect(),
             auto_recipe: self.auto_recipe.clone(),
@@ -2209,6 +2275,7 @@ impl Workspace {
                                     edits: vec![],
                                     error: None,
                                     time: None,
+                                    unit: pv.unit.clone(),
                                 });
                             }
                             None => warnings.push(format!("{}: column '{column}' is missing.", file_name(&ps.path))),
@@ -2237,6 +2304,7 @@ impl Workspace {
                         edits: vec![],
                         error: None,
                         time: None,
+                        unit: pv.unit.clone(),
                     });
                     ordered.push(pv.name.clone());
                 }
@@ -2283,6 +2351,40 @@ mod tests {
     fn import(ws: &mut Workspace, path: &str, cols: &[&str]) -> Vec<String> {
         let cols: Vec<String> = cols.iter().map(|c| c.to_string()).collect();
         ws.import(path, None, &ImportOptions::default(), &cols, None).unwrap().0
+    }
+
+    #[test]
+    fn units_come_from_headers_can_be_set_converted_and_saved() {
+        let a = write("units_a.csv", "time,Force (N),Gap [mm],Count\n0,1,2,3\n1,2,4,6\n");
+        let mut ws = Workspace::default();
+        let added = ws.import(&a, None, &ImportOptions::default(), &["time".into(), "Force (N)".into(), "Gap [mm]".into(), "Count".into()], Some("run".into())).unwrap().0;
+        assert!(added.contains(&"Force (N) · run".to_string()));
+        let unit = |ws: &Workspace, n: &str| ws.info().into_iter().find(|v| v.name == n).unwrap().unit;
+        assert_eq!(unit(&ws, "Force (N) · run"), "N", "a file suffix does not hide the unit");
+        assert_eq!(unit(&ws, "Gap [mm] · run"), "mm");
+        assert_eq!(unit(&ws, "Count · run"), "");
+        let ds = ws.to_dataset("Workspace").unwrap();
+        assert_eq!(ds.signals.iter().find(|s| s.column == "Gap [mm] · run").unwrap().label, "Gap [mm] · run");
+        ws.set_units(&[
+            UnitChange { name: "Gap [mm] · run".into(), unit: Some("m".into()), scale: Some(0.001), offset: None },
+            UnitChange { name: "Count · run".into(), unit: Some("counts".into()), scale: None, offset: None },
+        ])
+        .unwrap();
+        assert_eq!(unit(&ws, "Gap [mm] · run"), "m");
+        assert_eq!(ws.get("Gap [mm] · run").unwrap().data[1], 0.004, "converted as a Gain step");
+        assert_eq!(ws.get("Gap [mm] · run").unwrap().steps.len(), 1);
+        let ds = ws.to_dataset("Workspace").unwrap();
+        let gap = ds.signals.iter().find(|s| s.column == "Gap [mm] · run").unwrap();
+        assert_eq!((gap.name.as_str(), gap.unit.as_str(), gap.label.as_str()), ("Gap · run", "m", "Gap [m] · run"));
+        // Saved with the project and in a recipe.
+        let p = ws.to_project();
+        assert_eq!(p.variables.iter().find(|v| v.name == "Count · run").unwrap().unit.as_deref(), Some("counts"));
+        assert!(ws.make_recipe("r", None).columns.iter().any(|c| c.column == "Count" && c.unit.as_deref() == Some("counts")));
+        // Back to the header's unit.
+        ws.set_units(&[UnitChange { name: "Count · run".into(), unit: None, scale: None, offset: None }]).unwrap();
+        assert_eq!(unit(&ws, "Count · run"), "");
+        assert!(ws.set_units(&[UnitChange { name: "time · run".into(), unit: Some("min".into()), scale: Some(60.0), offset: None }]).is_err(), "time axes are not converted here");
+        std::fs::remove_file(a).ok();
     }
 
     #[test]

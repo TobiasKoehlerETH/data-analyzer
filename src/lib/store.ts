@@ -12,6 +12,7 @@ export type TabId =
   | "spectrogram"
   | "frf"
   | "cycles"
+  | "peaks"
   | "correlation"
   | "curvefit"
   | "model"
@@ -27,6 +28,7 @@ export const DEFAULT_TAB_ORDER: TabId[] = [
   "spectrum",
   "spectrogram",
   "frf",
+  "peaks",
   "cycles",
   "correlation",
   "curvefit",

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { ListPlus } from "lucide-react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { Download, ListPlus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -13,6 +13,7 @@ import { analysisVectors, categoryVector, type Vectors } from "@/lib/analysis";
 import { errorText } from "@/lib/api";
 import { INK, seriesColor, wash } from "@/lib/chart";
 import { cut, detectEvents, makeSegments, meanCurve, measure, METRICS, metricUnit, type EventMode, type Metric } from "@/lib/events";
+import { fileStem, saveCsv } from "@/lib/csv";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -117,9 +118,11 @@ export function CyclesTab() {
     return ts.length ? [ts[0], ts[ts.length - 1]] : [0, 0];
   }, [time]);
 
+  // Typing a level stays smooth: detection follows a moment later.
+  const p = useDeferredValue({ level, hysteresis, holdoff });
   const events = useMemo(
-    () => (triggerValues ? detectEvents(time, triggerValues, { mode, level, hysteresis, holdoff, tolerance: textTrigger ? 0 : hysteresis }) : []),
-    [time, triggerValues, mode, level, hysteresis, holdoff, textTrigger],
+    () => (triggerValues ? detectEvents(time, triggerValues, { mode, level: p.level, hysteresis: p.hysteresis, holdoff: p.holdoff, tolerance: textTrigger ? 0 : p.hysteresis }) : []),
+    [time, triggerValues, mode, p, textTrigger],
   );
   const segments = useMemo(() => makeSegments(events, range, { mode: segMode, pre, post, minDuration }), [events, range, segMode, pre, post, minDuration]);
   useEffect(() => {
@@ -280,8 +283,8 @@ export function CyclesTab() {
           value={segMode}
           onChange={setSegMode}
           options={[
-            { value: "between", label: "Event to event", hint: "Each cycle runs from one event to the next" },
-            { value: "window", label: "Window around event", hint: "A fixed window before and after each event" },
+            { value: "between", label: "Event → event", hint: "Each cycle runs from one event to the next" },
+            { value: "window", label: "Window", hint: "A fixed window before and after each event" },
           ]}
         />
         {segMode === "window" && (
@@ -322,7 +325,7 @@ export function CyclesTab() {
             {overlayPanels.length && included.length ? (
               <StackedChart panels={overlayPanels} xLabel={segMode === "window" ? "Time from event [s]" : "Time in cycle [s]"} resetKey={`${overlay}|${segMode}`} />
             ) : (
-              <EmptyState title="No cycles">Set the level so the trigger crosses it at least twice.</EmptyState>
+              <EmptyState title="No cycles" />
             )}
           </Panel>
         </div>
@@ -333,6 +336,33 @@ export function CyclesTab() {
             className="min-h-0 flex-[3]"
             bodyClassName="flex min-h-0 flex-col gap-2 pt-1"
             actions={
+              <>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={!stats.length}
+                title="Every cycle with its start, length and values as a CSV file"
+                onClick={() =>
+                  saveCsv(
+                    `${fileStem(triggerLabel)}-cycles.csv`,
+                    [
+                      "Cycle",
+                      "Included",
+                      "Start [s]",
+                      "End [s]",
+                      "Length [s]",
+                      ...columns.map((c) => {
+                        const i = signalInfo(c.signal);
+                        const un = metricUnit(c.metric, i?.unit ?? "");
+                        return `${i?.label ?? c.signal} ${METRICS[c.metric].label}${un ? ` [${un}]` : ""}`;
+                      }),
+                    ],
+                    stats.map((r) => [r.seg.index, excluded.includes(r.seg.index) ? "no" : "yes", r.seg.start, r.seg.end, r.seg.end - r.seg.start, ...columns.map((c) => r.values[c.signal]?.[c.metric] ?? null)]),
+                  )
+                }
+              >
+                <Download /> CSV
+              </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button size="sm" variant="outline" disabled={!included.length || !columns.length}>
@@ -344,6 +374,7 @@ export function CyclesTab() {
                   <DropdownMenuItem onSelect={() => addToResults(true)}>Every cycle</DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
+              </>
             }
           >
             <div className="flex flex-wrap gap-2">

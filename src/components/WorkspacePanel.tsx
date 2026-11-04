@@ -14,6 +14,7 @@ import {
   Pencil,
   Plus,
   RotateCcw,
+  Ruler,
   Save,
   Sigma,
   Trash2,
@@ -27,6 +28,8 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { NumberInput } from "@/components/common";
+import { UnitsDialog } from "@/components/UnitsDialog";
+import { bareName } from "@/lib/units";
 import { api, errorText, type Align, type SourceInfo, type TimeMap, type VariableInfo, type WorkspaceView } from "@/lib/api";
 import { ask, message, open, save } from "@/lib/platform";
 import { useApp } from "@/lib/store";
@@ -247,6 +250,8 @@ export function WorkspacePanel({ ws, fresh, run, onAddFiles, onExport }: Props) 
   const [renaming, setRenaming] = useState<{ name: string; value: string } | null>(null);
   const [formula, setFormula] = useState<{ name: string; text: string; editing: string | null; error: string } | null>(null);
   const [spark, setSpark] = useState<Record<string, (number | null)[]>>({});
+  /** The units dialog: closed (undefined), every signal (null) or the ones listed. */
+  const [units, setUnits] = useState<string[] | null | undefined>(undefined);
   const numeric = ws.variables.filter((v) => v.kind !== "text");
   const sparkKey = numeric.map((v) => `${v.name}:${v.edits.length}`).join("|");
 
@@ -380,9 +385,32 @@ export function WorkspacePanel({ ws, fresh, run, onAddFiles, onExport }: Props) 
               }}
             />
           ) : (
-            <p className="truncate text-[13.5px] font-medium" onDoubleClick={() => setRenaming({ name: v.name, value: v.name })} title={`${v.source}\nDouble-click to rename`}>
-              {v.name}
-            </p>
+            <div className="flex min-w-0 items-center gap-1.5">
+              <p className="truncate text-[13.5px] font-medium" onDoubleClick={() => setRenaming({ name: v.name, value: v.name })} title={`${v.name}\n${v.source}\nDouble-click to rename`}>
+                {v.kind === "text" ? v.name : bareName(v.name, v.header_unit)}
+              </p>
+              {v.kind !== "text" &&
+                (v.unit ? (
+                  <button
+                    onClick={() => setUnits([v.name])}
+                    title={`Unit: ${v.unit}${v.unit_set ? " (set by you)" : " (from the header)"}. Click to change or convert.`}
+                    className={cn(
+                      "shrink-0 rounded px-1.5 text-[11.5px] leading-[18px] font-medium",
+                      v.unit_set ? "bg-ap-red-soft text-ap-red-dark hover:bg-[#ffe3dd]" : "bg-ap-bluegray-15 text-ap-gray-dark hover:bg-ap-gray-light",
+                    )}
+                  >
+                    {v.unit}
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setUnits([v.name])}
+                    className="shrink-0 rounded border border-dashed border-ap-gray-light px-1.5 text-[11.5px] leading-4 text-muted-foreground opacity-0 group-hover:opacity-100 hover:border-ap-red hover:text-foreground"
+                    title="Set a unit"
+                  >
+                    + unit
+                  </button>
+                ))}
+            </div>
           )}
           <p className={cn("truncate text-[12px] tabular-nums", v.error ? "text-destructive" : "text-muted-foreground")} title={[v.error ?? v.source, ...v.edits].join("\n")}>
             {v.error ? (
@@ -440,6 +468,11 @@ export function WorkspacePanel({ ws, fresh, run, onAddFiles, onExport }: Props) 
               <Pencil /> Rename
             </DropdownMenuItem>
             {v.kind !== "text" && (
+              <DropdownMenuItem onSelect={() => setUnits([v.name])}>
+                <Ruler /> Unit…
+              </DropdownMenuItem>
+            )}
+            {v.kind !== "text" && (
               <DropdownMenuItem onSelect={() => run(() => api.workspaceEdit(v.name, "duplicate"))}>
                 <Copy /> Duplicate
               </DropdownMenuItem>
@@ -490,6 +523,10 @@ export function WorkspacePanel({ ws, fresh, run, onAddFiles, onExport }: Props) 
         </DropdownMenu>
         <Button variant="outline" disabled={!numeric.length} title="New variable from a formula" onClick={() => setFormula({ name: "", text: "", editing: null, error: "" })}>
           <Sigma /> Formula
+        </Button>
+        <Button variant="outline" disabled={!numeric.length} title="Set, fix or convert the units of all signals" onClick={() => setUnits(null)}>
+          <Ruler /> Units
+          {numeric.some((v) => !v.is_time && !v.unit) && <span className="size-1.5 rounded-full bg-ap-red" title="Some signals have no unit" />}
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -603,7 +640,6 @@ export function WorkspacePanel({ ws, fresh, run, onAddFiles, onExport }: Props) 
                   Same length
                 </Button>
               )}
-              <span className="text-[12px] text-muted-foreground">0 = keep each file's own time step</span>
               <div className="flex-1" />
               <Button disabled={!ws.dataset} onClick={() => setActiveTab("prepare")}>
                 <BrushCleaning /> Prepare
@@ -653,6 +689,8 @@ export function WorkspacePanel({ ws, fresh, run, onAddFiles, onExport }: Props) 
             )}
         </div>
       )}
+
+      <UnitsDialog open={units !== undefined} onOpenChange={(o) => !o && setUnits(undefined)} variables={ws.variables} focus={units ?? null} run={run} />
 
       <Dialog open={!!formula} onOpenChange={(o) => !o && setFormula(null)}>
         <DialogContent className="sm:max-w-lg">

@@ -81,6 +81,19 @@ export interface VariableInfo {
   edits: string[];
   can_undo: boolean;
   error: string | null;
+  /** The unit in use (set by the user, or read from the header). */
+  unit: string;
+  /** The unit in the header, e.g. "N" in "Force (N)". */
+  header_unit: string;
+  unit_set: boolean;
+}
+
+/** A new unit (null = the header's) and an optional conversion `value × scale + offset`. */
+export interface UnitChange {
+  name: string;
+  unit: string | null;
+  scale?: number | null;
+  offset?: number | null;
 }
 
 export interface SourceInfo {
@@ -418,6 +431,7 @@ export const api = {
   workspaceView: () => invoke<WorkspaceView>("workspace_view"),
   workspaceRemove: (names: string[]) => invoke<WorkspaceView>("workspace_remove", { names }),
   workspaceRename: (old: string, newName: string) => invoke<WorkspaceView>("workspace_rename", { old, new: newName }),
+  workspaceSetUnits: (changes: UnitChange[]) => invoke<WorkspaceView>("workspace_set_units", { changes }),
   workspaceSetTime: (name: string, time: boolean) => invoke<WorkspaceView>("workspace_set_time", { name, time }),
   workspaceImportBatch: (paths: string[], folder: string | null, columns: string[] | null) =>
     invoke<WorkspaceView>("workspace_import_batch", { paths, folder, columns }),

@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen, open, save, message, isTauri } from "@/lib/platform";
 import { BrushCleaning, ChartLine, Cpu, Database, FileText, FolderOpen, Microscope, Plus, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Segmented } from "@/components/common";
 import { Progress } from "@/components/ui/progress";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -22,6 +23,7 @@ import { ModelTab } from "@/tabs/ModelTab";
 import { ReportTab } from "@/tabs/ReportTab";
 import { CurveFitTab } from "@/tabs/CurveFitTab";
 import { CyclesTab } from "@/tabs/CyclesTab";
+import { PeaksTab } from "@/tabs/PeaksTab";
 import { FrfTab } from "@/tabs/FrfTab";
 import { ResultsTab } from "@/tabs/ResultsTab";
 import { SpectrogramTab } from "@/tabs/SpectrogramTab";
@@ -43,6 +45,7 @@ const PAGES: Record<TabId, PageDef> = {
   spectrum: { label: "Spectrum", component: SpectrumTab, hint: "See which frequencies a signal contains. Drag the cutoff line, then add a low-pass there.", needsData: true },
   spectrogram: { label: "Spectrogram", component: SpectrogramTab, hint: "Frequency content over time, or orders of a shaft speed.", needsData: true },
   frf: { label: "Frequency response", component: FrfTab, hint: "Bode plot and coherence from an input to an output.", needsData: true },
+  peaks: { label: "Peaks & limits", component: PeaksTab, hint: "Find peaks and valleys with your own rules, or where a signal leaves its limits.", needsData: true },
   cycles: { label: "Cycles", component: CyclesTab, hint: "Cut the data at trigger events and compare the cycles.", needsData: true },
   correlation: { label: "Correlations", component: CorrelationTab, hint: "Find signals that move together. Click a cell or pair for details.", needsData: true },
   curvefit: { label: "Curve fit", component: CurveFitTab, hint: "Pick X and Y variables, choose a model and fit.", needsData: true },
@@ -63,7 +66,7 @@ const STEPS: Step[] = [
   { id: "data", label: "Data", icon: Database, pages: ["file"] },
   { id: "prepare", label: "Prepare", icon: BrushCleaning, pages: ["prepare"] },
   { id: "explore", label: "Explore", icon: ChartLine, pages: ["timeseries", "statistics", "compare"] },
-  { id: "analyse", label: "Analyse", icon: Microscope, pages: ["spectrum", "spectrogram", "frf", "cycles", "correlation", "curvefit"] },
+  { id: "analyse", label: "Analyse", icon: Microscope, pages: ["spectrum", "spectrogram", "frf", "peaks", "cycles", "correlation", "curvefit"] },
   { id: "model", label: "Model", icon: Cpu, pages: ["model"] },
   { id: "report", label: "Report", icon: FileText, pages: ["results", "report"] },
 ];
@@ -94,7 +97,7 @@ function NeedsData({ onImport }: { onImport: () => void }) {
 }
 
 export default function App() {
-  const { activeTab, setActiveTab, flash, progress, setProgress, dataset, models, refreshModels, showStatus } = useApp();
+  const { activeTab, setActiveTab, flash, progress, setProgress, dataset, models, refreshModels, showStatus, results } = useApp();
   const [now, setNow] = useState(Date.now());
   const [visited, setVisited] = useState(() => new Set<TabId>([activeTab]));
   /** The page last open in each step, so switching steps returns to where you were. */
@@ -215,6 +218,22 @@ export default function App() {
     STEPS.findIndex((s) => s.pages.includes(activeTab)),
   );
   const step = STEPS[stepIndex];
+  // The active step's highlight slides between steps.
+  const navRef = useRef<HTMLElement>(null);
+  const [navPill, setNavPill] = useState<{ left: number; width: number } | null>(null);
+  const measureNav = () => {
+    const el = navRef.current?.querySelector<HTMLElement>('[aria-current="step"]');
+    const next = el ? { left: el.offsetLeft, width: el.offsetWidth } : null;
+    setNavPill((p) => (p?.left === next?.left && p?.width === next?.width ? p : next));
+  };
+  useLayoutEffect(measureNav, [stepIndex, models.length, results.length]);
+  useEffect(() => {
+    if (!navRef.current) return;
+    const ro = new ResizeObserver(measureNav);
+    ro.observe(navRef.current);
+    return () => ro.disconnect();
+  }, []);
+
   const dataName = useMemo(() => {
     if (!dataset) return "";
     return dataset.path === "Workspace" ? "Workspace" : (dataset.path.split(/[\\/]/).pop() ?? dataset.path);
@@ -225,11 +244,18 @@ export default function App() {
       <div className="flex h-full flex-col">
         {/* Top bar: brand, the workflow, the data in use */}
         <header className="flex h-14 shrink-0 items-center gap-6 border-b border-ap-line bg-white px-4">
-          <nav className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto" aria-label="Workflow">
+          <nav ref={navRef} className="relative flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto" aria-label="Workflow">
+            {navPill && (
+              <span
+                aria-hidden
+                className="absolute top-1/2 h-9 -translate-y-1/2 rounded-lg bg-ap-bluegray-15 transition-[left,width] duration-250 ease-out motion-reduce:transition-none"
+                style={{ left: navPill.left, width: navPill.width }}
+              />
+            )}
             {STEPS.map((s, si) => {
               const active = si === stepIndex;
               const locked = !dataset && s.pages.every((p) => PAGES[p].needsData);
-              const badge = s.id === "model" && models.length > 0 ? models.length : null;
+              const badge = s.id === "model" && models.length > 0 ? models.length : s.id === "report" && results.length > 0 ? results.length : null;
               const Icon = s.icon;
               return (
                 <button
@@ -238,8 +264,8 @@ export default function App() {
                   title={PAGES[s.pages[0]].hint}
                   aria-current={active ? "step" : undefined}
                   className={cn(
-                    "group relative flex h-9 items-center gap-2 rounded-lg px-3 text-[13.5px] whitespace-nowrap transition-colors",
-                    active ? "bg-ap-bluegray-15 font-semibold text-foreground" : "text-muted-foreground hover:bg-[#f6f7f9] hover:text-foreground",
+                    "group relative z-10 flex h-9 items-center gap-2 rounded-lg px-3 text-[13.5px] whitespace-nowrap transition-colors",
+                    active ? cn("font-semibold text-foreground", !navPill && "bg-ap-bluegray-15") : "text-muted-foreground hover:bg-[#f6f7f9] hover:text-foreground",
                     locked && !active && "opacity-55",
                   )}
                 >
@@ -253,7 +279,11 @@ export default function App() {
                   </span>
                   <Icon className="hidden size-4 xl:block" strokeWidth={1.8} />
                   {s.label}
-                  {badge !== null && <span className="rounded-full bg-ap-red px-1.5 text-[10.5px] font-semibold text-white">{badge}</span>}
+                  {badge !== null && (
+                    <span key={badge} className="animate-in zoom-in-50 rounded-full bg-ap-red px-1.5 text-[10.5px] font-semibold text-white duration-300" title={s.id === "report" ? `${badge} results` : `${badge} models`}>
+                      {badge}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -278,23 +308,7 @@ export default function App() {
         {/* Page tabs, only for steps with more than one page */}
         {step.pages.length > 1 && (
           <div className="flex h-12 shrink-0 items-center border-b border-ap-line bg-[#fafbfc] px-5">
-            <div role="tablist" className="flex items-center gap-0.5 rounded-lg bg-[#e8eaee] p-0.5">
-              {step.pages.map((id) => (
-                <button
-                  key={id}
-                  role="tab"
-                  aria-selected={id === activeTab}
-                  onClick={() => setActiveTab(id)}
-                  title={PAGES[id].hint}
-                  className={cn(
-                    "h-7 rounded-md px-3.5 text-[13px] whitespace-nowrap transition-colors",
-                    id === activeTab ? "bg-white font-semibold text-foreground shadow-[var(--ap-shadow-sm)]" : "text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  {PAGES[id].label}
-                </button>
-              ))}
-            </div>
+            <Segmented key={step.id} value={activeTab} onChange={setActiveTab} options={step.pages.map((id) => ({ value: id, label: PAGES[id].label, hint: PAGES[id].hint }))} />
           </div>
         )}
 
