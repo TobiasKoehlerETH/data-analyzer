@@ -50,6 +50,10 @@ A local desktop app for exploring numeric measurement data, cleaning it step by 
 
 See [the guide](docs/analysis-workspaces.md) for details.
 
+## Download
+
+Windows installer and portable `.exe`: [Releases](https://github.com/TobiasKoehlerETH/data-analyzer/releases/latest). A new release is built automatically when a version tag (`v1.2.3`) is pushed.
+
 ## Run
 
 Install Node.js, Rust and the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your system. On Windows, Tauri needs the Microsoft C++ build tools and WebView2.

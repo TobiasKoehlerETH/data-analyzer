@@ -1,6 +1,6 @@
 [package]
 name = "data-analyzer"
-version = "1.0.0"
+version = "1.1.0"
 description = "Desktop data analyzer for industrial time-series CSV files"
 authors = ["Tobias Köhler"]
 edition = "2021"

@@ -1,0 +1,67 @@
+# Builds the Windows app and publishes it as a GitHub release.
+# Runs when a version tag (v1.2.3) is pushed, or by hand from the Actions tab.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install
+        run: npm ci
+
+      - name: Test
+        run: node --test "tools/*.test.ts"
+
+      - name: Build and publish the installer
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: Data Analyzer v__VERSION__
+          releaseDraft: false
+          prerelease: false
+          releaseBody: |
+            **Windows:** download `Data.Analyzer_<version>_x64-setup.exe` and run it, or take the portable `Data-Analyzer-<version>-portable.exe` (no install; needs WebView2, which Windows 10 and 11 already have).
+
+            ## New in this version
+            - **Analyse:** spectrogram and order analysis, frequency response (Bode and coherence), peaks / valleys / limit checks with every parameter tunable, cycles cut at trigger events.
+            - **Results** page: measure values (max, RMS, rise and settling time, …) and collect results from every page; chart, copy and CSV; part of the report.
+            - **Units:** every signal shows its unit; set, fix or convert units (mm → µm, °C → °F, bar → psi) for one or all signals.
+            - **Values table:** click a signal to see its values like a spreadsheet; remove or edit cells, paste from Excel.
+            - **Linked cursor and selection:** click a chart to see every signal's value at that moment; select time ranges (drag, or "where Speed is 1500–2100 rpm") that the analyses then use.
+            - **Notes** on time ranges, shown on every chart, saved in projects and listed in reports.
+            - **Sharing:** copy any chart for PowerPoint or Word; interactive HTML report with zoomable charts and filterable tables.
+            - Smoother interface: sliding tab indicators, less text, clearer empty states.
+
+      - name: Attach the portable exe
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $v = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $exe = "Data-Analyzer-$v-portable.exe"
+          Copy-Item src-tauri/target/release/data-analyzer.exe $exe
+          gh release upload "v$v" $exe --clobber
