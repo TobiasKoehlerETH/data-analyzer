@@ -5,6 +5,7 @@ import { listen, open, save, message, isTauri } from "@/lib/platform";
 import { BrushCleaning, ChartLine, Cpu, Database, FileText, FolderOpen, Microscope, Plus, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Segmented } from "@/components/common";
+import { SelectionBar } from "@/components/SelectionBar";
 import { Progress } from "@/components/ui/progress";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -288,6 +289,7 @@ export default function App() {
               );
             })}
           </nav>
+          <SelectionBar />
           <button
             onClick={() => setActiveTab("file")}
             className="flex max-w-[320px] shrink-0 items-center gap-2.5 max-lg:hidden rounded-lg border border-ap-line bg-white py-1.5 pr-3 pl-2.5 text-left hover:border-ap-bluegray-60"

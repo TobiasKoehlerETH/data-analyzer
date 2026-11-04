@@ -26,7 +26,7 @@ export function resultsCsv(rows: ResultRow[]): string {
 
 /** Every scalar result in one table: measured here, or sent from Cycles, Frequency response and Curve fit. */
 export function ResultsTab() {
-  const { dataset, dataVersion, results, addResults, removeResults, showStatus } = useApp();
+  const { dataset, dataVersion, results, addResults, removeResults, showStatus, brush } = useApp();
   const [column, setColumn] = useState<string | null>(null);
   const [metric, setMetric] = useState<Metric>("max");
   const [from, setFrom] = useState(0);
@@ -164,6 +164,11 @@ export function ResultsTab() {
           <Field label="To" className="w-36">
             <NumberInput value={to} step={0.1} suffix="s" onChange={setTo} />
           </Field>
+          {brush.length > 0 && (
+            <Button size="sm" variant="ghost" onClick={() => (setFrom(round(brush[0][0])), setTo(round(brush[brush.length - 1][1])))} title="From the start to the end of the selection">
+              Selection
+            </Button>
+          )}
           {!whole && full && (
             <Button size="sm" variant="ghost" onClick={() => (setFrom(round(full[0])), setTo(round(full[1])))}>
               Whole signal

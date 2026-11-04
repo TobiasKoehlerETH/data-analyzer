@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { api, errorText, type VariableInfo, type VariableSamples, type WorkspaceView } from "@/lib/api";
+import { useApp } from "@/lib/store";
 import { bareName } from "@/lib/units";
 import { cn } from "@/lib/utils";
 
@@ -63,6 +64,33 @@ export function ValuesSheet({ variable, onClose, run }: { variable: VariableInfo
     ro.observe(el);
     return () => ro.disconnect();
   }, [vec !== null]);
+
+  // Opening at the linked cursor: the row nearest to it.
+  const cursorTime = useApp((x) => x.cursor);
+  const jumped = useRef<string | null>(null);
+  useEffect(() => {
+    if (!vec || !name || jumped.current === name) return;
+    jumped.current = name;
+    const t = vec.edited_time;
+    if (cursorTime === null || !t.length) return;
+    let lo = 0;
+    let hi = t.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (t[mid] < cursorTime) lo = mid + 1;
+      else hi = mid;
+    }
+    const row = lo > 0 && Math.abs(t[lo - 1] - cursorTime) < Math.abs(t[lo] - cursorTime) ? lo - 1 : lo;
+    setCursor(row);
+    setAnchor(row);
+    setSel(new Set([row]));
+    requestAnimationFrame(() => {
+      if (body.current) body.current.scrollTop = Math.max(0, row * ROW - body.current.clientHeight / 2);
+    });
+  }, [vec, name, cursorTime]);
+  useEffect(() => {
+    if (!name) jumped.current = null;
+  }, [name]);
 
   const values = vec?.edited ?? [];
   const times = vec?.edited_time ?? [];

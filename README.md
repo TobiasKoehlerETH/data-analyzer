@@ -9,13 +9,20 @@ A local desktop app for exploring numeric measurement data, cleaning it step by 
 - **Data**: CSV, text, Excel, Parquet, MAT, HDF5 and TDMS files in one workspace. Each file keeps its own time base: take the time from a column or a fixed step per row, check rows against time, and line files up.
 - **Prepare**: process a signal as a row of blocks (clean, filter, adjust). Click a block to see its input and output, change it, move it or delete it.
 - **Explore**: plots, distributions and file comparison.
+- **Linked cursor and selection**: click any time chart to place a cursor that shows every signal's value at that moment on every page; Shift+drag (or "Select where Speed is 1500–2100 rpm") selects time ranges that the analyses then use.
+- **Notes**: comments on time ranges ("valve stuck here") shown on every chart, saved with the project and listed in the report.
 - **Values**: click a signal to see its values as a table, like a spreadsheet column; remove or type over cells, paste a column from Excel. Every change is a step in Prepare.
 - **Units**: every signal shows its unit; set, fix or convert units (mm → µm, °C → °F, bar → psi) for one signal or all at once.
 - **Analyse**: spectrum, spectrogram and order analysis, frequency response (Bode and coherence), peaks, valleys and limit checks with every parameter tunable, cycles cut at trigger events, correlations and curve fitting. Extracted values export as CSV.
 - **Model**: identify, store, simulate and validate state-space models.
+- **Sharing**: copy any chart for PowerPoint or Word at a fixed size; an **interactive report** (one HTML file with zoomable charts and filterable tables) to email.
 - **Report**: a **Results** table of scalar values (measured, or sent from Cycles, Frequency response, Order analysis and Curve fit), and one HTML or PDF file with tables, charts, the results and the processing diagram of each signal.
 
 ![Data: files, signals with their units, and the time map](docs/images/data.png)
+
+![Linked cursor, a selection where the speed is 1500–2100 rpm, and notes](docs/images/linked.png)
+
+![Interactive report: zoomable charts, notes and filterable tables in one file](docs/images/report-interactive.png)
 
 ![Values: a signal as a table, with removed and edited cells](docs/images/values.png)
 

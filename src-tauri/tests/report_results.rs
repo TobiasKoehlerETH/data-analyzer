@@ -10,3 +10,13 @@ fn results_section_lists_every_row_under_its_group() {
     assert!(html.contains(">200.123<"), "six significant digits");
     assert!(html.contains("1.2340e-5"), "small values in exponent form");
 }
+
+#[test]
+fn notes_section_lists_ranges_and_moments() {
+    let content = ReportContent { notes: vec![(12.0, 20.5, "Valve stuck <here>".into()), (30.0, 30.0, "Restart".into())], ..Default::default() };
+    let html = render_html(&content);
+    assert!(html.contains("<h2>Notes</h2>"));
+    assert!(html.contains("12 – 20.5 s") && html.contains("8.5 s"));
+    assert!(html.contains("Valve stuck &lt;here&gt;"), "note text is escaped");
+    assert!(html.contains(">30 s<"));
+}

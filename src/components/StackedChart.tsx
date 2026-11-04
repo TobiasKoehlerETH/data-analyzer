@@ -2,6 +2,32 @@ import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { WorkspaceActive } from "@/lib/workspace";
 import { Plot, type PlotElement, type PlotTable } from "./Plot";
 import { INK, LINE_WIDTH, MARKER_SIZE, axis, baseLayout, decimate, esc, hoverValue, markerStyle, type Figure } from "@/lib/chart";
+import type { TimeAxis } from "@/lib/brush";
+import { useApp } from "@/lib/store";
+
+/** The value of a series nearest to x (data sorted by x), or null. */
+function valueAt(data: [number | null, number | null][], x: number): number | null {
+  let lo = 0;
+  let hi = data.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    const xm = data[mid][0];
+    if (xm === null || xm < x) lo = mid + 1;
+    else hi = mid;
+  }
+  // Look a few rows around for the nearest valid sample.
+  let best: number | null = null;
+  let dist = Infinity;
+  for (let i = Math.max(0, lo - 3); i <= Math.min(data.length - 1, lo + 3); i++) {
+    const [xi, yi] = data[i];
+    if (xi === null || yi === null || !Number.isFinite(yi)) continue;
+    const d = Math.abs(xi - x);
+    if (d < dist) (dist = d), (best = yi);
+  }
+  return best;
+}
+
+const sig4 = (v: number) => String(Number(v.toPrecision(4)));
 
 export interface ChartSeries {
   name: string;
@@ -65,6 +91,9 @@ export interface StackedChartProps {
   /** False for summary charts: no zoom or pan. */
   zoom?: boolean;
   className?: string;
+  /** The x axis is (or maps to) time: shows the linked cursor, the selection and the notes, and a
+   *  click places the cursor, Shift+drag selects a range. */
+  time?: TimeAxis;
 }
 
 const GAP = 26;
@@ -88,7 +117,13 @@ export function StackedChart({
   tooltip = true,
   zoom = true,
   className,
+  time,
 }: StackedChartProps) {
+  const cursor = useApp((s) => s.cursor);
+  const setCursor = useApp((s) => s.setCursor);
+  const brush = useApp((s) => s.brush);
+  const setBrush = useApp((s) => s.setBrush);
+  const notes = useApp((s) => s.notes);
   const active = useContext(WorkspaceActive);
   const host = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 800, h: 400 });
@@ -295,6 +330,69 @@ export function StackedChart({
         }
       });
     });
+    if (time && n > 0) {
+      // Selection: a soft band over every panel.
+      for (const [a, b] of brush)
+        shapes.push({ type: "rect", xref: "x", yref: "paper", x0: time.toX(a), x1: time.toX(b), y0: 0, y1: 1, fillcolor: "rgba(39,66,89,0.09)", line: { width: 0 }, layer: "below" });
+      // Notes: amber spans (or lines for a moment) with their text at the top.
+      for (const note of notes) {
+        const x0 = time.toX(note.start);
+        const x1 = time.toX(note.end);
+        if (note.end > note.start)
+          shapes.push({ type: "rect", xref: "x", yref: "paper", x0, x1, y0: 0, y1: 1, fillcolor: "rgba(237,161,0,0.13)", line: { color: "rgba(237,161,0,0.55)", width: 1 }, layer: "below" });
+        else shapes.push({ type: "line", xref: "x", yref: "paper", x0, x1: x0, y0: 0, y1: 1, line: { color: "#eda100", width: 1.5 }, layer: "above" });
+        if (note.text)
+          annotations.push({
+            text: esc(note.text.length > 40 ? note.text.slice(0, 39) + "…" : note.text),
+            xref: "x",
+            yref: "y domain",
+            x: x0,
+            y: 1,
+            xanchor: "left",
+            yanchor: "top",
+            xshift: 2,
+            showarrow: false,
+            bgcolor: "rgba(255,247,224,0.95)",
+            bordercolor: "rgba(237,161,0,0.6)",
+            borderpad: 2,
+            font: { size: 11, color: "#7a5200" },
+          });
+      }
+      // Linked cursor with each panel's values at that moment.
+      if (cursor !== null) {
+        const cx = time.toX(cursor);
+        shapes.push({ type: "line", xref: "x", yref: "paper", x0: cx, x1: cx, y0: 0, y1: 1, line: { color: INK.primary, width: 1, dash: "dot" }, layer: "above" });
+        panels.forEach((p, i) => {
+          const lines = p.series
+            // Signals only: helper lines (guides, broken-up overlays) have null separators.
+            .filter((s) => (s.type ?? "line") === "line" && !s.data.some((d) => d[0] === null))
+            .slice(0, 4)
+            .map((s) => ({ s, v: valueAt(s.data, cx) }))
+            .filter((r) => r.v !== null)
+            .map(({ s, v }) => `<span style="color:${s.color}">■</span> ${sig4(v!)}`);
+          const head = i === 0 ? [`<b>${sig4(cursor)} s</b>`] : [];
+          if (!lines.length && !head.length) return;
+          const id = axisId(i);
+          annotations.push({
+            text: [...head, ...lines].join("<br>"),
+            xref: `x${id}`,
+            yref: `y${id} domain`,
+            x: cx,
+            y: 1,
+            xanchor: "left",
+            yanchor: "top",
+            xshift: 6,
+            yshift: i === 0 && notes.length ? -18 : 0,
+            align: "left",
+            showarrow: false,
+            bgcolor: "rgba(255,255,255,0.92)",
+            bordercolor: INK.grid,
+            borderpad: 3,
+            font: { size: 11, color: INK.primary },
+          });
+        });
+      }
+    }
     const full: Figure = {
       ...layout,
       ...legends,
@@ -306,7 +404,7 @@ export function StackedChart({
       bargap: 0.08,
     };
     return { data, layout: full };
-  }, [panels, columns, rows, n, size, xLabel, xDate, xLog, xRange, tooltip, scatterOnly, view, target]);
+  }, [panels, columns, rows, n, size, xLabel, xDate, xLog, xRange, tooltip, scatterOnly, view, target, time, cursor, brush, notes]);
 
   const table = (): PlotTable => {
     const out: PlotTable = { columns: ["Panel", "Series", xLabel ?? "X", "Y"], rows: [] };
@@ -369,6 +467,8 @@ export function StackedChart({
           config={config}
           zoom={zoom}
           onInit={(gd) => (gdRef.current = gd)}
+          onPickX={time ? (x) => setCursor(time.toTime(x)) : undefined}
+          onBrushX={time ? (a, b) => setBrush([[time.toTime(a), time.toTime(b)]]) : undefined}
         />
       )}
     </div>

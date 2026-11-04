@@ -14,6 +14,7 @@ import { errorText } from "@/lib/api";
 import { INK, seriesColor, wash } from "@/lib/chart";
 import { cut, detectEvents, makeSegments, meanCurve, measure, METRICS, metricUnit, type EventMode, type Metric } from "@/lib/events";
 import { fileStem, saveCsv } from "@/lib/csv";
+import { inside, SECONDS } from "@/lib/brush";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -25,7 +26,7 @@ const STAT_METRICS: Metric[] = ["mean", "min", "max", "p2p", "rms", "std", "firs
 
 /** Cut the data into cycles at events on a trigger signal, then compare the cycles. */
 export function CyclesTab() {
-  const { dataset, dataVersion, activeTab, addResults } = useApp();
+  const { dataset, dataVersion, activeTab, addResults, brush } = useApp();
   const [trigger, setTrigger] = useState<string>("");
   const [mode, setMode] = useState<EventMode>("rising");
   const [level, setLevel] = useState(0);
@@ -124,7 +125,11 @@ export function CyclesTab() {
     () => (triggerValues ? detectEvents(time, triggerValues, { mode, level: p.level, hysteresis: p.hysteresis, holdoff: p.holdoff, tolerance: textTrigger ? 0 : p.hysteresis }) : []),
     [time, triggerValues, mode, p, textTrigger],
   );
-  const segments = useMemo(() => makeSegments(events, range, { mode: segMode, pre, post, minDuration }), [events, range, segMode, pre, post, minDuration]);
+  // With a selection, only cycles that start inside it.
+  const segments = useMemo(
+    () => makeSegments(events, range, { mode: segMode, pre, post, minDuration }).filter((s) => inside(s.start, brush)).map((s, i) => ({ ...s, index: i + 1 })),
+    [events, range, segMode, pre, post, minDuration, brush],
+  );
   useEffect(() => {
     setExcluded([]);
     setSelected(null);
@@ -310,7 +315,7 @@ export function CyclesTab() {
       <div className="flex min-h-0 flex-1 gap-3">
         <div className={cn("flex min-w-0 flex-[3] flex-col gap-3 transition-opacity", loading && "opacity-60")}>
           <Panel title="Trigger and events" className="min-h-0 flex-[2]" bodyClassName="p-1">
-            {triggerPanels.length ? <StackedChart panels={triggerPanels} xLabel="Time [s]" resetKey={trigger} /> : <EmptyState title="Loading…" />}
+            {triggerPanels.length ? <StackedChart panels={triggerPanels} xLabel="Time [s]" resetKey={trigger} time={SECONDS} /> : <EmptyState title="Loading…" />}
           </Panel>
           <Panel
             title={segMode === "window" ? "Cycles overlaid on the event" : "Cycles overlaid from their start"}

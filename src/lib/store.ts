@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import type { DatasetInfo, ModelSummary } from "./api";
+import type { DatasetInfo, ModelSummary, Note } from "./api";
+import { normalize, type Interval } from "./brush";
 import { api } from "./api";
 
 export type TabId =
@@ -96,6 +97,15 @@ interface AppStore {
   showStatus: (text: string, timeoutMs?: number) => void;
   setProgress: (task: string, value: number, message: string) => void;
   refreshModels: () => Promise<void>;
+  /** The linked cursor: a moment on the aligned time axis [s], shown on every time chart. */
+  cursor: number | null;
+  setCursor: (t: number | null) => void;
+  /** The app-wide selection (time intervals [s]) and how it was made. */
+  brush: Interval[];
+  brushLabel: string;
+  setBrush: (intervals: Interval[], label?: string) => void;
+  notes: Note[];
+  setNotes: (notes: Note[]) => void;
   results: ResultRow[];
   /** Adds rows; a row with the same group, name and signal as an existing one replaces it. */
   addResults: (rows: Omit<ResultRow, "id">[]) => void;
@@ -164,6 +174,13 @@ export const useApp = create<AppStore>((set, get) => ({
     const models = await api.modelsList();
     set({ models });
   },
+  cursor: null,
+  setCursor: (t) => set({ cursor: t }),
+  brush: [],
+  brushLabel: "",
+  setBrush: (intervals, label = "") => set({ brush: normalize(intervals), brushLabel: label }),
+  notes: [],
+  setNotes: (notes) => set({ notes }),
   results: loadResults(),
   addResults: (rows) => {
     const key = (r: Omit<ResultRow, "id">) => `${r.group}\u0000${r.name}\u0000${r.signal}`;

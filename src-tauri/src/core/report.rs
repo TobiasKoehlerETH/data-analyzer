@@ -179,6 +179,8 @@ pub struct ReportContent {
     pub comparison_plots: Vec<Plot>,
     pub comparison_stats: Vec<ComparisonStat>,
     pub results: Vec<ResultEntry>,
+    /// Comments on time ranges: (start, end, text) in seconds on the aligned axis.
+    pub notes: Vec<(f64, f64, String)>,
 }
 
 fn template_css() -> String {
@@ -507,6 +509,19 @@ pub fn render_html(c: &ReportContent) -> String {
                 .collect();
             table_pages(&mut doc, &label, "Comparison", "Differences of each file to the reference file, interpolated on the reference time grid.", "data", &th(&["Signal", "File", "RMSE", "Max deviation", "R²", "Mean error"]), &rows, 24, 30);
         }
+    }
+
+    if !c.notes.is_empty() {
+        let label = doc.next_label("Notes");
+        let rows: Vec<String> = c
+            .notes
+            .iter()
+            .map(|(a, b, text)| {
+                let when = if (b - a).abs() < 1e-12 { format!("{} s", fmt_value(*a)) } else { format!("{} – {} s", fmt_value(*a), fmt_value(*b)) };
+                format!("<tr><td class=\"num\">{when}</td><td class=\"num\">{}</td><td>{}</td></tr>", if (b - a).abs() < 1e-12 { "—".into() } else { format!("{} s", fmt_value(b - a)) }, esc(text))
+            })
+            .collect();
+        table_pages(&mut doc, &label, "Notes", "Comments on the data.", "data", &th(&["Time", "Duration", "Note"]), &rows, 26, 32);
     }
 
     if !c.results.is_empty() {

@@ -363,3 +363,13 @@ export function orderMap(a: AngleSignal, samplesPerRev: number, revsPerFrame: nu
   }
   return { orders: Array.from({ length: top }, (_, k) => (k + 1) * dOrder), rpm, time, amplitude };
 }
+
+/** Rows of `v` whose time lies in `range` (all rows when range is null). */
+export function clip<T extends { time: Num[]; columns: Record<string, Num[]> }>(v: T | null, range: [number, number] | null): T | null {
+  if (!v || !range) return v;
+  const keep: number[] = [];
+  v.time.forEach((t, i) => t != null && t >= range[0] && t <= range[1] && keep.push(i));
+  if (keep.length === v.time.length) return v;
+  const pick = <U,>(a: U[]) => keep.map((i) => a[i]);
+  return { ...v, time: pick(v.time), columns: Object.fromEntries(Object.entries(v.columns).map(([k, c]) => [k, pick(c)])) };
+}

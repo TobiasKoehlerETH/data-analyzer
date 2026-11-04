@@ -52,6 +52,7 @@ pub fn run() {
             commands::save_image,
             commands::save_text,
             commands::workspace_set_units,
+            commands::workspace_set_notes,
             commands::dataset_info,
             commands::descriptive_stats,
             commands::get_series,

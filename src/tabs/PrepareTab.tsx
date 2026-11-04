@@ -7,6 +7,7 @@ import { SignalSelect } from "@/components/SignalSelect";
 import { StackedChart, type ChartPanel } from "@/components/StackedChart";
 import { api, errorText, type Pipeline, type VariableEdit, type VariableSamples } from "@/lib/api";
 import { INK, seriesColor } from "@/lib/chart";
+import { dateAxis as dateAxisOf, rowAxis, SECONDS } from "@/lib/brush";
 import { useApp } from "@/lib/store";
 
 const finite = (v: number | null | undefined): v is number => typeof v === "number" && Number.isFinite(v);
@@ -199,6 +200,8 @@ export function PrepareTab() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
+  const timeAxis = useMemo(() => (xMode === "row" ? rowAxis(rows) : dateAxis ? dateAxisOf(origin!) : SECONDS), [xMode, rows, dateAxis, origin]);
+
   const fmtTime = (t: number) => (origin !== null ? new Date((origin + t) * 1000).toISOString().slice(11, 23) : `${Number(t.toPrecision(5))} s`);
 
   const run = async (f: () => Promise<{ dataset: typeof dataset }>, done: string) => {
@@ -249,7 +252,7 @@ export function PrepareTab() {
     });
   };
 
-  if (!dataset) return <EmptyState title="No data loaded">Add data first, then clean it here.</EmptyState>;
+  if (!dataset) return <EmptyState title="No data loaded" />;
 
   const xLabel = xMode === "time" ? (dateAxis ? "Time" : "Time [s]") : "Index";
 
@@ -330,7 +333,7 @@ export function PrepareTab() {
         title={probe ? `Step ${block! + 1}: input and output` : undefined}
       >
         {panels.length ? (
-          <StackedChart panels={panels} xLabel={xLabel} xDate={dateAxis} resetKey={`${column}|${xMode}`} onZoom={setViewRange} />
+          <StackedChart panels={panels} xLabel={xLabel} xDate={dateAxis} resetKey={`${column}|${xMode}`} onZoom={setViewRange} time={timeAxis} />
         ) : (
           <EmptyState title="Loading…" />
         )}

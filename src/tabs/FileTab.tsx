@@ -36,7 +36,7 @@ function importable(p: PreviewResult): number[] {
 
 export function FileTab() {
   const { setDataset, setProgress, showStatus, dataVersion } = useApp();
-  const [ws, setWs] = useState<WorkspaceView>({ variables: [], sources: [], align: "time", grid_step: null, auto_recipe: null, dataset: null, added: [], warnings: [] });
+  const [ws, setWs] = useState<WorkspaceView>({ variables: [], sources: [], align: "time", grid_step: null, auto_recipe: null, dataset: null, added: [], warnings: [], notes: [] });
   const [queue, setQueue] = useState<string[]>([]);
   const [path, setPath] = useState("");
   const [preview, setPreview] = useState<PreviewResult | null>(null);

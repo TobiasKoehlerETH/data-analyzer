@@ -36,6 +36,22 @@ interface Props {
   /** False for summary charts (heatmaps, bars, box plots): no zoom, pan or wheel zoom. */
   zoom?: boolean;
   onInit?: (gd: PlotElement) => void;
+  /** A click (no drag) on the plot area, with the x value under the pointer. */
+  onPickX?: (x: number) => void;
+  /** A Shift+drag (or a drag with the select tool) across x, from left to right. */
+  onBrushX?: (x0: number, x1: number) => void;
+}
+
+/** The x and y axes under a point of the plot area, if any. */
+function axesAt(gd: PlotElement, px: number, py: number): { xa: any; ya: any } | null {
+  const fl = gd._fullLayout ?? {};
+  for (const key of Object.keys(fl).filter((k) => /^xaxis\d*$/.test(k))) {
+    const xa = fl[key];
+    const ya = fl[`yaxis${key.slice(5)}`] ?? fl[xa?.anchor?.replace("y", "yaxis")];
+    if (!xa?._length || !ya?._length) continue;
+    if (px >= xa._offset && px <= xa._offset + xa._length && py >= ya._offset && py <= ya._offset + ya._length) return { xa, ya };
+  }
+  return null;
 }
 
 const TABLE_LIMIT = 2000;
@@ -45,6 +61,8 @@ const ICONS = {
   table: { width: 24, height: 24, path: "M3 4h18v16H3zM5 6v3h6V6zm8 0v3h6V6zM5 11v3h6v-3zm8 0v3h6v-3zM5 16v2h6v-2zm8 0v2h6v-2z" },
   expand: { width: 24, height: 24, path: "M3 3h7v2H5v5H3zm11 0h7v7h-2V5h-5zM3 14h2v5h5v2H3zm16 0h2v7h-7v-2h5z" },
   collapse: { width: 24, height: 24, path: "M8 3h2v7H3V8h5zm6 0h2v5h5v2h-7zM3 14h7v7H8v-5H3zm11 0h7v2h-5v5h-2z" },
+  copy: { width: 24, height: 24, path: "M8 3h9l4 4v11h-3v3H5V6h3zm2 2v11h9V8h-3V5zM7 8v11h9v-1h-6V8z" },
+  select: { width: 24, height: 24, path: "M4 4h3v2H6v12h1v2H4zm13 0h3v16h-3v-2h1V6h-1zM9 9h6v6H9z" },
 };
 
 /** Saves the chart as it is shown (current zoom, current size) as a PNG at twice the screen resolution. */
@@ -64,6 +82,58 @@ async function exportPng(gd: PlotElement) {
     toast.success(`Saved ${path.split(/[\\/]/).pop()}`);
   } catch (e) {
     toast.error(`PNG export failed: ${e}`);
+  }
+}
+
+/** Every font size in a figure layout times k (titles, ticks, legends, annotations). */
+function scaleFonts(o: any, k: number): any {
+  if (Array.isArray(o)) return o.map((x) => scaleFonts(x, k));
+  if (!o || typeof o !== "object") return o;
+  const out: any = {};
+  for (const [key, v] of Object.entries(o)) {
+    if ((key === "font" || key === "tickfont") && v && typeof v === "object") out[key] = { ...(v as object), size: ((v as any).size ?? 12) * k };
+    else out[key] = scaleFonts(v, k);
+  }
+  return out;
+}
+
+/** Fixed sizes so every copied chart lands in a slide or a page the same way. */
+const COPY = {
+  slide: { width: 1600, height: 900, font: 1.5, label: "slide (16:9)" },
+  doc: { width: 1300, height: 760, font: 1.25, label: "document" },
+};
+
+/**
+ * Copies the current view as a PNG for PowerPoint or Word: a fixed size and fonts scaled to it,
+ * so charts pasted from different pages match. Falls back to saving a file.
+ */
+async function copyChart(gd: PlotElement, kind: keyof typeof COPY) {
+  const c = COPY[kind];
+  const layout = scaleFonts(JSON.parse(JSON.stringify(gd.layout)), c.font);
+  const m = layout.margin ?? {};
+  layout.margin = { ...m, l: (m.l ?? 64) * c.font, r: (m.r ?? 16) * c.font, t: (m.t ?? 8) * c.font + 8, b: (m.b ?? 44) * c.font };
+  Object.assign(layout, { width: c.width, height: c.height, paper_bgcolor: "#ffffff", plot_bgcolor: "#ffffff", font: { ...(layout.font ?? {}), size: (layout.font?.size ?? 12) * c.font } });
+  try {
+    const url = await Plotly.toImage({ data: gd.data, layout } as any, { format: "png", width: c.width, height: c.height, scale: 2 });
+    try {
+      const blob = await (await fetch(url)).blob();
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+      toast.success(`Chart copied for a ${c.label}: paste it into PowerPoint or Word`);
+    } catch {
+      // No image clipboard here: save the same picture instead.
+      const path = isTauri ? await save({ filters: [{ name: "PNG image", extensions: ["png"] }], defaultPath: `chart-${kind}.png`, title: "Save chart" }) : null;
+      if (path) {
+        await invoke("save_image", { path, dataUrl: url });
+        toast.success(`Saved ${path.split(/[\\/]/).pop()}`);
+      } else if (!isTauri) {
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `chart-${kind}.png`;
+        a.click();
+      }
+    }
+  } catch (e) {
+    toast.error(`Copy failed: ${e}`);
   }
 }
 
@@ -107,7 +177,14 @@ function ranges(gd: PlotElement): Record<string, unknown> {
 }
 
 /** Plotly wrapper: renders with the shared theme, resizes with its box and adds Back and Table view. */
-export function Plot({ data, layout, config, uirevision, table, events, className, zoom = true, onInit }: Props) {
+export function Plot({ data, layout, config, uirevision, table, events, className, zoom = true, onInit, onPickX, onBrushX }: Props) {
+  const picks = useRef({ onPickX, onBrushX });
+  picks.current = { onPickX, onBrushX };
+  /** The select tool: a plain drag marks a range instead of zooming. */
+  const [selecting, setSelecting] = useState(false);
+  const selectingRef = useRef(false);
+  selectingRef.current = selecting;
+  const [band, setBand] = useState<{ left: number; width: number; top: number; height: number } | null>(null);
   const active = useContext(WorkspaceActive);
   const el = useRef<HTMLDivElement>(null);
   const gdRef = useRef<PlotElement | null>(null);
@@ -138,16 +215,29 @@ export function Plot({ data, layout, config, uirevision, table, events, classNam
       },
     };
     const tableButton = { name: "table", title: "Show data as table", icon: ICONS.table, click: () => setShowTable((v) => !v) };
+    const copy = {
+      name: "copy",
+      title: "Copy for PowerPoint (Shift+click: for Word)",
+      icon: ICONS.copy,
+      click: (_gd: unknown, ev: MouseEvent) => gdRef.current && copyChart(gdRef.current, ev?.shiftKey ? "doc" : "slide"),
+    };
     const png = { name: "png", title: "Export current view as PNG", icon: (Plotly as any).Icons.camera, click: () => gdRef.current && exportPng(gdRef.current) };
+    const selectButton = {
+      name: "select",
+      title: selecting ? "Select tool on: drag marks a range (click to go back to zoom)" : "Select a time range (or Shift+drag)",
+      icon: ICONS.select,
+      click: () => setSelecting((v) => !v),
+    };
     const fullButton = { name: "full", title: full ? "Back to panel (Esc)" : "Open in full window", icon: full ? ICONS.collapse : ICONS.expand, click: () => setFull((v) => !v) };
-    const navigation: any[] = ["zoom2d", "pan2d", back, "resetScale2d"];
+    const navigation: any[] = ["zoom2d", "pan2d", ...(onBrushX ? [selectButton] : []), back, "resetScale2d"];
     return {
       ...plotConfig,
       ...(zoom ? {} : { scrollZoom: false, doubleClick: false as const }),
       ...config,
-      modeBarButtons: [...(zoom ? [navigation] : []), [tableButton, png, fullButton]] as any,
+      modeBarButtons: [...(zoom ? [navigation] : []), [tableButton, copy, png, fullButton]] as any,
     };
-  }, [config, zoom, full]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config, zoom, full, selecting, !!onBrushX]);
 
   useEffect(() => {
     if (!full) return;
@@ -167,16 +257,6 @@ export function Plot({ data, layout, config, uirevision, table, events, classNam
     let drag: { x: number; y: number; xa: any; ya: any; x0: number[]; y0: number[] } | null = null;
     let frame = 0;
     let pending: MouseEvent | null = null;
-    const axesAt = (gd: PlotElement, px: number, py: number) => {
-      const fl = gd._fullLayout ?? {};
-      for (const key of Object.keys(fl).filter((k) => /^xaxis\d*$/.test(k))) {
-        const xa = fl[key];
-        const ya = fl[`yaxis${key.slice(5)}`] ?? fl[xa?.anchor?.replace("y", "yaxis")];
-        if (!xa?._length || !ya?._length) continue;
-        if (px >= xa._offset && px <= xa._offset + xa._length && py >= ya._offset && py <= ya._offset + ya._length) return { xa, ya };
-      }
-      return null;
-    };
     const apply = () => {
       frame = 0;
       const gd = gdRef.current;
@@ -227,6 +307,67 @@ export function Plot({ data, layout, config, uirevision, table, events, classNam
       node.removeEventListener("mousedown", down, true);
       node.removeEventListener("auxclick", aux);
       up();
+    };
+  }, []);
+
+  // Click = pick a moment (linked cursor); Shift+drag or the select tool = mark a range.
+  useEffect(() => {
+    const node = el.current;
+    if (!node) return;
+    let start: { x: number; y: number; xa: any; top: number; height: number; brush: boolean } | null = null;
+    const local = (e: MouseEvent) => {
+      const r = gdRef.current!.getBoundingClientRect();
+      return { px: e.clientX - r.left, py: e.clientY - r.top };
+    };
+    const move = (e: MouseEvent) => {
+      if (!start?.brush) return;
+      const { px } = local(e);
+      const lo = Math.max(start.xa._offset, Math.min(start.x, px));
+      const hi = Math.min(start.xa._offset + start.xa._length, Math.max(start.x, px));
+      setBand({ left: lo, width: hi - lo, top: start.top, height: start.height });
+    };
+    const up = (e: MouseEvent) => {
+      window.removeEventListener("mousemove", move, true);
+      window.removeEventListener("mouseup", up, true);
+      const s0 = start;
+      start = null;
+      setBand(null);
+      if (!s0 || !gdRef.current) return;
+      const { px, py } = local(e);
+      const xa = s0.xa;
+      if (s0.brush) {
+        const a = Math.max(xa._offset, Math.min(s0.x, px)) - xa._offset;
+        const b = Math.min(xa._offset + xa._length, Math.max(s0.x, px)) - xa._offset;
+        if (b - a > 3) picks.current.onBrushX?.(xa.p2l(a), xa.p2l(b));
+        return;
+      }
+      if (Math.hypot(px - s0.x, py - s0.y) < 4) picks.current.onPickX?.(xa.p2l(px - xa._offset));
+    };
+    const down = (e: MouseEvent) => {
+      const gd = gdRef.current;
+      if (e.button !== 0 || !gd || (e.target as HTMLElement).closest(".modebar")) return;
+      if (!picks.current.onPickX && !picks.current.onBrushX) return;
+      const { px, py } = local(e);
+      const hit = axesAt(gd, px, py);
+      if (!hit) return;
+      const brush = !!picks.current.onBrushX && (e.shiftKey || selectingRef.current);
+      if (brush) {
+        // The range replaces Plotly's own drag (zoom) for this gesture.
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      const ys = Object.keys(gd._fullLayout).filter((k) => /^yaxis\d*$/.test(k)).map((k) => gd._fullLayout[k]);
+      const top = Math.min(...ys.map((a) => a._offset ?? Infinity));
+      const bottom = Math.max(...ys.map((a) => (a._offset ?? 0) + (a._length ?? 0)));
+      start = { x: px, y: py, xa: hit.xa, top, height: bottom - top, brush };
+      window.addEventListener("mousemove", move, true);
+      window.addEventListener("mouseup", up, true);
+    };
+    node.addEventListener("mousedown", down, true);
+    return () => {
+      node.removeEventListener("mousedown", down, true);
+      window.removeEventListener("mousemove", move, true);
+      window.removeEventListener("mouseup", up, true);
     };
   }, []);
 
@@ -330,7 +471,16 @@ export function Plot({ data, layout, config, uirevision, table, events, classNam
             </Button>
           </div>
         )}
-        <div ref={el} className={full ? "min-h-0 w-full flex-1 p-2" : "h-full w-full"} />
+        <div className={cn("relative", full ? "min-h-0 w-full flex-1" : "h-full w-full", selecting && "[&_.nsewdrag]:!cursor-crosshair")}>
+          <div ref={el} className={full ? "h-full w-full p-2" : "h-full w-full"} />
+          {band && (
+            <div
+              aria-hidden
+              className="pointer-events-none absolute z-10 border-x-2 border-ap-darkblue/60 bg-ap-darkblue/10"
+              style={{ left: band.left, width: band.width, top: band.top, height: band.height }}
+            />
+          )}
+        </div>
         {showTable && <TableView table={typeof table === "function" ? table() : (table ?? tableFrom(data))} onClose={() => setShowTable(false)} />}
       </div>
     </>

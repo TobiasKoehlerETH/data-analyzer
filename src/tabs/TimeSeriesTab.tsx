@@ -9,6 +9,7 @@ import { StackedChart, type ChartPanel } from "@/components/StackedChart";
 import { analysisVectors, type Vectors } from "@/lib/analysis";
 import { api } from "@/lib/api";
 import { INK, PALETTE, seriesColor, zip } from "@/lib/chart";
+import { dateAxis as dateAxisOf, rowAxis, SECONDS } from "@/lib/brush";
 import { useApp } from "@/lib/store";
 
 /** One palette slot per signal, so colours never repeat. */
@@ -70,11 +71,27 @@ export function TimeSeriesTab() {
   const groups = useMemo(() => Object.fromEntries(selected.map((c, i) => [c, overlayAll ? 1 : i + 1])) as Record<string, number>, [selected, overlayAll]);
   const origin = dataset?.time_origin ?? null;
   const dateAxis = xColumn === "__time" && origin !== null;
-  const rowAxis = xColumn === "__row";
+  const rowAxisOn = xColumn === "__row";
   /** Axis units → backend units (seconds, or 1-based rows). */
   const toBackend = (v: number) => (dateAxis ? v / 1000 - origin! : v);
   const toAxis = (v: number | null) => (v === null ? null : dateAxis ? (origin! + v) * 1000 : v);
   const resetKey = JSON.stringify([dataset?.path, dataset?.sheet, xColumn, selected]);
+  // The dataset's row times, so an Index axis still links to the cursor and the selection.
+  const [gridTime, setGridTime] = useState<number[] | null>(null);
+  useEffect(() => {
+    if (!rowAxisOn || activeTab !== "timeseries" || !dataset) return;
+    let cancelled = false;
+    analysisVectors([])
+      .then((v) => !cancelled && setGridTime(v.time.map((t) => t ?? NaN)))
+      .catch(() => !cancelled && setGridTime(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [rowAxisOn, dataVersion, activeTab, !!dataset]);
+  const timeAxis = useMemo(
+    () => (xSignal !== null ? undefined : xColumn === "__time" ? (dateAxis ? dateAxisOf(origin!) : SECONDS) : gridTime ? rowAxis(gridTime) : undefined),
+    [xSignal, xColumn, dateAxis, origin, gridTime],
+  );
   useEffect(() => setWin(null), [resetKey]);
 
   // Line plots: fetch the visible window at about two points per pixel column.
@@ -88,7 +105,7 @@ export function TimeSeriesTab() {
     setLoading(true);
     const range = win ? ([toBackend(win[0]), toBackend(win[1])] as [number, number]) : null;
     api
-      .getSeries(selected, range, 3000, rowAxis)
+      .getSeries(selected, range, 3000, rowAxisOn)
       .then((r) => {
         if (cancelled) return;
         setLines(Object.fromEntries(r.series.map((s) => [s.column, { x: s.x.map(toAxis), y: s.y }])));
@@ -145,7 +162,7 @@ export function TimeSeriesTab() {
     let cancelled = false;
     const range = win ? ([toBackend(win[0]), toBackend(win[1])] as [number, number]) : null;
     api
-      .workspaceVectors(overlay, range, 3000, rowAxis)
+      .workspaceVectors(overlay, range, 3000, rowAxisOn)
       .then(
         (v) =>
           !cancelled &&
@@ -336,7 +353,7 @@ export function TimeSeriesTab() {
           {selected.length === 0 ? (
             <EmptyState title="Tick a signal to plot it" />
           ) : (
-            <StackedChart panels={panels} xLabel={xLabel} xDate={dateAxis} resetKey={resetKey} onZoom={xSignal === null ? setWin : undefined} />
+            <StackedChart panels={panels} xLabel={xLabel} xDate={dateAxis} resetKey={resetKey} onZoom={xSignal === null ? setWin : undefined} time={timeAxis} />
           )}
         </Panel>
       </div>

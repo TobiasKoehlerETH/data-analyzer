@@ -5,6 +5,7 @@ import { EmptyState, Field, Panel } from "@/components/common";
 import { SignalSelect } from "@/components/SignalSelect";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { mask } from "@/lib/brush";
 import { useApp } from "@/lib/store";
 import { analysisVectors, summarize, histogram, downloadText, categoryVector, type Categories, type Vectors } from "@/lib/analysis";
 import { INK, PALETTE, axis, baseLayout, esc, fmtG, markerStyle, seriesColor, wash } from "@/lib/chart";
@@ -21,7 +22,7 @@ const labels = ["n", "Missing", "Mean", "Std dev", "Min", "Q1", "Median", "Q3", 
 
 /** One signal at a glance: how its values spread, how they move, and how they relate to a second signal. */
 export function StatisticsTab() {
-  const { dataset, dataVersion, activeTab } = useApp();
+  const { dataset, dataVersion, activeTab, brush } = useApp();
   const loadedRequest = useRef("");
   const [xColumn, setXColumn] = useState(ROW);
   const [yColumn, setYColumn] = useState("");
@@ -79,8 +80,9 @@ export function StatisticsTab() {
     };
   }, [dataVersion, dataset, yColumn, xColumn, activeTab]);
 
-  const x = useMemo(() => (!data ? [] : xColumn === ROW ? data.time.map((_, i) => i * data.step + 1) : (data.columns[xColumn] ?? [])), [data, xColumn]);
-  const y = data?.columns[yColumn] ?? [];
+  const x = useMemo(() => (!data ? [] : xColumn === ROW ? data.time.map((_, i) => i * data.step + 1) : mask(data.time, data.columns[xColumn] ?? [], brush)), [data, xColumn, brush]);
+  // Only the selected time ranges count (rows keep their place).
+  const y = useMemo(() => (data ? mask(data.time, data.columns[yColumn] ?? [], brush) : []), [data, yColumn, brush]);
   const xLabel = xColumn === ROW ? "Index" : (dataset?.signals.find((s) => s.column === xColumn)?.label ?? "X");
   const yLabel = dataset?.signals.find((s) => s.column === yColumn)?.label ?? "Y";
 

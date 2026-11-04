@@ -10,6 +10,7 @@ import { api, errorText, type VariableSamples } from "@/lib/api";
 import { INK, seriesColor, wash } from "@/lib/chart";
 import { fileStem, saveCsv } from "@/lib/csv";
 import { findPeaks, findViolations, type Peak, type Violation } from "@/lib/peaks";
+import { inside, SECONDS } from "@/lib/brush";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -72,7 +73,7 @@ function OptNumber({
 
 /** Find peaks and valleys with every parameter exposed, or the stretches outside limits. */
 export function PeaksTab() {
-  const { dataset, dataVersion, activeTab, addResults } = useApp();
+  const { dataset, dataVersion, activeTab, addResults, brush } = useApp();
   const [mode, setMode] = useState<"peaks" | "limits">("peaks");
   const [column, setColumn] = useState<string | null>(null);
   const [vec, setVec] = useState<VariableSamples | null>(null);
@@ -141,7 +142,7 @@ export function PeaksTab() {
   const params = useDeferredValue({ kind, minValue, maxValue, prominence, threshold, distance, minWidth, maxWidth, relHeight, from, to, maxCount, upper, lower, hysteresis, minDuration });
   const peaks: Peak[] = useMemo(() => {
     const p = params;
-    return mode === "peaks" && t.length
+    return (mode === "peaks" && t.length
       ? findPeaks(t, y, {
           kind: p.kind,
           minValue: p.minValue,
@@ -156,11 +157,15 @@ export function PeaksTab() {
           to: p.to,
           maxCount: p.maxCount ?? 0,
         })
-      : [];
-  }, [mode, t, y, params]);
+      : []
+    ).filter((k) => inside(k.time, brush));
+  }, [mode, t, y, params, brush]);
   const violations: Violation[] = useMemo(
-    () => (mode === "limits" && t.length ? findViolations(t, y, { upper: params.upper, lower: params.lower, hysteresis: params.hysteresis ?? 0, minDuration: params.minDuration ?? 0, from: params.from, to: params.to }) : []),
-    [mode, t, y, params],
+    () =>
+      (mode === "limits" && t.length ? findViolations(t, y, { upper: params.upper, lower: params.lower, hysteresis: params.hysteresis ?? 0, minDuration: params.minDuration ?? 0, from: params.from, to: params.to }) : []).filter(
+        (v) => inside(v.start, brush) || inside(v.end, brush),
+      ),
+    [mode, t, y, params, brush],
   );
   const stale = params.prominence !== prominence || params.upper !== upper || params.lower !== lower || params.minValue !== minValue || params.maxValue !== maxValue || params.distance !== distance;
   /** Arrow-key step for value fields: 1 % of the signal's range. */
@@ -394,7 +399,7 @@ export function PeaksTab() {
 
       <div className="flex min-h-0 flex-1 gap-3">
         <Panel className={cn("min-h-0 min-w-0 flex-[3] transition-opacity duration-150", stale && "opacity-80")} bodyClassName="p-1" title={mode === "peaks" ? `${count} found` : `${count} violation${count === 1 ? "" : "s"}`}>
-          {panels.length ? <StackedChart panels={panels} xLabel="Time [s]" resetKey={`${column}|${mode}`} /> : <EmptyState title="Loading…" />}
+          {panels.length ? <StackedChart panels={panels} xLabel="Time [s]" resetKey={`${column}|${mode}`} time={SECONDS} /> : <EmptyState title="Loading…" />}
         </Panel>
         <Panel
           title={mode === "peaks" ? "Values" : "Violations"}

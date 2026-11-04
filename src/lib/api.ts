@@ -203,6 +203,15 @@ export interface WorkspaceView {
   added: string[];
   /** Steps or files that could not be applied. */
   warnings: string[];
+  notes: Note[];
+}
+
+/** A comment on a time range (start = end: one moment), on the aligned time axis [s]. */
+export interface Note {
+  id: string;
+  start: number;
+  end: number;
+  text: string;
 }
 
 export interface StatRow {
@@ -433,6 +442,7 @@ export const api = {
   workspaceView: () => invoke<WorkspaceView>("workspace_view"),
   workspaceRemove: (names: string[]) => invoke<WorkspaceView>("workspace_remove", { names }),
   workspaceRename: (old: string, newName: string) => invoke<WorkspaceView>("workspace_rename", { old, new: newName }),
+  workspaceSetNotes: (notes: Note[]) => invoke<WorkspaceView>("workspace_set_notes", { notes }),
   workspaceSetUnits: (changes: UnitChange[]) => invoke<WorkspaceView>("workspace_set_units", { changes }),
   workspaceSetTime: (name: string, time: boolean) => invoke<WorkspaceView>("workspace_set_time", { name, time }),
   workspaceImportBatch: (paths: string[], folder: string | null, columns: string[] | null) =>

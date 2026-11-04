@@ -9,7 +9,8 @@ import { StackedChart, type ChartPanel } from "@/components/StackedChart";
 import { analysisVectors, type Vectors } from "@/lib/analysis";
 import { errorText } from "@/lib/api";
 import { seriesColor } from "@/lib/chart";
-import { fillMissing, frequencyResponse, medianStep, resonance } from "@/lib/dsp";
+import { clip, fillMissing, frequencyResponse, medianStep, resonance } from "@/lib/dsp";
+import { span } from "@/lib/brush";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -18,12 +19,12 @@ const sig = (v: number | null | undefined) => (v === null || v === undefined || 
 
 /** Bode plot and coherence from a measured input to a measured output (H1 estimate). */
 export function FrfTab() {
-  const { dataset, dataVersion, activeTab, addResults } = useApp();
+  const { dataset, dataVersion, activeTab, addResults, brush } = useApp();
   const [input, setInput] = useState<string | null>(null);
   const [output, setOutput] = useState<string | null>(null);
   const [nperseg, setNperseg] = useState(1024);
   const [scale, setScale] = useState<"log" | "lin">("log");
-  const [data, setData] = useState<Vectors | null>(null);
+  const [raw, setData] = useState<Vectors | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -47,6 +48,8 @@ export function FrfTab() {
     };
   }, [input, output, dataVersion, activeTab]);
 
+  // With a selection: from its first to its last moment (the averages need one stretch).
+  const data = useMemo(() => clip(raw, span(brush)), [raw, brush]);
   const fs = useMemo(() => (data ? 1 / medianStep(data.time) : 1), [data]);
   const h = useMemo(() => {
     if (!data || !input || !output || !data.columns[input] || !data.columns[output]) return null;

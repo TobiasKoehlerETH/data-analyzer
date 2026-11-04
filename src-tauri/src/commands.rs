@@ -145,7 +145,7 @@ fn install_dataset(app: &AppHandle, st: &AppState, ds: Dataset) -> CmdResult<Dat
 // Workspace (variables from any number of files, aligned on a common time grid)
 // ---------------------------------------------------------------------------
 
-use crate::core::workspace::{Align, Edit, Pipeline, Project, Recipe, SourceInfo, UnitChange, VariableInfo, Workspace};
+use crate::core::workspace::{Align, Edit, Note, Pipeline, Project, Recipe, SourceInfo, UnitChange, VariableInfo, Workspace};
 
 #[derive(Serialize)]
 pub struct WorkspaceView {
@@ -159,6 +159,7 @@ pub struct WorkspaceView {
     added: Vec<String>,
     /// Steps or files that could not be applied (recipes, batch imports, projects).
     warnings: Vec<String>,
+    notes: Vec<Note>,
 }
 
 fn view_of(ws: &Workspace, dataset: Option<DatasetInfo>, added: Vec<String>, warnings: Vec<String>) -> WorkspaceView {
@@ -171,6 +172,7 @@ fn view_of(ws: &Workspace, dataset: Option<DatasetInfo>, added: Vec<String>, war
         dataset,
         added,
         warnings,
+        notes: ws.notes.clone(),
     }
 }
 
@@ -535,6 +537,20 @@ pub fn recipe_set_auto(state: AppStateRef<'_>, recipe: Option<Recipe>) -> Worksp
     let mut ws = state.workspace.lock().unwrap();
     ws.auto_recipe = recipe;
     view_of(&ws, state.data.read().ok().and_then(|d| d.as_ref().map(|d| d.info())), vec![], vec![])
+}
+
+/// Replaces the workspace's notes (comments on time ranges); sorted by start time.
+#[tauri::command]
+pub fn workspace_set_notes(state: AppStateRef<'_>, notes: Vec<Note>) -> CmdResult<WorkspaceView> {
+    let mut ws = state.workspace.lock().unwrap();
+    let mut notes: Vec<Note> = notes
+        .into_iter()
+        .filter(|n| n.start.is_finite() && n.end.is_finite())
+        .map(|n| Note { start: n.start.min(n.end), end: n.start.max(n.end), text: n.text.trim().to_string(), ..n })
+        .collect();
+    notes.sort_by(|a, b| a.start.total_cmp(&b.start));
+    ws.notes = notes;
+    Ok(view_of(&ws, state.data.read().ok().and_then(|d| d.as_ref().map(|d| d.info())), vec![], vec![]))
 }
 
 // -- Projects -----------------------------------------------------------------
@@ -1763,6 +1779,9 @@ pub async fn report_generate(app: AppHandle, state: AppStateRef<'_>, sections: V
         let mut content = build_report(&st, &sections, &app)?;
         if sections.iter().any(|s| s == "Results") {
             content.results = results.unwrap_or_default();
+        }
+        if sections.iter().any(|s| s == "Notes") {
+            content.notes = st.workspace.lock().unwrap().notes.iter().map(|n| (n.start, n.end, n.text.clone())).collect();
         }
         let progress = |v: i32, m: String| emit_progress(&app, "report", v, m);
         let (p, note) = report::generate_report(Path::new(&path), &format, &content, &progress)?;

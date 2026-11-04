@@ -619,6 +619,16 @@ pub struct SourceInfo {
     pub sample_rate: f64,
 }
 
+/// A comment on a stretch of the data ("valve stuck here"), on the aligned time axis.
+/// `start == end` marks a single moment.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Note {
+    pub id: String,
+    pub start: f64,
+    pub end: f64,
+    pub text: String,
+}
+
 /// A reusable processing recipe: steps per column name plus derived variables.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Recipe {
@@ -658,6 +668,8 @@ pub struct Project {
     pub variables: Vec<ProjectVariable>,
     #[serde(default)]
     pub auto_recipe: Option<Recipe>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<Note>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -712,6 +724,8 @@ pub struct Workspace {
     pub grid_step: Option<f64>,
     /// Applied to every newly imported file.
     pub auto_recipe: Option<Recipe>,
+    /// Comments on time ranges; saved with the project and listed in the report.
+    pub notes: Vec<Note>,
     /// Common time grid of the last build.
     pub grid: Arc<Vec<f64>>,
     /// What `grid` was built from; while it is unchanged the grid and the aligned columns stay valid.
@@ -2235,6 +2249,7 @@ impl Workspace {
                 }))
                 .collect(),
             auto_recipe: self.auto_recipe.clone(),
+            notes: self.notes.clone(),
         }
     }
 
@@ -2358,6 +2373,7 @@ impl Workspace {
             }
         }
         ws.auto_recipe = project.auto_recipe.clone();
+        ws.notes = project.notes.clone();
         (ws, warnings)
     }
 }
@@ -2376,6 +2392,17 @@ mod tests {
     fn import(ws: &mut Workspace, path: &str, cols: &[&str]) -> Vec<String> {
         let cols: Vec<String> = cols.iter().map(|c| c.to_string()).collect();
         ws.import(path, None, &ImportOptions::default(), &cols, None).unwrap().0
+    }
+
+    #[test]
+    fn notes_travel_with_the_project() {
+        let mut ws = Workspace::default();
+        ws.notes = vec![Note { id: "a".into(), start: 1.0, end: 2.0, text: "valve stuck".into() }];
+        let json = serde_json::to_string(&ws.to_project()).unwrap();
+        let back: Project = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.notes, ws.notes);
+        let old: Project = serde_json::from_str(r#"{"version":1,"sources":[],"variables":[]}"#).unwrap();
+        assert!(old.notes.is_empty(), "projects saved before notes still open");
     }
 
     #[test]

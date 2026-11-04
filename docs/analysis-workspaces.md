@@ -16,6 +16,14 @@ Each signal shows its **unit** next to its name, read from the header ("Force [N
 
 A signal's menu has **Prepare**, **Rename**, **Duplicate**, **Reset to original** and **Remove**. **Formula** adds a signal computed from others. **Project** saves and opens projects and recipes (reusable processing).
 
+## Cursor, selection and notes
+
+**Click** any time chart (Plot, Prepare, Peaks & limits, Cycles) to place the **linked cursor**: a dotted line with each signal's value at that moment. It stays when you switch pages, and the values table opens at its row. The chip in the top bar shows its time; × removes it.
+
+**Shift+drag** across a time chart (or use the select tool in the chart toolbar) to **select** a time range; **Select** in the top bar selects every time where a signal lies in a range ("Speed between 1500 and 2100 rpm", optionally joining short gaps). The selection is shaded on every time chart and used by Distribution (statistics and charts of the selected rows), Peaks & limits (extremes and violations inside it), Cycles (cycles that start inside it), Frequency response and Spectrogram (from its first to its last moment) and Results (**Selection** sets From and To). × in the chip clears it.
+
+**Notes** are comments on a time range or a moment. Add one from the selection chip, or with **Notes** › **Add note**. They show as amber spans on every time chart, travel with the project, and are listed in both reports. In **Notes**, edit a text in place, click a time to select that range, or delete.
+
 ## Prepare
 
 Prepare processes one signal as a row of blocks: **Source → steps → Output**. The arrows beside the signal picker (or Alt+↑ / Alt+↓) step to the previous or next signal, so a whole file can be cleaned one signal after another.
@@ -60,11 +68,11 @@ Tick rows to **Delete** them. **Copy** puts the table on the clipboard for a spr
 
 ## Report
 
-Choose what to include, choose **HTML** or **PDF**, press **Create report**, then choose a name and place. The report is one file with one embedded font. It contains headings, tables and charts, and the processing of each signal as the same block diagram.
+Choose what to include, choose **HTML**, **Interactive** or **PDF**, press **Create report**, then choose a name and place. **Interactive** writes one HTML file that opens in any browser without internet: the signals as zoomable stacked charts with the notes marked, and statistics, results, notes, processing and files as tables you can filter and sort. The report is one file with one embedded font. It contains headings, tables and charts, and the processing of each signal as the same block diagram.
 
 ## Charts
 
-Drag to zoom, scroll to zoom, double-click to reset. The toolbar has Zoom, Pan, Previous view, Reset, a data table with CSV export, and PNG export. Stacked charts share the X axis. Long signals are thinned per pixel column (minimum and maximum kept) and again after each zoom, so peaks stay visible. Summary charts (matrix, histogram, quartiles, bars) do not zoom.
+Drag to zoom, scroll to zoom, double-click to reset. The toolbar has Zoom, Pan, Select (time charts), Previous view, Reset, a data table with CSV export, **Copy** and PNG export. **Copy** puts the current view on the clipboard for PowerPoint at a fixed 16:9 size with matching fonts; Shift+click copies it at document width for Word, so pasted charts all match. Stacked charts share the X axis. Long signals are thinned per pixel column (minimum and maximum kept) and again after each zoom, so peaks stay visible. Summary charts (matrix, histogram, quartiles, bars) do not zoom.
 
 ## Verify
 

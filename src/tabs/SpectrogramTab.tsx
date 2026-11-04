@@ -10,7 +10,8 @@ import { StackedChart, type ChartPanel } from "@/components/StackedChart";
 import { analysisVectors, type Vectors } from "@/lib/analysis";
 import { errorText } from "@/lib/api";
 import { axis, baseLayout, INK, SEQUENTIAL, seriesColor } from "@/lib/chart";
-import { angleResample, fillMissing, medianStep, orderMap, orderSpectrum, spectrogram } from "@/lib/dsp";
+import { angleResample, clip, fillMissing, medianStep, orderMap, orderSpectrum, spectrogram } from "@/lib/dsp";
+import { span } from "@/lib/brush";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -31,7 +32,7 @@ function heatmapLayout(xLabel: string, yLabel: string) {
 
 /** How the frequency content changes over time, or over shaft speed (order analysis). */
 export function SpectrogramTab() {
-  const { dataset, dataVersion, activeTab, addResults } = useApp();
+  const { dataset, dataVersion, activeTab, addResults, brush } = useApp();
   const [mode, setMode] = useState<"time" | "order">("time");
   const [column, setColumn] = useState<string | null>(null);
   const [nfft, setNfft] = useState(1024);
@@ -43,7 +44,7 @@ export function SpectrogramTab() {
   const [spr, setSpr] = useState(64);
   const [frameRevs, setFrameRevs] = useState(16);
   const [maxOrder, setMaxOrder] = useState(20);
-  const [data, setData] = useState<Vectors | null>(null);
+  const [raw, setData] = useState<Vectors | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -69,6 +70,7 @@ export function SpectrogramTab() {
     };
   }, [columns.join("|"), dataVersion, activeTab]);
 
+  const data = useMemo(() => clip(raw, span(brush)), [raw, brush]);
   const fs = useMemo(() => (data ? 1 / medianStep(data.time) : 1), [data]);
   const label = (c: string | null) => dataset?.signals.find((s) => s.column === c)?.label ?? c ?? "";
 
