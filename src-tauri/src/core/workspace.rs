@@ -54,6 +54,8 @@ pub enum Edit {
     KeepRange((f64, f64)),
     /// Mark individual samples (by time) as missing, e.g. outliers picked on a plot.
     ClearPoints(Vec<f64>),
+    /// Set individual samples (by time) to typed values: (time, value) pairs from the values table.
+    SetPoints(Vec<(f64, f64)>),
     /// Hampel filter: mark points further than k robust sigmas from the local median as missing.
     Despike(f64),
     /// Linearly interpolate interior gaps; leading and trailing gaps stay missing.
@@ -177,6 +179,7 @@ impl Edit {
             Edit::ClearRange((a, b)) => ("clean", "Remove range".into(), range(a, b)),
             Edit::KeepRange((a, b)) => ("clean", "Keep range".into(), range(a, b)),
             Edit::ClearPoints(t) => ("clean", "Remove points".into(), vec![plural(t.len(), "point")]),
+            Edit::SetPoints(p) => ("clean", "Set values".into(), vec![plural(p.len(), "value")]),
             Edit::Despike(k) => ("clean", "Remove spikes".into(), vec![format!("Hampel, k = {}σ", num(*k))]),
             Edit::FillGaps => ("clean", "Fill gaps".into(), vec!["linear".into()]),
             Edit::Downsample(f) => ("adjust", "Downsample".into(), vec![format!("÷ {}", num(*f))]),
@@ -190,7 +193,7 @@ impl Edit {
 
     /// Manual picks (individual points) are tied to one file and are left out of recipes.
     pub fn is_manual(&self) -> bool {
-        matches!(self, Edit::ClearPoints(_))
+        matches!(self, Edit::ClearPoints(_) | Edit::SetPoints(_))
     }
 
     pub fn is_filter(&self) -> bool {
@@ -203,6 +206,7 @@ impl Edit {
             Edit::ClearRange((a, b)) => Edit::ClearRange((a + dt, b + dt)),
             Edit::KeepRange((a, b)) => Edit::KeepRange((a + dt, b + dt)),
             Edit::ClearPoints(ts) => Edit::ClearPoints(ts.iter().map(|t| t + dt).collect()),
+            Edit::SetPoints(ps) => Edit::SetPoints(ps.iter().map(|(t, v)| (t + dt, *v)).collect()),
             other => other.clone(),
         }
     }
@@ -223,6 +227,7 @@ impl Edit {
             Edit::ClearRange((a, b)) => Some(format!("remove t {}…{}", num(a.min(*b)), num(a.max(*b)))),
             Edit::KeepRange((a, b)) => Some(format!("keep t {}…{}", num(a.min(*b)), num(a.max(*b)))),
             Edit::ClearPoints(_) => Some("remove points".into()),
+            Edit::SetPoints(_) => Some("set values".into()),
             Edit::Despike(k) if *k > 0.0 => Some(format!("remove spikes (> {} σ)", num(*k))),
             Edit::FillGaps => Some("fill gaps".into()),
             _ => None,
@@ -289,6 +294,21 @@ impl Edit {
                 }
                 (out, format!("remove {}", plural(n, "point")))
             }
+            Edit::SetPoints(points) => {
+                let times: Vec<f64> = points.iter().map(|p| p.0).collect();
+                let mut out = v.to_vec();
+                let mut n = 0;
+                for (slot, (_, value)) in nearest_each(t, &times).into_iter().zip(points) {
+                    if let Some(i) = slot.filter(|_| value.is_finite()) {
+                        out[i] = *value;
+                        n += 1;
+                    }
+                }
+                if n == 0 {
+                    return Err("No sample at the given times.".into());
+                }
+                (out, format!("set {}", plural(n, "value")))
+            }
             Edit::Despike(k) => {
                 if !(*k > 0.0) {
                     return Err("The spike threshold must be positive.".into());
@@ -346,16 +366,21 @@ impl Edit {
 
 /// Indices of the samples nearest to `times` (within half a sample interval).
 fn nearest_samples(t: &[f64], times: &[f64]) -> Vec<usize> {
+    nearest_each(t, times).into_iter().flatten().collect()
+}
+
+/// The nearest sample to each time (within half a sample step), in the order of `times`.
+fn nearest_each(t: &[f64], times: &[f64]) -> Vec<Option<usize>> {
     let mut order: Vec<usize> = (0..t.len()).filter(|&i| t[i].is_finite()).collect();
     order.sort_by(|&a, &b| t[a].total_cmp(&t[b]));
     if order.is_empty() {
-        return vec![];
+        return vec![None; times.len()];
     }
     let mut steps: Vec<f64> = order.windows(2).map(|w| t[w[1]] - t[w[0]]).filter(|d| *d > 0.0).collect();
     let tol = if steps.is_empty() { f64::INFINITY } else { median_of(&mut steps) / 2.0 };
     times
         .iter()
-        .filter_map(|&x| {
+        .map(|&x| {
             let k = order.partition_point(|&i| t[i] < x);
             let candidates = [k.checked_sub(1), Some(k)];
             candidates
@@ -2351,6 +2376,25 @@ mod tests {
     fn import(ws: &mut Workspace, path: &str, cols: &[&str]) -> Vec<String> {
         let cols: Vec<String> = cols.iter().map(|c| c.to_string()).collect();
         ws.import(path, None, &ImportOptions::default(), &cols, None).unwrap().0
+    }
+
+    #[test]
+    fn cells_can_be_set_and_cleared_as_steps() {
+        let a = write("cells.csv", "time,s\n0,1\n1,2\n2,3\n3,4\n");
+        let mut ws = Workspace::default();
+        import(&mut ws, &a, &["time", "s"]);
+        ws.edit("s", Edit::SetPoints(vec![(1.0, 20.0), (3.0, -4.0), (9.0, 1.0)])).unwrap();
+        ws.edit("s", Edit::ClearPoints(vec![2.0])).unwrap();
+        let d = &ws.get("s").unwrap().data;
+        assert_eq!((d[0], d[1], d[3]), (1.0, 20.0, -4.0));
+        assert!(d[2].is_nan());
+        assert_eq!(ws.get("s").unwrap().steps.len(), 2);
+        assert!(ws.make_recipe("r", None).columns.is_empty(), "cell edits belong to one file, not to recipes");
+        ws.undo("s").unwrap();
+        ws.undo("s").unwrap();
+        assert_eq!(ws.get("s").unwrap().data[1], 2.0);
+        assert!(ws.edit("s", Edit::SetPoints(vec![(50.0, 1.0)])).is_err(), "no sample there");
+        std::fs::remove_file(a).ok();
     }
 
     #[test]

@@ -1,5 +1,8 @@
 import { useContext, useEffect, useState } from "react";
-import { BadgeCheck, Cpu, Library, Play } from "lucide-react";
+import { BadgeCheck, Cpu, FolderOpen, Library, Play } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { api, errorText, JSON_FILTERS } from "@/lib/api";
+import { message, open } from "@/lib/platform";
 import { EmptyState, Segmented } from "@/components/common";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -21,7 +24,30 @@ const SUBS: { id: Sub; label: string; icon: typeof Cpu; component: () => React.R
 /** State-space modelling: identify, store, simulate and validate, one tab each. */
 export function ModelTab() {
   const active = useContext(WorkspaceActive);
-  const { dataset, models } = useApp();
+  const { dataset, models, refreshModels } = useApp();
+  const load = async () => {
+    const p = await open({ filters: JSON_FILTERS, title: "Load model library" });
+    if (typeof p !== "string") return;
+    try {
+      await api.modelsLoad(p);
+      await refreshModels();
+    } catch (e) {
+      await message(errorText(e), { title: "Load failed", kind: "error" });
+    }
+  };
+  // Library, Simulate and Validate need a model: one clear way to get one.
+  const noModels = (
+    <EmptyState title="No models yet" icon={<Cpu className="size-8" strokeWidth={1.4} />}>
+      <div className="mt-2 flex justify-center gap-2">
+        <Button onClick={() => setTab("identify")} disabled={!dataset}>
+          <Play /> Identify
+        </Button>
+        <Button variant="outline" onClick={load}>
+          <FolderOpen /> Load
+        </Button>
+      </div>
+    </EmptyState>
+  );
   const [tab, setTab] = useState<Sub>("identify");
   const [visited, setVisited] = useState(() => new Set<Sub>([tab]));
 
@@ -43,7 +69,7 @@ export function ModelTab() {
           return (
             <div key={s.id} role="tabpanel" className={cn("absolute inset-0 overflow-hidden", s.id !== tab && "invisible")}>
               <WorkspaceActive.Provider value={active && s.id === tab}>
-                {s.needsData && !dataset ? <EmptyState title="No data loaded" /> : <C />}
+                {s.id !== "identify" && models.length === 0 ? noModels : s.needsData && !dataset ? <EmptyState title="No data loaded" /> : <C />}
               </WorkspaceActive.Provider>
             </div>
           );

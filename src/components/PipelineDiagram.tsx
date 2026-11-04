@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Crop,
   Eraser,
+  PencilLine,
   FileSpreadsheet,
   FlipVertical2,
   Flag,
@@ -66,6 +67,8 @@ export function blockInfo(step: VariableEdit, fmtTime: (t: number) => string = g
   switch (step.op) {
     case "clear_points":
       return { kind: "clean", icon: Eraser, title: "Remove points", params: [`${step.value.length.toLocaleString("en-US")} picked`] };
+    case "set_points":
+      return { kind: "clean", icon: PencilLine, title: "Set values", params: [`${step.value.length.toLocaleString("en-US")} typed`] };
     case "clear_range":
       return { kind: "clean", icon: Trash2, title: "Remove range", params: [fmtTime(step.value[0]), `→ ${fmtTime(step.value[1])}`] };
     case "keep_range":
@@ -542,7 +545,8 @@ function StepEditor({ step, onChange, nyquist, sizes }: { step: VariableEdit; on
         </>
       );
     case "clear_points":
-      return <p className="text-[12.5px] text-muted-foreground">Picked points cannot be edited. Delete this step to bring them back.</p>;
+    case "set_points":
+      return <p className="text-[12.5px] text-muted-foreground">Edit the cells in the values table; delete this step to undo them.</p>;
     default:
       return <p className="text-[12.5px] text-muted-foreground">Nothing to set.</p>;
   }

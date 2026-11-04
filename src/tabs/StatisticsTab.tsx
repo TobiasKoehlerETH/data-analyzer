@@ -259,7 +259,7 @@ export function StatisticsTab() {
             </Select>
           </Field>
         )}
-        <span className="text-[12.5px] text-muted-foreground tabular-nums">{y.length.toLocaleString("en-US")} rows{data && data.step > 1 ? ` (every ${data.step}th)` : ""}</span>
+        <span className="text-[12.5px] text-muted-foreground tabular-nums">{y.length.toLocaleString("en-US")} rows{data && data.step > 1 ? ` · 1 in ${data.step} shown` : ""}</span>
       </div>
       {error ? (
         <p role="alert" className="text-destructive">

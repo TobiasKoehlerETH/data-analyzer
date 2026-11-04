@@ -5,6 +5,7 @@ import {
   ChartLine,
   ChevronDown,
   Clock,
+  ArrowLeftRight,
   Copy,
   Download,
   FileSpreadsheet,
@@ -17,6 +18,7 @@ import {
   Ruler,
   Save,
   Sigma,
+  Table2,
   Trash2,
   Type,
   X,
@@ -29,6 +31,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { NumberInput } from "@/components/common";
 import { UnitsDialog } from "@/components/UnitsDialog";
+import { ValuesSheet } from "@/components/ValuesSheet";
 import { bareName } from "@/lib/units";
 import { api, errorText, type Align, type SourceInfo, type TimeMap, type VariableInfo, type WorkspaceView } from "@/lib/api";
 import { ask, message, open, save } from "@/lib/platform";
@@ -117,6 +120,7 @@ function TimeMapRow({ s, vars, run }: { s: SourceInfo; vars: VariableInfo[]; run
   const [at, setAt] = useState<TimeMap | null>(null);
   const [time, setTime] = useState<number | null>(null);
   const [near, setNear] = useState<TimeMap | null>(null);
+  const [convert, setConvert] = useState(false);
   const columns = vars.filter((v) => v.kind === "imported");
   const source = s.row_step !== null ? STEP : (s.time_var ?? "");
 
@@ -204,10 +208,12 @@ function TimeMapRow({ s, vars, run }: { s: SourceInfo; vars: VariableInfo[]; run
       )}
 
       {ticks.length > 0 && (
-        <div className="min-w-[260px] flex-1" aria-label="Rows against time">
+        <div className="relative min-w-[260px] flex-1 pl-10" aria-label="Rows against time">
+          <span className="absolute top-0 left-0 text-[11px] text-muted-foreground">row</span>
+          <span className="absolute bottom-0 left-0 text-[11px] text-muted-foreground">time</span>
           <div className="flex justify-between text-[11px] text-muted-foreground tabular-nums">
             {ticks.map((t, i) => (
-              <span key={i}>row {t.row.toLocaleString("en-US")}</span>
+              <span key={i}>{t.row.toLocaleString("en-US")}</span>
             ))}
           </div>
           <div className="relative my-1 h-px bg-ap-gray-light">
@@ -223,8 +229,11 @@ function TimeMapRow({ s, vars, run }: { s: SourceInfo; vars: VariableInfo[]; run
         </div>
       )}
 
-      <div className="flex items-center gap-2 tabular-nums">
-        <span className="text-muted-foreground">Index</span>
+      <Button size="icon-sm" variant={convert ? "secondary" : "ghost"} onClick={() => setConvert(!convert)} title="Convert row ↔ time" aria-expanded={convert}>
+        <ArrowLeftRight />
+      </Button>
+      <div className={cn("flex items-center gap-2 tabular-nums transition-[opacity,max-width] duration-200 ease-out", convert ? "max-w-[640px] opacity-100" : "pointer-events-none max-w-0 overflow-hidden opacity-0")}>
+        <span className="text-muted-foreground">Row</span>
         <NumberInput className="w-24" value={row} min={1} max={s.rows} step={1} integer onChange={setRow} />
         <span className="min-w-[72px] font-medium">= {at ? label(at) : "…"}</span>
         <span className="mx-1 text-muted-foreground">·</span>
@@ -252,6 +261,8 @@ export function WorkspacePanel({ ws, fresh, run, onAddFiles, onExport }: Props) 
   const [spark, setSpark] = useState<Record<string, (number | null)[]>>({});
   /** The units dialog: closed (undefined), every signal (null) or the ones listed. */
   const [units, setUnits] = useState<string[] | null | undefined>(undefined);
+  /** The variable whose values table is open. */
+  const [sheet, setSheet] = useState<string | null>(null);
   const numeric = ws.variables.filter((v) => v.kind !== "text");
   const sparkKey = numeric.map((v) => `${v.name}:${v.edits.length}`).join("|");
 
@@ -363,7 +374,16 @@ export function WorkspacePanel({ ws, fresh, run, onAddFiles, onExport }: Props) 
   const row = (v: VariableInfo) => {
     const cleanable = v.kind !== "text" && !v.is_time && !v.error;
     return (
-      <li key={v.name} className={cn("group flex items-center gap-3 py-2 pr-3 pl-4 transition-colors hover:bg-[#f7f8fa]", fresh.includes(v.name) && "bg-ap-red-soft/60")}>
+      <li
+        key={v.name}
+        className={cn("group flex items-center gap-3 py-2 pr-3 pl-4 transition-colors hover:bg-[#f7f8fa]", v.kind !== "text" && "cursor-pointer", fresh.includes(v.name) && "bg-ap-red-soft/60")}
+        onClick={(e) => {
+          // A click on the row (not on its buttons or fields) opens the values table.
+          if (v.kind === "text" || renaming || (e.target as HTMLElement).closest("button, input, [role=menu], [role=menuitem]")) return;
+          setSheet(v.name);
+        }}
+        title={v.kind === "text" ? undefined : "Click to see and edit the values"}
+      >
         <span className="flex size-6 shrink-0 items-center justify-center text-muted-foreground" title={v.is_time ? "Time axis of this file" : v.kind === "text" ? "Text column (for grouping)" : v.kind === "derived" ? "Computed from a formula" : undefined}>
           {v.is_time ? <Clock className="size-3.5 text-ap-red" /> : v.kind === "text" ? <Type className="size-3.5" /> : v.kind === "derived" ? <Sigma className="size-3.5" /> : null}
         </span>
@@ -386,7 +406,7 @@ export function WorkspacePanel({ ws, fresh, run, onAddFiles, onExport }: Props) 
             />
           ) : (
             <div className="flex min-w-0 items-center gap-1.5">
-              <p className="truncate text-[13.5px] font-medium" onDoubleClick={() => setRenaming({ name: v.name, value: v.name })} title={`${v.name}\n${v.source}\nDouble-click to rename`}>
+              <p className="truncate text-[13.5px] font-medium" title={`${v.name}\n${v.source}`}>
                 {v.kind === "text" ? v.name : bareName(v.name, v.header_unit)}
               </p>
               {v.kind !== "text" &&
@@ -462,6 +482,11 @@ export function WorkspacePanel({ ws, fresh, run, onAddFiles, onExport }: Props) 
             {v.kind === "derived" && (
               <DropdownMenuItem onSelect={() => setFormula({ name: v.name, text: v.formula ?? "", editing: v.name, error: "" })}>
                 <Sigma /> Edit formula…
+              </DropdownMenuItem>
+            )}
+            {v.kind !== "text" && (
+              <DropdownMenuItem onSelect={() => setSheet(v.name)}>
+                <Table2 /> Values…
               </DropdownMenuItem>
             )}
             <DropdownMenuItem onSelect={() => setRenaming({ name: v.name, value: v.name })}>
@@ -690,6 +715,7 @@ export function WorkspacePanel({ ws, fresh, run, onAddFiles, onExport }: Props) 
         </div>
       )}
 
+      <ValuesSheet variable={ws.variables.find((x) => x.name === sheet) ?? null} onClose={() => setSheet(null)} run={run} />
       <UnitsDialog open={units !== undefined} onOpenChange={(o) => !o && setUnits(undefined)} variables={ws.variables} focus={units ?? null} run={run} />
 
       <Dialog open={!!formula} onOpenChange={(o) => !o && setFormula(null)}>

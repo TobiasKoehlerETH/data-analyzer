@@ -72,7 +72,7 @@ export function SimulationTab() {
           <Play /> Simulate
         </Button>
         <Button variant="outline" onClick={() => run(true)} title="Overlay another model's simulation on the current plot">
-          <Layers /> Add Model Overlay
+          <Layers /> Overlay
         </Button>
         <Button variant="outline" onClick={async () => { await api.simulationClear(); setView(null); setStatus({ text: "" }); }}>
           <Eraser /> Clear

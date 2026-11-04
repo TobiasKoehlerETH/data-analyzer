@@ -6,9 +6,11 @@ The top bar follows the workflow: **Data → Prepare → Explore → Analyse →
 
 Add files, a folder of runs, or drop them on the window. Each file keeps its own time base and shows its signals with a small trend line.
 
-**Time from** sets where a file's time comes from: one of its columns, or **Fixed step per row** (seconds per row). A time column is read in **seconds, minutes, hours or days**; choose the unit it is given in. The ruler below shows rows against time at five points. **Row** and **Time** convert one into the other. Files with clock timestamps show the time of day.
+**Time from** sets where a file's time comes from: one of its columns, or **Fixed step per row** (seconds per row). A time column is read in **seconds, minutes, hours or days**; choose the unit it is given in. The ruler below shows rows against time at five points; the ⇄ button opens **Row** and **Time** fields that convert one into the other. Files with clock timestamps show the time of day.
 
 With several files, **Line up files** combines them **By time**, **By clock time** or **By index**. **Shift** moves one file in time. **Resample to** sets the common time step (0 keeps the finest step; a coarser step averages instead of aliasing). The common grid has at most 1,000,000 rows.
+
+**Click a signal** to open its values as a table: row, time, value and (where it differs) the original value. Click a cell; Shift+click or Shift+arrows select a range, Ctrl+click adds single cells, Ctrl+A selects all. **Delete** removes the selected values (they become missing). Type a number, press Enter or double-click to change a cell; Ctrl+Enter sets every selected cell to the typed value; an empty entry removes it. Paste a column of numbers from a spreadsheet at the current row. Ctrl+C copies time and value. The footer shows count, mean, min and max of the selection; **Go to row** jumps. Changed cells are tinted. Each change is a **Remove points** or **Set values** step in Prepare, so Undo (also in the table) and Reset work. Time axes are read only.
 
 Each signal shows its **unit** next to its name, read from the header ("Force [N]", "Force (N)"). Click it, or **Units** in the toolbar for every signal at once, to set, fix or convert it. Type a unit or pick one of the suggestions; when the old and new unit measure the same quantity (mm and µm, °C and °F, bar and psi, rpm and Hz), **Convert** is ticked and the values are converted as Gain/Offset steps (Undo works). Untick it to change only the label, e.g. when the header was wrong. **Suggest** fills missing units from the names (Temperature → °C). Tick several rows to set them together. Units are saved in projects and recipes and appear on every axis, table, result and report.
 
@@ -48,7 +50,7 @@ Removed values become missing. Rows are never deleted, so every signal stays ali
 
 ## Model
 
-State-space models in four tabs: **Identify**, **Library**, **Simulate**, **Validate**. Results stay when the data is edited.
+State-space models in four tabs: **Identify**, **Library**, **Simulate**, **Validate**. Results stay when the data is edited. Without a model, Library, Simulate and Validate offer **Identify** or **Load** (a saved library); while identification runs, **Identify** turns into **Stop**.
 
 ## Results
 

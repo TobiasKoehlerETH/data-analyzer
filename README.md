@@ -9,12 +9,15 @@ A local desktop app for exploring numeric measurement data, cleaning it step by 
 - **Data**: CSV, text, Excel, Parquet, MAT, HDF5 and TDMS files in one workspace. Each file keeps its own time base: take the time from a column or a fixed step per row, check rows against time, and line files up.
 - **Prepare**: process a signal as a row of blocks (clean, filter, adjust). Click a block to see its input and output, change it, move it or delete it.
 - **Explore**: plots, distributions and file comparison.
+- **Values**: click a signal to see its values as a table, like a spreadsheet column; remove or type over cells, paste a column from Excel. Every change is a step in Prepare.
 - **Units**: every signal shows its unit; set, fix or convert units (mm → µm, °C → °F, bar → psi) for one signal or all at once.
 - **Analyse**: spectrum, spectrogram and order analysis, frequency response (Bode and coherence), peaks, valleys and limit checks with every parameter tunable, cycles cut at trigger events, correlations and curve fitting. Extracted values export as CSV.
 - **Model**: identify, store, simulate and validate state-space models.
 - **Report**: a **Results** table of scalar values (measured, or sent from Cycles, Frequency response, Order analysis and Curve fit), and one HTML or PDF file with tables, charts, the results and the processing diagram of each signal.
 
 ![Data: files, signals with their units, and the time map](docs/images/data.png)
+
+![Values: a signal as a table, with removed and edited cells](docs/images/values.png)
 
 ![Units: relabel or convert, one signal or all at once](docs/images/units.png)
 

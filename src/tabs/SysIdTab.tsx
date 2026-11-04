@@ -28,7 +28,7 @@ export function SysIdTab() {
   const [decimation, setDecimation] = useState(1);
   const [start, setStart] = useState(0);
   const [end, setEnd] = useState(0);
-  const [estimate, setEstimate] = useState("Estimated time: —");
+  const [estimate, setEstimate] = useState("");
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState<{ text: string; error?: boolean }>({ text: "" });
   const [results, setResults] = useState<SysIdRow[]>([]);
@@ -59,7 +59,7 @@ export function SysIdTab() {
     const samples = Math.max(1, Math.floor((end - start) / Math.max(1, decimation)));
     api
       .sysidEstimateTime(samples, Math.max(1, inputs.length), Math.max(1, outputs.length), orderMin, orderMax)
-      .then((t) => setEstimate(`Estimated time: ~${t.toFixed(1)}s (${samples} samples after decimation)`));
+      .then((t) => setEstimate(`≈ ${t < 1 ? "1" : t.toFixed(0)} s · ${samples.toLocaleString("en-US")} samples`));
   }, [inputs, outputs, orderMin, orderMax, decimation, start, end]);
 
   const autoSuggest = () => {
@@ -130,7 +130,7 @@ export function SysIdTab() {
           <CheckList className="h-full" items={items} checked={outputs} onChange={setOutputs} />
         </Panel>
         <Button variant="outline" onClick={autoSuggest} title="Setpoints / heaters / valves → inputs; temperatures / pressures / leakage → outputs">
-          <Wand2 /> Auto-Suggest I/O
+          <Wand2 /> Suggest inputs & outputs
         </Button>
       </div>
 
@@ -177,14 +177,21 @@ export function SysIdTab() {
               <NumberInput value={end} min={1} max={n} integer onChange={setEnd} />
             </Field>
           </div>
-          <p className="text-xs text-muted-foreground italic">{estimate}</p>
+          {estimate && (
+            <p className="text-xs text-muted-foreground tabular-nums" title="Estimated run time and samples after decimation">
+              {estimate}
+            </p>
+          )}
         </Panel>
-        <Button className="h-11 text-[15px]" disabled={running} onClick={identify} title="Run state-space identification across the selected order range">
-          <Play /> Identify
-        </Button>
-        <Button variant="outline" className="h-10 text-destructive" disabled={!running} onClick={() => { api.sysidCancel(); setStatus({ text: "Cancelling..." }); }}>
-          <Square /> Stop
-        </Button>
+        {running ? (
+          <Button variant="outline" className="h-11 text-[15px] text-destructive" onClick={() => { api.sysidCancel(); setStatus({ text: "Cancelling..." }); }}>
+            <Square /> Stop
+          </Button>
+        ) : (
+          <Button className="h-11 text-[15px]" onClick={identify} title="Run state-space identification across the selected order range">
+            <Play /> Identify
+          </Button>
+        )}
         <StatusText tone={status.error ? "error" : "muted"}>{status.text}</StatusText>
         {results.length > 0 && <StaleNote version={ranAt} />}
       </div>
@@ -228,7 +235,7 @@ export function SysIdTab() {
               ))}
             </TableBody>
           </Table>
-          {results.length === 0 && <p className="p-3 text-[13px] text-muted-foreground">Choose inputs and outputs, then identify.</p>}
+
         </Panel>
         <Panel title="VAF vs model order" className="min-h-0 flex-1" bodyClassName="p-1">
           {vafPanels.length > 0 && <StackedChart panels={vafPanels} xLabel="Model order" zoom={false} />}

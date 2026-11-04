@@ -141,7 +141,7 @@ export function ModelsTab() {
           <Trash2 /> Delete
         </Button>
         <Button size="sm" variant="outline" onClick={compare} title="Compare metrics of two or more selected models side by side">
-          <GitCompare /> Compare Selected
+          <GitCompare /> Compare
         </Button>
         <div className="flex-1" />
         <Button size="sm" variant="outline" onClick={async () => {
@@ -149,7 +149,7 @@ export function ModelsTab() {
           if (!p) return;
           await api.modelsSave(p).then(() => showStatus(`Models saved to ${p}`)).catch((e) => message(errorText(e), { kind: "error" }));
         }} title="Save all models to a JSON file">
-          <Save /> Save Library
+          <Save /> Save
         </Button>
         <Button size="sm" variant="outline" onClick={async () => {
           const p = await open({ filters: JSON_FILTERS, title: "Load Model Library" });
@@ -162,7 +162,7 @@ export function ModelsTab() {
             await message(errorText(e), { kind: "error" });
           }
         }} title="Load models from a previously saved JSON file">
-          <FolderOpen /> Load Library
+          <FolderOpen /> Load
         </Button>
       </div>
 
@@ -270,7 +270,7 @@ export function ModelsTab() {
                 </div>
               </div>
             ) : (
-              <p className="text-[13px] text-muted-foreground">Double-click a model to open it.</p>
+              <p className="text-[13px] text-muted-foreground">Double-click a model</p>
             )}
           </Panel>
         </ResizablePanel>

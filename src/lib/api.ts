@@ -144,6 +144,8 @@ export type VariableEdit =
   | { op: "clear_range" | "keep_range"; value: [number, number] }
   /** Sample times on the aligned axis. */
   | { op: "clear_points"; value: number[] }
+  /** (time, value) pairs typed in the values table. */
+  | { op: "set_points"; value: [number, number][] }
   | { op: "filter"; value: FilterStep }
   | { op: "normalize" | "zscore" | "demean" | "zero_start" | "invert" | "fill_gaps" };
 
